@@ -4,7 +4,7 @@ import time
 
 import requests
 
-STAGES = ("downloading", "validating", "separating", "encoding", "uploading", "done")
+STAGES = ("downloading", "validating", "separating", "encoding", "analyzing", "uploading", "done")
 BACKOFF_S = (1.0, 3.0)  # sleeps between the 3 attempts
 
 
