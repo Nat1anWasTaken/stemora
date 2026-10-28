@@ -1,0 +1,56 @@
+name: worker
+
+on:
+  pull_request:
+    paths:
+      - "worker/**"
+      - ".github/workflows/worker.yml"
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+
+  deploy:
+    # Dokploy deploys the backend and frontend containers; this job only ships the Modal worker.
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: modal-production
+    concurrency:
+      group: modal-deploy
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - run: uv sync --frozen
+      - name: Deploy to Modal
+        run: uv run modal deploy app.py

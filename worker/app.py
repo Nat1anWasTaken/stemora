@@ -40,7 +40,7 @@ image = (
         "boto3==1.35.99", "requests==2.32.3", "fastapi[standard]==0.115.6",
         "librosa==0.10.2.post1", "soxr", "rotary-embedding-torch", "einops",
     )
-    .pip_install("https://github.com/CPJKU/beat_this/archive/main.zip", extra_options="--no-deps")
+    .pip_install("https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip", extra_options="--no-deps")
     .env({"TORCH_HOME": TORCH_HOME})
     .run_function(_download_weights)
     .run_function(_download_beat_model)
