@@ -1,4 +1,5 @@
-//! Worker -> backend job updates. Idempotent; stale attempts and terminal jobs are ignored.
+//! Worker -> backend job updates. Idempotent; stale attempts and terminal jobs are ignored and
+//! the worker is told to stop (`cancel: true`), as it is for deleted jobs (410).
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -50,8 +51,9 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         .map(str::trim)
 }
 
+/// The attempt is superseded or the job already finished: the worker should stop.
 fn ignored(reason: &str) -> Json<Value> {
-    Json(json!({"ok": true, "ignored": reason}))
+    Json(json!({"ok": true, "ignored": reason, "cancel": true}))
 }
 
 async fn job_update(
@@ -66,7 +68,8 @@ async fn job_update(
         .bind(job_id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(AppError::not_found)?;
+        // The song (and with it the job) was deleted: tell the worker to stop.
+        .ok_or_else(|| AppError::gone("job_gone", "job no longer exists"))?;
 
     let key = &st.config.webhook_signing_key;
     if !verify_webhook_token(key, job.id, job.attempt, token) {

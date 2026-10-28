@@ -7,14 +7,19 @@ import traceback
 from pathlib import Path
 
 import pipeline as P
-from webhook import Reporter
+from webhook import GONE, Cancelled, Reporter
 
 
 def _separate_and_encode(wav, model, work: Path, rep=None, timings=None, device=None):
     """separate -> normalise -> encode -> peaks. Returns (peaks, {name: (m4a, flac)})."""
     timings = timings if timings is not None else {}
     t = time.time()
-    cb = (lambda f: rep.set_progress(5 + 85 * f)) if rep else (lambda f: None)
+
+    def cb(f):
+        if rep:
+            rep.check()  # called per Demucs chunk, so a cancel stops the GPU within seconds
+            rep.set_progress(5 + 85 * f)
+
     stems = P.separate(wav, model, progress_cb=cb, shifts=1, device=device)
     timings["separate"] = time.time() - t
     stems = P.normalise(stems)
@@ -23,6 +28,8 @@ def _separate_and_encode(wav, model, work: Path, rep=None, timings=None, device=
     t = time.time()
     files = {}
     for i, name in enumerate(P.STEMS):
+        if rep:
+            rep.check()
         files[name] = P.encode_stem(stems[name], work, name)
         if rep:
             rep.set_progress(90 + 4 * (i + 1) / 4)
@@ -45,12 +52,34 @@ def _analyse(rep, mono, duration, work: Path):
         return None
 
 
+def _delete_uploaded(s3, bucket, keys):
+    """The song was deleted while we ran: remove what this run wrote, best effort. Only our own
+    keys, never the whole prefix (a superseding attempt may share key names)."""
+    for key in keys:
+        try:
+            P.delete(s3, bucket, key)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+    if keys:
+        print(f"deleted {len(keys)} orphaned object(s)")
+
+
 def run_job(job: dict):
     rep = Reporter(job["callback_url"], job["callback_token"])
     work = Path(tempfile.mkdtemp(prefix="stemora-"))
+    s3 = bucket = None
+    uploaded = []
+
+    def put(path, key, kind):
+        rep.check()
+        size = P.upload(s3, bucket, path, key, kind)
+        uploaded.append(key)
+        return size
+
     try:
         rep.start_heartbeat()
         rep.update("downloading", 1)
+        rep.check()
         env = os.environ
         s3 = P.r2_client(env)
         bucket = env["R2_BUCKET"]
@@ -58,16 +87,19 @@ def run_job(job: dict):
         P.download(s3, bucket, job["original_key"], src)
 
         rep.update("validating", 4)
+        rep.check()
         duration = P.probe(str(src), job["max_duration_s"])
         wav = P.decode(str(src))
 
         rep.update("separating", 5)
+        rep.check()
         peaks, files = _separate_and_encode(wav, job["model"], work, rep)
         mono = wav.mean(0)
         del wav
         analysis_json = _analyse(rep, mono, duration, work)
         del mono
 
+        # A fresh round-trip right before writing anything to R2.
         rep.update("uploading", 96)
         prefix = P.song_prefix(job["user_id"], job["song_id"])
         stems_out = []
@@ -75,19 +107,22 @@ def run_job(job: dict):
             m4a, flac = files[name]
             mk, fk = f"{prefix}/stems/{name}.m4a", f"{prefix}/stems/{name}.flac"
             stems_out.append({"name": name, "m4a_key": mk, "flac_key": fk,
-                              "m4a_size": P.upload(s3, bucket, m4a, mk, "m4a"),
-                              "flac_size": P.upload(s3, bucket, flac, fk, "flac")})
+                              "m4a_size": put(m4a, mk, "m4a"),
+                              "flac_size": put(flac, fk, "flac")})
         import json
         pj = work / "peaks.json"
         pj.write_text(json.dumps(peaks, separators=(",", ":")))
         peaks_key = f"{prefix}/peaks.json"
-        P.upload(s3, bucket, pj, peaks_key, "json")
+        put(pj, peaks_key, "json")
         analysis_key = None
         if analysis_json:
             analysis_key = f"{prefix}/analysis.json"
-            P.upload(s3, bucket, analysis_json, analysis_key, "json")
-        rep.done(duration, stems_out, peaks_key, analysis_key)
+            put(analysis_json, analysis_key, "json")
+        if rep.done(duration, stems_out, peaks_key, analysis_key) == GONE:
+            return {"ok": False, "cancelled": True}  # deleted while we were uploading
         return {"ok": True}
+    except Cancelled:
+        return {"ok": False, "cancelled": True}
     except P.ValidationError as e:
         rep.failed(str(e), retryable=False)
         return {"ok": False, "retryable": False, "error": str(e)}
@@ -97,6 +132,8 @@ def run_job(job: dict):
         return {"ok": False, "retryable": True, "error": str(e)}
     finally:
         rep.stop_heartbeat()
+        if rep.gone.is_set():
+            _delete_uploaded(s3, bucket, uploaded)
         shutil.rmtree(work, ignore_errors=True)
 
 

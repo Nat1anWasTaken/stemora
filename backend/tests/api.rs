@@ -992,7 +992,7 @@ async fn webhook_auth_idempotency_and_terminal_state() {
         )
         .await
         .status,
-        StatusCode::NOT_FOUND
+        StatusCode::GONE
     );
     // invalid stems are rejected and change nothing
     let bad = app.webhook(&job, &tok, json!({"status":"done","duration_s":1.0,"stems":[{"name":"vocals","m4a_key":"users/x/evil.m4a","flac_key":"k","m4a_size":1,"flac_size":1}]})).await;
@@ -1013,6 +1013,7 @@ async fn webhook_auth_idempotency_and_terminal_state() {
         .await;
     assert_eq!(again.status, StatusCode::OK);
     assert_eq!(again.body["ignored"], "terminal");
+    assert_eq!(again.body["cancel"], true);
     let s = app.get(&format!("/api/songs/{sid}"), &admin).await;
     assert_eq!(s.body["song"]["duration_s"], 123.4);
     let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM stems")
@@ -1033,6 +1034,31 @@ async fn webhook_auth_idempotency_and_terminal_state() {
     let s = app.get(&format!("/api/songs/{sid}"), &admin).await;
     assert_eq!(s.body["song"]["status"], "ready");
     assert_eq!(s.body["song"]["error"], Value::Null);
+}
+
+#[tokio::test]
+async fn deleting_a_processing_song_tells_the_worker_to_stop() {
+    let app = app!();
+    let admin = app.admin().await;
+    let (sid, job, tok) = app.queued_song(&admin).await;
+    app.webhook(&job, &tok, json!({"status":"running","progress":20}))
+        .await;
+    let del = app
+        .req(
+            Method::DELETE,
+            &format!("/api/songs/{sid}"),
+            Some(&admin),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(del.status, StatusCode::NO_CONTENT);
+    // The worker's next heartbeat (valid token) learns the job is gone.
+    let r = app
+        .webhook(&job, &tok, json!({"status":"running","progress":30}))
+        .await;
+    assert_eq!(r.status, StatusCode::GONE);
+    assert_eq!(r.body["code"], "job_gone");
 }
 
 #[tokio::test]
@@ -1073,6 +1099,7 @@ async fn failure_retry_backoff_and_stale_attempts() {
         .await;
     assert_eq!(stale.status, StatusCode::OK);
     assert_eq!(stale.body["ignored"], "stale_attempt");
+    assert_eq!(stale.body["cancel"], true);
 
     // make due; the reaper re-spawns attempt 2 with a new token
     sqlx::query("UPDATE jobs SET next_run_at = now() - interval '1 second' WHERE id = $1")

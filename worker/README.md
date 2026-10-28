@@ -48,6 +48,7 @@ curl -X POST $URL -H "Authorization: Bearer $SECRET" -H 'content-type: applicati
 
 ## Notes
 - Progress 5..90 while separating (from Demucs' chunk loop); heartbeat webhook every 15s from start to finish.
+- Stops early when the backend says the job is gone (410) or superseded (`cancel: true`); on 410 it also deletes the objects it already uploaded.
 - peaks.json: each stem normalised so its loudest bucket = 1.0 (silent stem = all 0).
 - Stems are scaled by one common gain only if any would clip (ceiling 0.99); FLAC is 24-bit.
 - Weights are baked into the image (`TORCH_HOME=/opt/torch`).
