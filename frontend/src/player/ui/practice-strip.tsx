@@ -1,24 +1,21 @@
 import { useEffect, useRef } from "react"
-import { Metronome, Minus, Plus } from "lucide-react"
+import { Metronome } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Slider } from "@/components/ui/slider"
-import { Switch } from "@/components/ui/switch"
 import { formatClock } from "@/lib/format"
 import { usePlayer } from "@/player/store"
 import { ChordStrip } from "@/player/ui/chord-strip"
+import { TempoPanel } from "@/player/ui/practice-sheets"
 import { cn } from "@/lib/utils"
 
 const SECTION_SECONDS = 15
 
-/** Metronome settings cell + the beat/chord strip (tap to expand), or fixed-length sections to loop when there is no analysis. */
+/** Metronome/tempo cell + the beat/chord strip (tap to expand), or fixed-length sections to loop when there is no analysis. */
 export function PracticeStrip({ onExpand }: { onExpand: () => void }) {
   const duration = usePlayer((s) => s.duration)
   const loop = usePlayer((s) => s.loop)
   const metro = usePlayer((s) => s.metronome)
   const analysis = usePlayer((s) => s.analysis)
-  const { setLoop, clearLoop, seek, setMetronome } = usePlayer.getState()
+  const { setLoop, clearLoop, seek } = usePlayer.getState()
   const count = Math.max(1, Math.ceil(duration / SECTION_SECONDS))
   const strip = useRef<HTMLDivElement>(null)
 
@@ -31,29 +28,14 @@ export function PracticeStrip({ onExpand }: { onExpand: () => void }) {
 
   return (
     <div className="flex items-stretch gap-2">
-      <Popover>
-        <PopoverTrigger render={<Button variant="cell" size="cell" aria-pressed={metro.enabled} aria-label="Metronome settings" />}>
-          <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground"><Metronome className="size-3.5" />Metronome</span>
-          <span className="font-heading text-lg leading-tight font-semibold tabular-nums">{metro.bpm} <span className="text-xs font-normal text-muted-foreground">BPM</span></span>
-        </PopoverTrigger>
-        <PopoverContent>
-          <div className="flex w-64 flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="metro-on">Click track</Label>
-            <Switch id="metro-on" checked={metro.enabled} onCheckedChange={(v) => setMetronome({ enabled: v })} />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="icon-lg" aria-label="Slower" onClick={() => setMetronome({ bpm: metro.bpm - 1 })}><Minus /></Button>
-            <Slider aria-label="Tempo in BPM" min={30} max={240} step={1} value={metro.bpm} onValueChange={(v) => setMetronome({ bpm: Array.isArray(v) ? v[0] : v })} />
-            <Button variant="secondary" size="icon-lg" aria-label="Faster" onClick={() => setMetronome({ bpm: metro.bpm + 1 })}><Plus /></Button>
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="metro-count">Count-in (1 bar)</Label>
-            <Switch id="metro-count" checked={metro.countIn} onCheckedChange={(v) => setMetronome({ countIn: v })} />
-          </div>
-          </div>
-        </PopoverContent>
-      </Popover>
+      <TempoPanel
+        trigger={
+          <Button variant="cell" size="cell" aria-pressed={metro.enabled} aria-label="Metronome and tempo">
+            <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground"><Metronome className="size-3.5" />Metronome</span>
+            <span className="font-heading text-lg leading-tight font-semibold tabular-nums">{metro.bpm} <span className="text-xs font-normal text-muted-foreground">BPM</span></span>
+          </Button>
+        }
+      />
 
       {analysis ? <ChordStrip analysis={analysis} onExpand={onExpand} /> : <div ref={strip} className="fade-x flex min-w-0 flex-1 snap-x snap-mandatory scroll-px-5 gap-2 overflow-x-auto overscroll-x-contain scrollbar-none" role="group" aria-label="Loop a section">
         {sections.map((s) => {

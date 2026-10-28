@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react"
-import { buildCells, lastAtOrBefore, splitChord, type Analysis } from "@/player/analysis"
+import { buildCells, lastAtOrBefore, splitChord, transposeChord, type Analysis } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
 import { usePosition } from "@/player/ui/use-position"
 import { cn } from "@/lib/utils"
@@ -9,6 +9,7 @@ export function ChordStrip({ analysis, onExpand }: { analysis: Analysis; onExpan
   const cells = useMemo(() => buildCells(analysis), [analysis])
   const times = useMemo(() => cells.map((c) => c.time), [cells])
   const playing = usePlayer((s) => s.playing)
+  const semitones = usePlayer((s) => s.semitones)
   const pos = usePosition()
   const active = lastAtOrBefore(times, pos + 0.02)
   const scroller = useRef<HTMLDivElement>(null)
@@ -30,7 +31,7 @@ export function ChordStrip({ analysis, onExpand }: { analysis: Analysis; onExpan
     >
       <div ref={scroller} className="fade-x relative flex min-w-0 flex-1 overflow-x-auto scrollbar-none" aria-hidden>
         {cells.map((c, i) => {
-          const chord = c.chord && c.chord !== "N" ? splitChord(c.chord) : null
+          const chord = c.chord && c.chord !== "N" ? splitChord(transposeChord(c.chord, semitones)) : null
           return (
             <span
               key={c.time}

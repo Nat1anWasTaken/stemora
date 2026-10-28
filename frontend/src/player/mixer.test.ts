@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest"
 import { applyPreset, clampLoop, currentPreset, defaultMixer, effectiveGain, loopedPosition, toggleIn } from "@/player/mixer"
 import { parseMixer } from "@/player/mixerStorage"
-import { buildBars, buildCells, lastAtOrBefore, parseAnalysis, splitChord } from "@/player/analysis"
+import { buildBars, buildCells, lastAtOrBefore, parseAnalysis, splitChord, transposeChord } from "@/player/analysis"
 import { binPeaks, computePeaks, parsePeaks } from "@/player/peaks"
+import { speedFor, tempoMarking, tempoRange, tempoValue } from "@/player/tempo"
 
 describe("effectiveGain", () => {
   it("respects volume and mute", () => {
@@ -129,5 +130,43 @@ describe("analysis", () => {
     expect(lastAtOrBefore([1, 2, 3], 9)).toBe(2)
     expect(splitChord("Abmaj7")).toEqual({ root: "Ab", suffix: "maj7" })
     expect(splitChord("Gm")).toEqual({ root: "G", suffix: "m" })
+  })
+  it("reads an optional key", () => {
+    const base = { version: 1, beats: [0, 0.5], downbeats: [0], chords: [] }
+    expect(parseAnalysis({ ...base, key: "Dm" })?.key).toBe("Dm")
+    expect(parseAnalysis({ ...base, key: "H" })?.key).toBeNull()
+    expect(parseAnalysis(base)?.key).toBeNull()
+  })
+
+  it("transposes chord and key labels with flat spelling", () => {
+    expect(transposeChord("Abmaj7", 2)).toBe("Bbmaj7")
+    expect(transposeChord("Dm", -3)).toBe("Bm")
+    expect(transposeChord("B7", 1)).toBe("C7")
+    expect(transposeChord("C", -1)).toBe("B")
+    expect(transposeChord("F#m", 1)).toBe("Gm")
+    expect(transposeChord("Eb", 12)).toBe("Eb")
+    expect(transposeChord("N", 5)).toBe("N")
+  })
+})
+
+describe("tempo", () => {
+  it("maps the dial to speed in BPM, or percent without a detected tempo", () => {
+    expect(tempoRange(120)).toEqual({ min: 60, max: 180 })
+    expect(tempoRange(null)).toEqual({ min: 50, max: 150 })
+    expect(speedFor(90, 120)).toBe(0.75)
+    expect(speedFor(80, null)).toBe(0.8)
+    expect(tempoValue(0.75, 120)).toBe(90)
+  })
+  it("snaps the original value to exactly 1 and clamps", () => {
+    expect(speedFor(118, 117.6)).toBe(1)
+    expect(tempoValue(1, 117.6)).toBe(118)
+    expect(speedFor(400, 120)).toBe(1.5)
+  })
+  it("names tempo markings", () => {
+    expect(tempoMarking(50)).toBe("Largo")
+    expect(tempoMarking(100)).toBe("Andante")
+    expect(tempoMarking(115)).toBe("Allegretto")
+    expect(tempoMarking(130)).toBe("Allegro")
+    expect(tempoMarking(220)).toBe("Prestissimo")
   })
 })

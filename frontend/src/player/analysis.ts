@@ -1,6 +1,8 @@
 export type ChordSegment = { start: number; end: number; label: string }
 export type Analysis = {
   bpm: number | null
+  /** Estimated song key, e.g. "Eb" or "Dm"; null for older analyses. */
+  key: string | null
   beatsPerBar: number
   beats: number[]
   downbeats: number[]
@@ -28,6 +30,7 @@ export function parseAnalysis(json: unknown): Analysis | null {
   })
   return {
     bpm: isNum(j.bpm) ? j.bpm : null,
+    key: typeof j.key === "string" && /^[A-G][b#]?m?$/.test(j.key) ? j.key : null,
     beatsPerBar: isNum(j.beats_per_bar) && j.beats_per_bar > 0 ? j.beats_per_bar : 4,
     beats,
     downbeats: j.downbeats.filter(isNum),
@@ -100,4 +103,16 @@ export function buildBars(cells: BeatCell[], duration: number): Bar[] {
 export function splitChord(label: string): { root: string; suffix: string } {
   const m = /^([A-G][b#]?)(.*)$/.exec(label)
   return m ? { root: m[1], suffix: m[2] } : { root: label, suffix: "" }
+}
+
+const FLATS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+const SHARPS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+/** Move a chord or key label ("Abmaj7", "Dm", "N") by `semitones`, spelled with flats like the worker's labels. */
+export function transposeChord(label: string, semitones: number): string {
+  if (semitones === 0) return label
+  const { root, suffix } = splitChord(label)
+  const i = FLATS.includes(root) ? FLATS.indexOf(root) : SHARPS.indexOf(root)
+  if (i < 0) return label
+  return FLATS[(((i + semitones) % 12) + 12) % 12] + suffix
 }
