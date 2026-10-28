@@ -6,6 +6,7 @@ import "./index.css"
 import { AppShell, RequireAuth } from "@/components/app/shell"
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError } from "@/lib/api"
+import { AccountPage } from "@/pages/account"
 import { BootstrapPage, InvitePage, LoginPage } from "@/pages/auth"
 import { InvitesPage } from "@/pages/invites"
 import { LibraryPage } from "@/pages/library"
@@ -35,6 +36,7 @@ createRoot(document.getElementById("root")!).render(
               <Route index element={<LibraryPage />} />
               <Route path="/upload" element={<UploadPage />} />
               <Route path="/admin/invites" element={<InvitesPage />} />
+              <Route path="/account" element={<AccountPage />} />
             </Route>
           </Route>
         </Routes>

@@ -23,7 +23,16 @@ export type Usage = { used_bytes: number; quota_bytes: number }
 export type Upload =
   | { mode: "single"; url: string; headers: Record<string, string> }
   | { mode: "multipart"; upload_id: string; part_size: number; part_count: number }
+/** Returned once, at creation: the token is stored hashed and can't be listed later. */
 export type Invite = { token: string; url: string; expires_at: string }
+export type InviteSummary = {
+  id: string
+  created_at: string
+  expires_at: string
+  used_at: string | null
+  used_by_email: string | null
+  status: "pending" | "used" | "expired"
+}
 
 export class ApiError extends Error {
   status: number
@@ -70,11 +79,13 @@ export const api = {
       throw e
     }
   },
+  updateMe: (b: { current_password: string; email?: string; new_password?: string }) =>
+    request<User>("/auth/me", { method: "PATCH", body: b }),
   inviteValid: (token: string) => request<{ valid: boolean }>(`/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string, email: string, password: string) =>
     request<User>("/auth/accept-invite", { method: "POST", body: { token, email, password } }),
   createInvite: () => request<Invite>("/admin/invites", { method: "POST" }),
-  listInvites: () => request<Invite[]>("/admin/invites"),
+  listInvites: () => request<InviteSummary[]>("/admin/invites"),
 
   songs: () => request<Song[]>("/songs"),
   song: (id: string) => request<SongDetail>(`/songs/${id}`),

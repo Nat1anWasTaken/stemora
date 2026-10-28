@@ -37,7 +37,8 @@ export function mockApi(): Plugin {
     users.push({ id: randomUUID(), email: "dev@stemora.test", password: "password", role: "admin" })
   }
   const sessions = new Map<string, string>()
-  const invites: { token: string; url: string; expires_at: string }[] = []
+  // Mirrors the backend: the list never includes the token or link (stored hashed server-side).
+  const invites: { id: string; created_at: string; expires_at: string; used_at: string | null; used_by_email: string | null; status: "pending" | "used" | "expired" }[] = []
   const now = Date.now()
   const iso = (ms: number) => new Date(ms).toISOString()
   const songs: MockSong[] = [
@@ -132,6 +133,17 @@ export function mockApi(): Plugin {
             return json(res, 204)
           }
           if (path === "/api/auth/me" && method === "GET") return user ? json(res, 200, pubUser(user)) : err(res, 401, "unauthorized", "Not signed in")
+          if (path === "/api/auth/me" && method === "PATCH") {
+            if (!user) return err(res, 401, "unauthorized", "Not signed in")
+            const b = await readBody(req)
+            if (b.current_password !== user.password) return err(res, 401, "invalid_credentials", "current password is incorrect")
+            const email = typeof b.email === "string" ? b.email.trim().toLowerCase() : undefined
+            if (email && users.some((u) => u.email === email && u.id !== user.id)) return err(res, 409, "email_taken", "an account with that email already exists")
+            if (typeof b.new_password === "string" && b.new_password.length < 8) return err(res, 400, "weak_password", "password must be at least 8 characters")
+            if (email) user.email = email
+            if (typeof b.new_password === "string") user.password = b.new_password
+            return json(res, 200, pubUser(user))
+          }
           const inv = /^\/api\/invites\/([^/]+)$/.exec(path)
           if (inv && method === "GET") return json(res, 200, { valid: inv[1] !== "invalid" && inv[1] !== "expired" })
           if (path === "/api/auth/accept-invite" && method === "POST") {
@@ -149,9 +161,9 @@ export function mockApi(): Plugin {
             if (method === "GET") return json(res, 200, invites)
             if (method === "POST") {
               const token = randomUUID().replace(/-/g, "")
-              const i = { token, url: `http://${req.headers.host}/invite/${token}`, expires_at: iso(Date.now() + 7 * 86400e3) }
-              invites.unshift(i)
-              return json(res, 200, i)
+              const expires_at = iso(Date.now() + 7 * 86400e3)
+              invites.unshift({ id: token.slice(0, 12), created_at: iso(Date.now()), expires_at, used_at: null, used_by_email: null, status: "pending" })
+              return json(res, 200, { token, url: `http://${req.headers.host}/invite/${token}`, expires_at })
             }
           }
           if (path === "/api/me/usage") return json(res, 200, { used_bytes: songs.reduce((a, s) => a + s.size_bytes, 0), quota_bytes: 5000 * MIB })

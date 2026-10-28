@@ -1,4 +1,4 @@
-import { Library, LogOut, Plus, Users } from "lucide-react"
+import { Library, LogOut, Plus, UserRound, Users } from "lucide-react"
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
@@ -57,7 +57,10 @@ export function AppShell() {
         <div className="mt-auto flex flex-col gap-4">
           <UsageMeter />
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm text-muted-foreground">{me.data?.email}</span>
+            <NavLink to="/account" className={(a) => cn(linkClass(a), "min-w-0 flex-1")}>
+              <UserRound className="size-5 shrink-0" />
+              <span className="truncate">{me.data?.email}</span>
+            </NavLink>
             <Button variant="ghost" size="icon" onClick={logout} aria-label="Sign out"><LogOut /></Button>
           </div>
         </div>
@@ -79,9 +82,9 @@ export function AppShell() {
             <Users className="size-5" />Invites
           </NavLink>
         )}
-        <button type="button" onClick={logout} className="flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium text-muted-foreground">
-          <LogOut className="size-5" />Sign out
-        </button>
+        <NavLink to="/account" className={({ isActive }) => cn("flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
+          <UserRound className="size-5" />Account
+        </NavLink>
       </nav>
     </div>
   )
