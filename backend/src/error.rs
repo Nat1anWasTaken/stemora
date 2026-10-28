@@ -38,6 +38,9 @@ impl AppError {
     pub fn not_found() -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", "not found")
     }
+    pub fn gone(code: &'static str, m: impl Into<String>) -> Self {
+        Self::new(StatusCode::GONE, code, m)
+    }
     pub fn conflict(code: &'static str, m: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, code, m)
     }
