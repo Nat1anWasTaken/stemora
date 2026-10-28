@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { toast } from "sonner"
 import { useRegisterSW } from "virtual:pwa-register/react"
 
@@ -6,6 +6,7 @@ const UPDATE_CHECK_MS = 60 * 60 * 1000
 
 /** Registers the service worker, offers a reload when a new version is deployed and flags lost connectivity. */
 export function PwaManager() {
+  const timer = useRef<number | undefined>(undefined)
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
@@ -13,7 +14,8 @@ export function PwaManager() {
     onRegisteredSW(url, reg) {
       if (!reg) return
       // Installed apps can stay open for days; look for a new deploy now and then.
-      setInterval(() => {
+      window.clearInterval(timer.current)
+      timer.current = window.setInterval(() => {
         if (reg.installing || !navigator.onLine) return
         fetch(url, { cache: "no-store" })
           .then(async (r) => {
@@ -23,6 +25,8 @@ export function PwaManager() {
       }, UPDATE_CHECK_MS)
     },
   })
+
+  useEffect(() => () => window.clearInterval(timer.current), [])
 
   useEffect(() => {
     if (!needRefresh) return

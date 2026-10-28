@@ -1,72 +1,153 @@
 import { useCallback, useRef, useState, useSyncExternalStore, type DragEvent, type FormEvent } from "react"
 import { Link } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle2, FileAudio, Link2, Loader2, RefreshCw, UploadCloud, X } from "lucide-react"
+import { AlertTriangle, Ban, CheckCircle2, FileAudio, Link2, Loader2, RefreshCw, Search, UploadCloud, X } from "lucide-react"
+import { ProcessingLine } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
-import { api, type Model } from "@/lib/api"
-import { formatBytes, titleFromFilename } from "@/lib/format"
-import { keys } from "@/lib/queries"
+import { api, progressValue, type LinkPreview, type Model, type Song } from "@/lib/api"
+import { formatBytes, formatClock, titleFromFilename } from "@/lib/format"
+import { keys, useSongActions, useSongs } from "@/lib/queries"
 import { UploadController } from "@/lib/upload"
 import { cn } from "@/lib/utils"
 
+/** A link import started on this page, followed live from the songs list. */
+function ImportRow({ song }: { song: Song }) {
+  const { cancelImport } = useSongActions()
+  const importing = song.status === "importing"
+  return (
+    <li className="flex flex-col gap-2 rounded-xl bg-secondary p-3">
+      <div className="flex items-center gap-2">
+        {song.status === "failed" ? <AlertTriangle className="size-4 shrink-0 text-destructive" /> : importing ? <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" /> : <CheckCircle2 className="size-4 shrink-0 text-success" />}
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{song.title}</span>
+        {importing && (
+          <Button size="sm" variant="ghost" disabled={cancelImport.isPending} onClick={() => cancelImport.mutate(song)}><Ban />Cancel</Button>
+        )}
+      </div>
+      {importing && (
+        <Progress value={progressValue(song)} aria-label="Import progress">
+          <ProcessingLine song={song} />
+        </Progress>
+      )}
+      {song.status === "failed" && <p role="alert" className="text-sm text-destructive">{song.error ?? "The import failed."}</p>}
+      {!importing && song.status !== "failed" && <p className="text-sm text-success">Downloaded. Separation has started.</p>}
+    </li>
+  )
+}
+
 function LinkImport({ model, onImported }: { model: Model; onImported: () => void }) {
   const [url, setUrl] = useState("")
-  const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [imported, setImported] = useState<string | null>(null)
+  /** The looked-up link, kept only while the input still holds it. */
+  const [preview, setPreview] = useState<{ url: string; info: LinkPreview } | null>(null)
+  const [title, setTitle] = useState("")
+  const [started, setStarted] = useState<string[]>([])
+  const { data: songs } = useSongs()
+  const startedSongs = started.flatMap((id) => songs?.filter((s) => s.id === id) ?? [])
 
-  const submit = async (e: FormEvent) => {
+  const link = url.trim()
+  const current = preview?.url === link ? preview.info : null
+
+  const check = async (e: FormEvent) => {
     e.preventDefault()
-    if (!url.trim() || busy) return
-    setBusy(true)
+    if (!link || checking) return
+    setChecking(true)
     setError(null)
-    setImported(null)
+    setPreview(null)
     try {
-      await api.importSong({ url: url.trim(), model })
-      setImported(url.trim())
+      const info = await api.previewLink(link)
+      setPreview({ url: link, info })
+      setTitle(info.title ?? "")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not read the link")
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const start = async () => {
+    if (!current || starting) return
+    setStarting(true)
+    setError(null)
+    try {
+      const t = title.trim()
+      const song = await api.importSong({ url: link, title: t && t !== current.title ? t : undefined, model })
+      setStarted((cur) => [song.id, ...cur])
       setUrl("")
+      setPreview(null)
       onImported()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the import")
     } finally {
-      setBusy(false)
+      setStarting(false)
     }
   }
 
+  const meta = current
+    ? [current.uploader, current.site, current.duration_s !== null ? formatClock(current.duration_s) : null, current.filesize ? `about ${formatBytes(current.filesize)}` : null].filter(Boolean).join(" · ")
+    : ""
+
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="link">Import from a link</Label>
-        <p className="text-sm text-muted-foreground">Paste a YouTube, SoundCloud or other link. The server downloads the audio for you.</p>
-      </div>
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <Input
-          id="link"
-          type="url"
-          inputMode="url"
-          autoComplete="off"
-          placeholder="https://www.youtube.com/watch?v=..."
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          className="h-11 flex-1"
-        />
-        <Button type="submit" size="lg" variant="secondary" disabled={busy || !url.trim()}>
-          {busy ? <Loader2 className="animate-spin" /> : <Link2 />}
-          Import
-        </Button>
-      </div>
+    <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
+      <form onSubmit={check} className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="link">Import from a link</Label>
+          <p className="text-sm text-muted-foreground">Paste a YouTube, SoundCloud or other link. Check it first, then the server downloads the audio for you.</p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            id="link"
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            placeholder="https://www.youtube.com/watch?v=..."
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            className="h-11 flex-1"
+          />
+          <Button type="submit" size="lg" variant="secondary" disabled={checking || !link || current !== null}>
+            {checking ? <Loader2 className="animate-spin" /> : <Search />}
+            {checking ? "Checking" : "Check link"}
+          </Button>
+        </div>
+      </form>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {imported && (
-        <p role="status" className="flex animate-in items-center gap-1.5 text-sm text-success fade-in">
-          <CheckCircle2 className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">Importing {imported}. It shows up in your library.</span>
-        </p>
+
+      {current && (
+        <div className="flex animate-page flex-col gap-3 rounded-xl bg-secondary p-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="link-title">Title</Label>
+            <Input id="link-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={link} maxLength={200} className="h-10" />
+            {meta && <p className="text-sm text-muted-foreground">{meta}</p>}
+          </div>
+          {current.problem ? (
+            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              {current.problem}
+            </p>
+          ) : (
+            <div className="flex gap-2">
+              <Button className="flex-1" disabled={starting} onClick={() => void start()}>
+                {starting ? <Loader2 className="animate-spin" /> : <Link2 />}
+                Import
+              </Button>
+              <Button variant="ghost" onClick={() => setPreview(null)}>Cancel</Button>
+            </div>
+          )}
+        </div>
       )}
-    </form>
+
+      {startedSongs.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {startedSongs.map((s) => <ImportRow key={s.id} song={s} />)}
+        </ul>
+      )}
+    </div>
   )
 }
 

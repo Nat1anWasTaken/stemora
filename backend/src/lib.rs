@@ -37,8 +37,14 @@ pub struct AppState {
     pub fetcher: Arc<dyn Fetcher>,
     /// Bounds concurrent link imports across all users.
     pub import_slots: Arc<tokio::sync::Semaphore>,
+    /// Bounds concurrent link previews (yt-dlp metadata lookups) across all users.
+    pub probe_slots: Arc<tokio::sync::Semaphore>,
+    /// Stage, progress and cancellation of the imports running in this process.
+    pub imports: Arc<import::ImportTracker>,
     /// Per-user limiter for POST /songs, /songs/import, /complete and /reprocess.
     pub upload_limiter: Arc<RateLimiter<Uuid>>,
+    /// Per-user limiter for POST /songs/import/preview.
+    pub preview_limiter: Arc<RateLimiter<Uuid>>,
     /// Limiter for login attempts, keyed by email.
     pub login_limiter: Arc<RateLimiter<String>>,
 }
@@ -59,7 +65,10 @@ impl AppState {
             modal,
             fetcher,
             import_slots,
+            probe_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            imports: Default::default(),
             upload_limiter: Arc::new(RateLimiter::new(30, Duration::from_secs(600))),
+            preview_limiter: Arc::new(RateLimiter::new(60, Duration::from_secs(600))),
             login_limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(600))),
         }
     }

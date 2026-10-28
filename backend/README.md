@@ -22,7 +22,7 @@ The interface is defined in [`../docs/contract.md`](../docs/contract.md).
 | `MAX_DURATION_S` | `900` | Passed to the worker |
 | `USER_QUOTA_MB` | `5000` | Per-user: sum of original sizes + stem sizes |
 | `MAX_CONCURRENT_JOBS` | `2` | Queued+running jobs per user (429 beyond) |
-| `MAX_CONCURRENT_IMPORTS` | `2` | Link imports (yt-dlp downloads) running at once across all users; more wait their turn |
+| `MAX_CONCURRENT_IMPORTS` | `2` | Link imports (yt-dlp downloads) running at once across all users; more wait their turn (stage `waiting`). Link previews have their own limit of 4 at once |
 | `IMPORT_TIMEOUT_S` | `600` | A link import that takes longer fails |
 | `YTDLP_PATH` | `yt-dlp` | yt-dlp executable (the Docker image ships one, with ffmpeg and deno) |
 | `COOKIE_SECURE` | auto | Overrides the Secure flag (default: on iff `PUBLIC_BASE_URL` is https) |

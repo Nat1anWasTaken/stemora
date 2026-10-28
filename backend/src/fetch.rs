@@ -5,10 +5,16 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 /// Audio only when the site offers it; otherwise the smallest-effort format that has audio.
 const FORMAT: &str = "bestaudio/best[acodec!=none]";
+
+/// One machine-readable line per progress update; yt-dlp prints `NA` for unknown fields.
+const PROGRESS_PREFIX: &str = "STEMORA-PROGRESS";
+const PROGRESS_TEMPLATE: &str = "download:STEMORA-PROGRESS %(progress.downloaded_bytes)s \
+    %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s";
 
 /// What we need to know about a link before downloading it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -19,7 +25,24 @@ pub struct MediaInfo {
     pub is_playlist: bool,
     /// Exact or approximate size of the selected format, when the site reports it.
     pub filesize: Option<u64>,
+    /// Channel or artist, when the site names one.
+    pub uploader: Option<String>,
+    /// The site, as yt-dlp names it (e.g. "YouTube", "SoundCloud").
+    pub site: Option<String>,
 }
+
+/// Where a download stands, as last reported by yt-dlp.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DownloadProgress {
+    pub downloaded_bytes: u64,
+    /// Exact size, or yt-dlp's estimate for fragmented (HLS/DASH) downloads.
+    pub total_bytes: Option<u64>,
+    pub speed_bps: Option<f64>,
+    pub eta_s: Option<u64>,
+}
+
+/// Receives progress updates while a download runs.
+pub type ProgressFn<'a> = &'a (dyn Fn(DownloadProgress) + Send + Sync);
 
 /// A human-readable reason the link could not be fetched (shown to the user as-is).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +58,13 @@ impl std::fmt::Display for FetchError {
 pub trait Fetcher: Send + Sync {
     async fn probe(&self, url: &str) -> Result<MediaInfo, FetchError>;
     /// Download the audio into `dir` and return the file's path (`original.{ext}`).
-    async fn download(&self, url: &str, dir: &Path, max_bytes: u64) -> Result<PathBuf, FetchError>;
+    async fn download(
+        &self,
+        url: &str,
+        dir: &Path,
+        max_bytes: u64,
+        progress: ProgressFn<'_>,
+    ) -> Result<PathBuf, FetchError>;
 }
 
 pub struct YtDlp {
@@ -47,8 +76,13 @@ impl YtDlp {
         Self { bin }
     }
 
-    async fn run(&self, args: &[&str]) -> Result<(String, String), FetchError> {
-        let out = tokio::process::Command::new(&self.bin)
+    /// Run yt-dlp, passing each stdout line to `on_line` as it arrives. Returns stdout.
+    async fn run(
+        &self,
+        args: &[&str],
+        on_line: &(dyn Fn(&str) + Send + Sync),
+    ) -> Result<String, FetchError> {
+        let mut child = tokio::process::Command::new(&self.bin)
             .args([
                 "--ignore-config",
                 "--no-playlist",
@@ -61,50 +95,106 @@ impl YtDlp {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .output()
-            .await
+            .spawn()
             .map_err(|e| {
                 tracing::error!(bin = %self.bin, error = %e, "could not run yt-dlp");
                 FetchError("Importing from links is not available on this server.".into())
             })?;
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-        if !out.status.success() {
-            tracing::warn!(status = %out.status, stderr = %tail(&stderr, 500), "yt-dlp failed");
+        let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+        let (stdout, stderr) =
+            tokio::join!(read_lines(stdout, on_line), read_lines(stderr, &|_| {}));
+        let status = child.wait().await.map_err(|e| {
+            tracing::error!(error = %e, "yt-dlp did not exit cleanly");
+            FetchError("Could not fetch the link.".into())
+        })?;
+        if !status.success() {
+            tracing::warn!(%status, stderr = %tail(&stderr, 500), "yt-dlp failed");
             return Err(classify(&stderr));
         }
-        Ok((stdout, stderr))
+        Ok(stdout)
     }
+}
+
+/// Collect a stream's lines (without progress lines, which can be many), calling `on_line` on each.
+async fn read_lines(
+    stream: Option<impl AsyncRead + Unpin>,
+    on_line: &(dyn Fn(&str) + Send + Sync),
+) -> String {
+    let mut out = String::new();
+    let Some(stream) = stream else { return out };
+    let mut lines = BufReader::new(stream).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        on_line(&line);
+        if !line.starts_with(PROGRESS_PREFIX) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Parse one `--progress-template` line; `None` for any other output.
+pub fn parse_progress(line: &str) -> Option<DownloadProgress> {
+    let mut f = line.strip_prefix(PROGRESS_PREFIX)?.split_whitespace();
+    let mut num = || {
+        f.next()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+    };
+    let downloaded = num()?;
+    let (total, estimate, speed, eta) = (num(), num(), num(), num());
+    Some(DownloadProgress {
+        downloaded_bytes: downloaded as u64,
+        total_bytes: total.or(estimate).filter(|t| *t > 0.0).map(|t| t as u64),
+        speed_bps: speed,
+        eta_s: eta.map(|e| e as u64),
+    })
 }
 
 #[async_trait]
 impl Fetcher for YtDlp {
     async fn probe(&self, url: &str) -> Result<MediaInfo, FetchError> {
         guard_host(url).await?;
-        let (stdout, _) = self
-            .run(&["--dump-single-json", "-f", FORMAT, "--", url])
+        let stdout = self
+            .run(&["--dump-single-json", "-f", FORMAT, "--", url], &|_| {})
             .await?;
         parse_info(&stdout)
     }
 
-    async fn download(&self, url: &str, dir: &Path, max_bytes: u64) -> Result<PathBuf, FetchError> {
+    async fn download(
+        &self,
+        url: &str,
+        dir: &Path,
+        max_bytes: u64,
+        progress: ProgressFn<'_>,
+    ) -> Result<PathBuf, FetchError> {
         guard_host(url).await?;
         let template = dir.join("original.%(ext)s");
         let max = max_bytes.to_string();
-        let (stdout, _) = self
-            .run(&[
-                "-f",
-                FORMAT,
-                "--max-filesize",
-                &max,
-                "--no-progress",
-                "--no-mtime",
-                "--no-part",
-                "-o",
-                &template.to_string_lossy(),
-                "--",
-                url,
-            ])
+        let stdout = self
+            .run(
+                &[
+                    "-f",
+                    FORMAT,
+                    "--max-filesize",
+                    &max,
+                    "--progress",
+                    "--newline",
+                    "--progress-template",
+                    PROGRESS_TEMPLATE,
+                    "--no-mtime",
+                    "--no-part",
+                    "-o",
+                    &template.to_string_lossy(),
+                    "--",
+                    url,
+                ],
+                &|line| {
+                    if let Some(p) = parse_progress(line) {
+                        progress(p);
+                    }
+                },
+            )
             .await?;
         if stdout.contains("larger than max-filesize") {
             return Err(too_large(max_bytes));
@@ -143,6 +233,10 @@ struct RawInfo {
     is_live: Option<bool>,
     filesize: Option<f64>,
     filesize_approx: Option<f64>,
+    uploader: Option<String>,
+    channel: Option<String>,
+    artist: Option<String>,
+    extractor_key: Option<String>,
 }
 
 pub fn parse_info(json: &str) -> Result<MediaInfo, FetchError> {
@@ -161,6 +255,14 @@ pub fn parse_info(json: &str) -> Result<MediaInfo, FetchError> {
             .or(raw.filesize_approx)
             .filter(|s| *s > 0.0)
             .map(|s| s as u64),
+        uploader: [raw.artist, raw.uploader, raw.channel]
+            .into_iter()
+            .flatten()
+            .map(|u| u.trim().to_string())
+            .find(|u| !u.is_empty()),
+        site: raw
+            .extractor_key
+            .filter(|k| !k.is_empty() && !k.eq_ignore_ascii_case("generic")),
     })
 }
 
@@ -266,6 +368,9 @@ pub struct FakeFetcher {
     /// (extension, size in bytes) of the file `download` writes, or an error.
     pub file: std::sync::Mutex<Result<(String, u64), FetchError>>,
     pub calls: std::sync::Mutex<Vec<String>>,
+    /// When set, `download` reports half its progress and then waits for a permit (tests use
+    /// it to observe and cancel an import mid-download).
+    pub gate: std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
 }
 
 impl Default for FakeFetcher {
@@ -278,6 +383,7 @@ impl Default for FakeFetcher {
             })),
             file: std::sync::Mutex::new(Ok(("webm".into(), 4 * 1024 * 1024))),
             calls: Default::default(),
+            gate: Default::default(),
         }
     }
 }
@@ -289,9 +395,25 @@ impl Fetcher for FakeFetcher {
         self.info.lock().unwrap().clone()
     }
 
-    async fn download(&self, url: &str, dir: &Path, max_bytes: u64) -> Result<PathBuf, FetchError> {
+    async fn download(
+        &self,
+        url: &str,
+        dir: &Path,
+        max_bytes: u64,
+        progress: ProgressFn<'_>,
+    ) -> Result<PathBuf, FetchError> {
         self.calls.lock().unwrap().push(format!("download {url}"));
         let (ext, size) = self.file.lock().unwrap().clone()?;
+        let gate = self.gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            progress(DownloadProgress {
+                downloaded_bytes: size / 2,
+                total_bytes: Some(size),
+                speed_bps: Some(1e6),
+                eta_s: Some(3),
+            });
+            let _ = gate.acquire().await;
+        }
         if size > max_bytes {
             return Err(too_large(max_bytes));
         }
@@ -357,6 +479,41 @@ mod tests {
                 .is_playlist
         );
         assert!(parse_info("not json").is_err());
+        let i = parse_info(
+            r#"{"title":"x","uploader":"Up","channel":"Ch","artist":" ","extractor_key":"Youtube"}"#,
+        )
+        .unwrap();
+        assert_eq!(i.uploader.as_deref(), Some("Up"));
+        assert_eq!(i.site.as_deref(), Some("Youtube"));
+        assert_eq!(
+            parse_info(r#"{"extractor_key":"Generic"}"#).unwrap().site,
+            None
+        );
+    }
+
+    #[test]
+    fn parses_progress() {
+        assert_eq!(
+            parse_progress("STEMORA-PROGRESS 15360 8945229 NA 166817.3 53"),
+            Some(DownloadProgress {
+                downloaded_bytes: 15360,
+                total_bytes: Some(8945229),
+                speed_bps: Some(166817.3),
+                eta_s: Some(53),
+            })
+        );
+        // Fragmented downloads only have an estimate; speed/ETA are unknown at first.
+        assert_eq!(
+            parse_progress("STEMORA-PROGRESS 1024 NA 5000000.0 NA NA"),
+            Some(DownloadProgress {
+                downloaded_bytes: 1024,
+                total_bytes: Some(5_000_000),
+                speed_bps: None,
+                eta_s: None,
+            })
+        );
+        assert_eq!(parse_progress("[download] Destination: original.mp3"), None);
+        assert_eq!(parse_progress("STEMORA-PROGRESS NA NA NA NA NA"), None);
     }
 
     #[test]
@@ -388,9 +545,19 @@ mod tests {
         assert!(!info.is_playlist && !info.is_live, "{info:?}");
         let dir = std::env::temp_dir().join(format!("stemora-ytdlp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(y.download(&url, &dir, 1000).await, Err(too_large(1000)));
-        let path = y.download(&url, &dir, 200 << 20).await.unwrap();
-        assert!(std::fs::metadata(&path).unwrap().len() > 1000);
+        assert_eq!(
+            y.download(&url, &dir, 1000, &|_| {}).await,
+            Err(too_large(1000))
+        );
+        let last = std::sync::Mutex::new(None);
+        let path = y
+            .download(&url, &dir, 200 << 20, &|p| *last.lock().unwrap() = Some(p))
+            .await
+            .unwrap();
+        let size = std::fs::metadata(&path).unwrap().len();
+        assert!(size > 1000);
+        let last = last.lock().unwrap().clone().expect("no progress reported");
+        assert_eq!(last.downloaded_bytes, size);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

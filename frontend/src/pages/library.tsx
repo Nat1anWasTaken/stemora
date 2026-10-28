@@ -1,30 +1,32 @@
 import { useRef, useState } from "react"
 import { Link, useNavigate } from "react-router"
-import { Music2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCw, Sparkles, Trash2 } from "lucide-react"
+import { Ban, Music2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCw, Sparkles, Trash2 } from "lucide-react"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
 import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import { isActive, isFailedImport, type Song } from "@/lib/api"
-import { formatBytes, formatClock, relativeTime } from "@/lib/format"
+import { isActive, isFailedImport, progressValue, type Song } from "@/lib/api"
+import { formatBytes, formatClock, hostOf, relativeTime } from "@/lib/format"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useSongActions, useSongs } from "@/lib/queries"
 
 function SongCard({ song }: { song: Song }) {
   const nav = useNavigate()
-  const { remove, rename, reprocess, reimport } = useSongActions()
+  const { remove, rename, reprocess, reimport, cancelImport } = useSongActions()
   const [confirm, setConfirm] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const ready = song.status === "ready"
   const working = isActive(song)
   const failedImport = isFailedImport(song)
+  const importing = song.status === "importing"
   const row = useRef<HTMLDivElement>(null)
   const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
 
   const entries: MenuEntry[] = [
+    ...(importing ? [{ key: "cancel", label: "Cancel import", icon: <Ban />, onSelect: () => cancelImport.mutate(song) } as MenuEntry] : []),
     ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     ...((song.status === "failed" && !failedImport) || ready
@@ -64,6 +66,8 @@ function SongCard({ song }: { song: Song }) {
             <StatusBadge song={song} />
             {ready && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
             {ready && song.model === "htdemucs_ft" && <span>High quality</span>}
+            {importing && song.source_url && <span className="max-w-40 truncate">{hostOf(song.source_url)}</span>}
+            {importing && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
             <span>{relativeTime(song.created_at)}</span>
           </div>
         </div>
@@ -73,8 +77,15 @@ function SongCard({ song }: { song: Song }) {
       </div>
 
       {working && (
-        <Progress value={song.status === "processing" ? song.progress : null} aria-label="Processing progress">
-          <ProcessingLine song={song} />
+        <Progress value={progressValue(song)} aria-label={importing ? "Import progress" : "Processing progress"}>
+          <div className="flex w-full items-center justify-between gap-3">
+            <ProcessingLine song={song} />
+            {importing && (
+              <Button size="sm" variant="ghost" className="relative z-10" disabled={cancelImport.isPending} onClick={() => cancelImport.mutate(song)}>
+                Cancel
+              </Button>
+            )}
+          </div>
         </Progress>
       )}
       {song.status === "failed" && (

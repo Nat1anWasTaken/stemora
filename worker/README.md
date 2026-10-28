@@ -28,6 +28,12 @@ STEMORA_GPU=none uv run modal deploy app.py # interim CPU-only deploy (8 cores, 
 ```
 Prints the `spawn` URL (set as `MODAL_ENDPOINT_URL` in the backend). Redeploy after changing any secret value is not needed; secrets are read at container start.
 
+## CI deploy
+`.github/workflows/worker.yml` runs the tests on PRs and runs `modal deploy app.py` on pushes to `main` that touch `worker/` (also manually via "Run workflow"). Setup once:
+1. Create a Modal token (`modal token new` or Settings -> API Tokens) for the workspace that holds `stemora-r2` / `stemora-auth`.
+2. In the GitHub repo create an environment named `modal-production` (add required reviewers if you want a manual approval gate) and add the secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` to it.
+The deploy keeps the same `spawn` URL, so `MODAL_ENDPOINT_URL` in Dokploy does not change. The GPU is `L4` unless `STEMORA_GPU` is set in the workflow env.
+
 ## Test
 ```sh
 uv run modal run app.py::local_test --song-path ./sample.mp3 [--model htdemucs_ft] [--out-dir ./out]

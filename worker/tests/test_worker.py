@@ -109,3 +109,22 @@ def test_reporter_monotonic():
     r.update("separating", 50)
     r.update("separating", 30)
     assert sent[-1]["progress"] == 50
+
+
+def test_btc_labels_and_beat_snapping():
+    import analysis as A
+    labels = A.btc_labels()
+    assert len(labels) == 170 and labels[8 * 14 + 8] == "Abmaj7" and labels[10 * 14 + 1] == "Bb" and labels[169] == "N"
+    fps = A.BTC_FPS
+    frames = ["C"] * int(fps * 2) + ["Gm7"] * int(fps * 2)
+    starts, labs = A.chords_to_beats(frames, np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]), 4.0)
+    assert labs[0] == "C" and labs[-1] == "Gm7"
+    merged = A.merge_chords(starts, labs, 4.0)
+    assert [c["label"] for c in merged] == ["C", "Gm7"] and merged[0]["end"] == merged[1]["start"]
+
+
+def test_build_analysis():
+    import analysis as A
+    beats = np.arange(0.5, 8.5, 0.5)
+    out = A.build_analysis(beats, A.snap_downbeats(beats, np.array([0.52, 2.49, 4.5])), [], 8.0)
+    assert out["bpm"] == 120.0 and out["beats_per_bar"] == 4 and out["downbeats"] == [0.5, 2.5, 4.5]
