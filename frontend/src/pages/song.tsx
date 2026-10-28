@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, RefreshCw } from "lucide-react"
 import { ProcessingLine, SongArtwork } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { useThemeColor } from "@/hooks/use-theme-color"
 import { useSong, useSongActions } from "@/lib/queries"
 import { Player } from "@/player/ui/player"
 
@@ -10,6 +11,7 @@ export function SongPage() {
   const { id = "" } = useParams()
   const { data, error, isLoading } = useSong(id)
   const { reprocess } = useSongActions()
+  useThemeColor("--sheet-top")
 
   if (isLoading) return <div className="grid min-h-app place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
   if (error || !data) {

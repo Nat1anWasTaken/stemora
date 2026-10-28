@@ -1,8 +1,9 @@
 import { Library, LogOut, Plus, RotateCw, UserRound, Users, WifiOff } from "lucide-react"
-import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router"
+import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 import { Logo } from "@/components/app/logo"
+import { PageTransition } from "@/components/app/page-transition"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { api } from "@/lib/api"
@@ -56,7 +57,6 @@ export function AppShell() {
   const me = useMe()
   const qc = useQueryClient()
   const nav = useNavigate()
-  const { pathname } = useLocation()
   const admin = me.data?.role === "admin"
   const logout = async () => {
     await api.logout().catch(() => {})
@@ -86,12 +86,12 @@ export function AppShell() {
       </aside>
 
       <main className="min-w-0 flex-1 pb-nav md:pb-0">
-        <div key={pathname} className="animate-page">
+        <PageTransition>
           <Outlet />
-        </div>
+        </PageTransition>
       </main>
 
-      <nav className="glass fixed inset-x-4 bottom-nav z-30 animate-in duration-500 ease-spring fade-in slide-in-from-bottom-4 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
+      <nav className="glass vt-nav fixed inset-x-4 bottom-nav z-30 animate-in duration-500 ease-spring fade-in slide-in-from-bottom-4 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
         <NavLink to="/" end className={mobileLinkClass}>
           <Library className="size-5" />Library
         </NavLink>

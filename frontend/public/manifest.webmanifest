@@ -7,8 +7,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117",
+  "background_color": "#050a12",
+  "theme_color": "#050a12",
   "categories": ["music", "education"],
   "launch_handler": { "client_mode": "navigate-existing" },
   "shortcuts": [

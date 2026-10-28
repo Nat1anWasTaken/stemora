@@ -7,6 +7,7 @@ import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useIsDesktop } from "@/hooks/use-media"
+import { useThemeColor } from "@/hooks/use-theme-color"
 import { stemDownloadUrl, type SongDetail } from "@/lib/api"
 import { formatClock } from "@/lib/format"
 import { useSongActions } from "@/lib/queries"
@@ -77,6 +78,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   const select = useCallback((n: StemName) => setSelected(n), [])
 
   usePlayerEnvironment()
+  useThemeColor("--sheet-top")
   useShortcuts(selected, select)
   useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)

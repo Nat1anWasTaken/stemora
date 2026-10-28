@@ -123,6 +123,22 @@
   html {
     @apply font-sans antialiased;
     -webkit-tap-highlight-color: transparent;
+    /* no browser pull-to-refresh / scroll chaining; the library has its own pull-to-refresh */
+    overscroll-behavior-y: contain;
+  }
+  /* Installed app: behave like a native app, not a web page (inputs and dialogs stay selectable) */
+  @media (display-mode: standalone) {
+    body {
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    input, textarea, [contenteditable], [role="alert"], [data-sonner-toast] {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    a, img {
+      -webkit-touch-callout: none;
+    }
   }
   body {
     @apply bg-background text-foreground min-h-dvh;
@@ -211,6 +227,24 @@
   to { transform: translateY(100%); }
 }
 
+/*
+ * Page transitions (React <ViewTransition>, see components/app/page-transition.tsx):
+ * fade through between tabs, nothing when html[data-nav="none"].
+ */
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-fade-in-up { from { opacity: 0; transform: translateY(0.75rem) scale(0.99); } }
+/* Fixed chrome gets its own layer so the page snapshots never paint over it */
+@utility vt-nav { view-transition-name: bottom-nav; }
+::view-transition-group(bottom-nav) { z-index: 1; }
+::view-transition-old(bottom-nav) { animation: none; opacity: 0; }
+::view-transition-new(bottom-nav) { animation: none; }
+::view-transition-old(.page-exit) { animation: vt-fade-out 120ms ease-out both; }
+::view-transition-new(.page-enter) { animation: vt-fade-in-up 260ms var(--ease-spring) 60ms both; }
+html[data-nav="none"]::view-transition-old(.page-exit),
+html[data-nav="none"]::view-transition-new(.page-enter),
+html[data-nav="none"]::view-transition-old(root),
+html[data-nav="none"]::view-transition-new(root) { animation: none; }
+
 /* Entrance for routed content and freshly shown blocks */
 @utility animate-page {
   animation: page-in 280ms var(--ease-spring) both;
@@ -239,6 +273,26 @@
   transition: translate 300ms var(--ease-sheet);
   &[data-dragging] { transition: none; }
 }
+/* Swipe-to-reveal list row; --swipe-x is set from JS (use-swipe-action.ts) */
+@utility swipe-row {
+  translate: var(--swipe-x, 0px) 0;
+  transition: translate 320ms var(--ease-spring);
+  touch-action: pan-y;
+  &[data-dragging] { transition: none; }
+}
+/* Pull-to-refresh spinner; --pull (px) and --pull-n (0..1) are set from JS (use-pull-to-refresh.ts) */
+@keyframes ptr-spin { to { rotate: 360deg; } }
+@utility ptr-indicator {
+  translate: 0 calc(var(--pull, 0px) - 4rem);
+  opacity: var(--pull-n, 0);
+  transition: translate 300ms var(--ease-spring), opacity 200ms;
+  &[data-dragging] { transition: none; }
+}
+@utility ptr-spin {
+  rotate: calc(var(--pull-n, 0) * 270deg);
+  [data-refreshing] & { animation: ptr-spin 700ms linear infinite; }
+}
+
 /* Press feedback for custom tappables (Button has its own in its variants) */
 @utility pressable {
   transition-property: transform, color, background-color, border-color, opacity;
@@ -251,6 +305,11 @@
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 

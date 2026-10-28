@@ -19,7 +19,7 @@ export default defineConfig({
       manifest: false, // public/manifest.webmanifest is the source of truth
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,webmanifest}"],
-        globIgnores: ["mock/**"],
+        globIgnores: ["mock/**", "splash/**"],
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api\//, /^\/mock/],
         cleanupOutdatedCaches: true,

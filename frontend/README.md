@@ -12,6 +12,7 @@ React 19, TypeScript (strict), Vite, Tailwind CSS v4, shadcn/ui on Base UI, Reac
 | `pnpm test` | Vitest (mixer/loop/peaks logic, upload chunking and retry, formatters) |
 | `pnpm build` | Type-check and production build to `dist/` |
 | `pnpm mock:audio` | Regenerate the 4 mock stems + peaks in `public/mock` (needs ffmpeg) |
+| `pnpm splash` | Regenerate the iOS launch screens in `public/splash` and print their `<link>` tags for `index.html` (needs ImageMagick) |
 
 ## Mock mode
 `pnpm dev:mock` serves the whole API from memory: seeded login `dev@stemora.test` / `password` (admin), one ready song with four 20 s generated stems, one processing, one failed. Uploads hit fake presigned `PUT /mock-upload/...` URLs and then run a ~16 s simulated job. `VITE_MOCK_FRESH=1` starts with zero users to try first-run bootstrap; invite token `invalid` shows the invalid-invite page.
@@ -22,6 +23,12 @@ React 19, TypeScript (strict), Vite, Tailwind CSS v4, shadcn/ui on Base UI, Reac
 - `src/lib/upload.ts`: single PUT or 16 MiB multipart upload with per-part retry, ETag collection, then `POST /complete`.
 - `src/components/ui`: shadcn components (Base UI style `base-nova`).
 - Theme tokens, gradients, safe-area utilities and motion (`ease-spring`, `animate-page`, `stagger-children`, `animate-sheet-in/out`, `pressable`, `sheet-drag`): `src/index.css`. Everything respects `prefers-reduced-motion`.
+
+## Native feel
+- Page transitions: switching bottom-nav pages fades through with React `<ViewTransition>` (`src/components/app/page-transition.tsx`, CSS in `index.css`). The player route is skipped (it slides as a sheet), and so is an iOS back swipe that the browser already animated. Browser back/forward does not animate: React flushes `popstate` updates synchronously.
+- Library: pull down at the top to refresh (`use-pull-to-refresh.ts`); swipe a song left to reveal Delete, or all the way to delete it after confirming (`use-swipe-action.ts`, touch only).
+- Status bar: `theme-color` matches the page background, and full-bleed sheets (player, sign-in) tint it with `useThemeColor`.
+- Installed app: iOS launch screens, no text selection outside inputs, no link callouts, and no browser pull-to-refresh.
 
 ## Mobile player
 Two tabs that fit the screen without scrolling the page: **Mixer** (four stem rows with mute, volume, solo and a menu, plus an "All stems" reset) and **Practice** (metronome, 15 s loop sections, waveform). The full preset-chip row is shown only on desktop. Swipe the grab bar or header down to close the player (`use-sheet-drag.ts`).

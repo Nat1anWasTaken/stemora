@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import "./index.css"
 import { PwaManager } from "@/components/app/pwa"
+import { NavDirection } from "@/components/app/page-transition"
 import { AppShell, RequireAuth } from "@/components/app/shell"
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError } from "@/lib/api"
@@ -27,6 +28,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <NavDirection />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/bootstrap" element={<BootstrapPage />} />
