@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { applyPreset, clampLoop, currentPreset, defaultMixer, effectiveGain, loopedPosition, toggleIn } from "@/player/mixer"
 import { parseMixer } from "@/player/mixerStorage"
-import { buildCells, lastAtOrBefore, parseAnalysis, splitChord } from "@/player/analysis"
+import { buildBars, buildCells, lastAtOrBefore, parseAnalysis, splitChord } from "@/player/analysis"
 import { binPeaks, computePeaks, parsePeaks } from "@/player/peaks"
 
 describe("effectiveGain", () => {
@@ -111,6 +111,16 @@ describe("analysis", () => {
     const cells = buildCells(a!)
     expect(cells.map((c) => `${c.bar}.${c.beat}`)).toEqual(["1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "2.4"])
     expect(cells.map((c) => c.chord)).toEqual(["Abmaj7", null, null, null, "Bb", null, null, null])
+    expect(cells.every((c) => !c.held)).toBe(true)
+  })
+
+  it("marks chords repeated on a downbeat as held and groups bars", () => {
+    const b = parseAnalysis({ version: 1, beats: [0, 1, 2, 3, 4, 5], downbeats: [1, 4], chords: [{ start: 0, end: 1, label: "N" }, { start: 1, end: 6, label: "C" }] })!
+    const cells = buildCells(b)
+    expect(cells.map((c) => c.chord)).toEqual(["N", "C", null, null, "C", null])
+    expect(cells.map((c) => c.held)).toEqual([false, false, false, false, true, false])
+    const bars = buildBars(cells, 7)
+    expect(bars.map((x) => [x.bar, x.start, x.end, x.cells.length])).toEqual([[0, 0, 1, 1], [1, 1, 4, 3], [2, 4, 7, 2]])
   })
 
   it("finds positions and splits labels", () => {

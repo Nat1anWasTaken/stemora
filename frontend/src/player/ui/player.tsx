@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { AudioWaveform, ChevronDown, Download, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
+import { AudioWaveform, ChevronDown, Download, LayoutGrid, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
@@ -14,6 +14,7 @@ import { useSongActions } from "@/lib/queries"
 import { STEM_NAMES } from "@/player/mixer"
 import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
 import { getPosition, usePlayer } from "@/player/store"
+import { ChordGrid } from "@/player/ui/chord-grid"
 import { PresetChips } from "@/player/ui/preset-chips"
 import { PracticeStrip } from "@/player/ui/practice-strip"
 import { StemRow, triggerDownload } from "@/player/ui/stem-row"
@@ -66,7 +67,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   const loadProgress = usePlayer((s) => s.loadProgress)
   const error = usePlayer((s) => s.error)
   const desktop = useIsDesktop()
-  const [tab, setTab] = useState<"mixer" | "practice">("mixer")
+  const [tab, setTab] = useState<"mixer" | "practice" | "chords">("mixer")
   const [closing, setClosing] = useState(false)
   const sheet = useRef<HTMLDivElement>(null)
   const dragZone = useRef<HTMLDivElement>(null)
@@ -76,6 +77,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   const [deleting, setDeleting] = useState(false)
   const [reproc, setReproc] = useState(false)
   const select = useCallback((n: StemName) => setSelected(n), [])
+  const toggleChords = useCallback(() => setTab((t) => (t === "chords" ? "practice" : "chords")), [])
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
@@ -151,32 +153,61 @@ export function Player({ detail }: { detail: SongDetail }) {
         </header>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-2 pb-2 md:grid md:grid-cols-5 md:gap-8 md:px-6 md:pt-4">
-        {!desktop && statusPanel}
-        <div className={cn("animate-page min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain md:col-span-2 md:flex md:flex-none", tab === "mixer" ? "flex" : "hidden")}>
-          {desktop && status === "ready" && <PracticeStrip />}
-          {desktop && statusPanel}
-          <section aria-label="Mixer" className="flex flex-1 flex-col gap-3 md:flex-none">
-            <ul className="flex flex-1 flex-col justify-evenly gap-1 md:flex-none md:justify-start">
-              {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
-            </ul>
-            <PresetChips />
-          </section>
+      {desktop ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 pt-4 pb-2">
+          {status === "ready" && <PracticeStrip onExpand={toggleChords} />}
+          {statusPanel}
+          {tab === "chords" ? (
+            <div className="animate-page flex min-h-0 flex-1 flex-col">
+              <ChordGrid onCollapse={() => setTab("practice")} />
+            </div>
+          ) : (
+            <section aria-label="Tracks" className="animate-page flex min-h-0 flex-1 flex-col gap-3">
+              <div className="grid min-h-0 flex-1 grid-cols-12 gap-3">
+                <ul aria-label="Mixer" className="col-span-4 grid grid-rows-4">
+                  {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
+                </ul>
+                <div className="col-span-8 flex min-h-0">
+                  <Waveform />
+                </div>
+              </div>
+              <PresetChips />
+            </section>
+          )}
         </div>
-        <section aria-label="Practice" className={cn("animate-page min-h-0 flex-1 flex-col gap-3 md:col-span-3 md:flex", tab === "practice" ? "flex" : "hidden")}>
-          {!desktop && status === "ready" && <PracticeStrip />}
-          <Waveform />
-        </section>
-      </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-2 pb-2">
+          {statusPanel}
+          {tab === "mixer" && (
+            <section aria-label="Mixer" className="animate-page flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain">
+              <ul className="flex flex-1 flex-col justify-evenly gap-1">
+                {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
+              </ul>
+              <PresetChips />
+            </section>
+          )}
+          {tab === "practice" && (
+            <section aria-label="Practice" className="animate-page flex min-h-0 flex-1 flex-col gap-3">
+              {status === "ready" && <PracticeStrip onExpand={() => setTab("chords")} />}
+              <Waveform />
+            </section>
+          )}
+          {tab === "chords" && (
+            <div className="animate-page flex min-h-0 flex-1 flex-col">
+              <ChordGrid />
+            </div>
+          )}
+        </div>
+      )}
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border/60 px-4 pt-2 pb-safe md:px-6">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         <SeekBar />
         <Transport />
-        <nav className="mx-auto w-full max-w-xs rounded-full border border-border bg-secondary/60 p-1 md:hidden" aria-label="Player view">
+        <nav className="mx-auto w-full max-w-sm rounded-full border border-border bg-secondary/60 p-1 md:hidden" aria-label="Player view">
           <div className="relative flex">
-            <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1/2 rounded-full bg-primary transition-transform duration-300 ease-spring", tab === "practice" && "translate-x-full")} />
-            {([["mixer", "Mixer", SlidersVertical], ["practice", "Practice", AudioWaveform]] as const).map(([key, label, Icon]) => (
+            <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1/3 rounded-full bg-primary transition-transform duration-300 ease-spring", tab === "practice" && "translate-x-full", tab === "chords" && "translate-x-double")} />
+            {([["mixer", "Mixer", SlidersVertical], ["practice", "Practice", AudioWaveform], ["chords", "Chords", LayoutGrid]] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
                 type="button"
