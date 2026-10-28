@@ -1,4 +1,4 @@
-"""Stemora Modal app: GPU Demucs separation + lightweight spawn endpoint."""
+"""Stemora Modal app: GPU Demucs separation + lightweight spawn/cancel endpoints."""
 import os
 
 import modal
@@ -48,10 +48,12 @@ image = (
     .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "btc")
 )
 
-# GPU type. Set STEMORA_GPU=none at deploy time to deploy CPU-only (interim, for
-# accounts without a GPU-enabled payment method; ~3-5x slower than L4 but functional).
-GPU = os.environ.get("STEMORA_GPU", "L4")
-GPU = None if GPU.lower() == "none" else GPU
+# GPU types in order of preference (comma-separated); Modal schedules on the first one with
+# free capacity, so an L4 shortage no longer leaves jobs waiting indefinitely. Set
+# STEMORA_GPU=none at deploy time to deploy CPU-only (interim, for accounts without a
+# GPU-enabled payment method; ~3-5x slower than L4 but functional).
+GPU = os.environ.get("STEMORA_GPU", "L4,A10G,T4")
+GPU = None if GPU.lower() == "none" else [g.strip() for g in GPU.split(",") if g.strip()]
 
 secrets = [modal.Secret.from_name("stemora-r2"), modal.Secret.from_name("stemora-auth")]
 
@@ -91,6 +93,26 @@ def spawn(body: dict, authorization: str | None = Header(default=None)):
         raise HTTPException(status_code=422, detail=str(e)) from None
     call = separate.spawn(job)
     return {"call_id": call.object_id}
+
+
+@app.function(image=image, secrets=[modal.Secret.from_name("stemora-auth")])
+@modal.fastapi_endpoint(method="POST")
+def cancel(body: dict, authorization: str | None = Header(default=None)):
+    """Cancel a `separate` call the backend has given up on (queued or running)."""
+    import os
+    from schema import RequestError, check_bearer, validate_call_id
+
+    if not check_bearer(authorization, os.environ.get("MODAL_SHARED_SECRET")):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    try:
+        call_id = validate_call_id(body)
+    except RequestError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    try:
+        modal.FunctionCall.from_id(call_id).cancel()
+    except modal.exception.NotFoundError:
+        pass  # already finished or unknown: nothing to cancel
+    return {"ok": True}
 
 
 @app.local_entrypoint()

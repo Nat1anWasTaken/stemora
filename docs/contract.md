@@ -23,8 +23,9 @@ Request: `POST {MODAL_ENDPOINT_URL}` with `Authorization: Bearer {MODAL_SHARED_S
  "callback_token":"hex","max_duration_s":900}
 ```
 Response (immediately, 200): `{"call_id":"fc-..."}`. 401 on bad secret. The endpoint does `fn.spawn(...)` for the GPU function and returns.
+A second web endpoint named `cancel` (same app, same bearer auth, URL = the `spawn` URL with `-spawn.modal.run` replaced by `-cancel.modal.run`): `POST {"call_id":"fc-..."}` -> 200 `{"ok":true}` (also when the call already finished), 401 bad secret, 422 malformed id. Cancels the call whether it is still queued or running.
 Modal secrets: `stemora-r2` (`R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`), `stemora-auth` (`MODAL_SHARED_SECRET`).
-GPU function: `retries=0`, scale-to-zero (no min_containers), timeout 20 min, weights for both models baked into the image.
+GPU function: GPU types `L4`, `A10G`, `T4` in order of preference (Modal uses the first with free capacity), `retries=0`, scale-to-zero (no min_containers), timeout 20 min, weights for both models baked into the image.
 
 ## Webhook (worker -> backend)
 `POST {callback_url}` with `Authorization: Bearer {callback_token}`, JSON:
@@ -85,6 +86,6 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `GET /api/me/usage` -> Usage
 Webhook: `POST /api/webhooks/jobs/{job_id}` (token auth as above, not cookie). Idempotent; ignores updates for jobs already in a terminal state or for a stale attempt.
 
-Job/song state machine: song `uploading` -> (complete) `queued` (or `importing` -> (download stored) `queued` | `failed`; songs still `importing` when the backend starts were interrupted and are marked `failed`) -> (first `running` webhook) `processing` -> `ready` | `failed`. Retryable failure with attempts < 3 re-spawns after backoff (30s, 120s) and stays `processing`/`queued`; reaper fails jobs without a heartbeat for 5 minutes (retry if attempts left) and deletes `uploading` songs older than 24h (abort multipart, remove objects).
+Job/song state machine: song `uploading` -> (complete) `queued` (or `importing` -> (download stored) `queued` | `failed`; songs still `importing` when the backend starts were interrupted and are marked `failed`) -> (first `running` webhook) `processing` -> `ready` | `failed`. Retryable failure with attempts < 3 re-spawns after backoff (30s, 120s) and stays `processing`/`queued`; reaper fails jobs without a heartbeat for 5 minutes, or 30 minutes while the worker has not reported yet (no `stage`: the call is still waiting for a GPU), retrying if attempts left and cancelling the abandoned Modal call via `cancel` and deletes `uploading` songs older than 24h (abort multipart, remove objects).
 
 Env (backend): `DATABASE_URL`, `PUBLIC_BASE_URL`, `BIND_ADDR` (default 0.0.0.0:8080), `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_REGION` (default `auto`), `MODAL_ENDPOINT_URL`, `MODAL_SHARED_SECRET`, `WEBHOOK_SIGNING_KEY`, `MAX_UPLOAD_MB` (default 200), `MAX_DURATION_S` (default 900), `USER_QUOTA_MB` (default 5000), `MAX_CONCURRENT_JOBS` (default 2), `MAX_CONCURRENT_IMPORTS` (default 2, across all users), `IMPORT_TIMEOUT_S` (default 600), `YTDLP_PATH` (default `yt-dlp`), `COOKIE_SECURE` (optional override).

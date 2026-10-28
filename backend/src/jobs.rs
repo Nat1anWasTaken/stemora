@@ -12,6 +12,9 @@ use crate::storage;
 
 pub const MAX_ATTEMPTS: i32 = 3;
 pub const HEARTBEAT_TIMEOUT_SECS: i32 = 300;
+/// How long a spawned job may wait for Modal to start it (no webhook yet, e.g. no GPU free)
+/// before the attempt is given up on.
+pub const START_TIMEOUT_SECS: i32 = 1800;
 pub const UPLOAD_TTL_HOURS: i32 = 24;
 pub const REAPER_INTERVAL: Duration = Duration::from_secs(15);
 
@@ -350,24 +353,32 @@ async fn spawn_one(state: &AppState, c: Claimed) {
     }
 }
 
-/// Fail running jobs whose heartbeat is stale (retrying while attempts remain).
-pub async fn fail_stale(pool: &PgPool) -> Result<usize, sqlx::Error> {
-    let stale: Vec<(Uuid, i32)> = sqlx::query_as(
-        "SELECT id, attempt FROM jobs WHERE status = 'running' \
-         AND last_heartbeat_at < now() - make_interval(secs => $1) LIMIT 50",
+/// Fail running jobs whose heartbeat is stale (retrying while attempts remain) and cancel their
+/// Modal calls. A job the worker has not picked up yet (no webhook, so no `stage`) is still
+/// waiting for a GPU and gets the longer [`START_TIMEOUT_SECS`].
+pub async fn fail_stale(state: &AppState) -> Result<usize, sqlx::Error> {
+    let stale: Vec<(Uuid, i32, Option<String>, bool)> = sqlx::query_as(
+        "SELECT id, attempt, modal_call_id, stage IS NULL FROM jobs WHERE status = 'running' \
+         AND last_heartbeat_at < now() - make_interval(secs => CASE WHEN stage IS NULL THEN $2 ELSE $1 END) \
+         LIMIT 50",
     )
     .bind(HEARTBEAT_TIMEOUT_SECS as f64)
-    .fetch_all(pool)
+    .bind(START_TIMEOUT_SECS as f64)
+    .fetch_all(&state.pool)
     .await?;
-    for (id, attempt) in &stale {
-        fail_job(
-            pool,
-            *id,
-            *attempt,
-            "worker stopped responding (no heartbeat for 5 minutes)",
-            true,
-        )
-        .await?;
+    for (id, attempt, call_id, never_started) in &stale {
+        let error = if *never_started {
+            "processing never started (no GPU became available for 30 minutes)"
+        } else {
+            "worker stopped responding (no heartbeat for 5 minutes)"
+        };
+        fail_job(&state.pool, *id, *attempt, error, true).await?;
+        // Otherwise the abandoned call may still start later and burn GPU time for nothing.
+        if let Some(call_id) = call_id
+            && let Err(e) = state.modal.cancel(call_id).await
+        {
+            tracing::warn!(job_id = %id, %call_id, error = %e.message, "could not cancel modal call");
+        }
     }
     Ok(stale.len())
 }
@@ -409,7 +420,7 @@ pub async fn reaper_tick(state: &AppState) {
     if let Err(e) = dispatch(state, None).await {
         tracing::error!(error = %e, "reaper: dispatch failed");
     }
-    if let Err(e) = fail_stale(&state.pool).await {
+    if let Err(e) = fail_stale(state).await {
         tracing::error!(error = %e, "reaper: stale job check failed");
     }
     // Stale jobs that were just re-queued with backoff are picked up by a later tick.
