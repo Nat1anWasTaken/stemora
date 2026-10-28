@@ -32,7 +32,7 @@ export function InvitesPage() {
   }
   if (me.data && me.data.role !== "admin") return <Navigate to="/" replace />
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-8 pt-safe md:px-8 md:py-10">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-page md:px-8 md:py-10">
       <header className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-semibold md:text-4xl">Invites</h1>
