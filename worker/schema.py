@@ -8,6 +8,7 @@ REQUIRED = (
     "model", "callback_url", "callback_token", "max_duration_s",
 )
 _HEX = re.compile(r"^[0-9a-f]+$")
+_CALL_ID = re.compile(r"^fc-[0-9A-Za-z]{1,64}$")
 
 
 class RequestError(ValueError):
@@ -55,6 +56,14 @@ def validate_request(body) -> dict:
     if not isinstance(tok, str) or not tok or not _HEX.match(tok):
         raise RequestError("callback_token must be a hex string")
     return job
+
+
+def validate_call_id(body) -> str:
+    """Return the `call_id` of a cancel request or raise RequestError."""
+    v = body.get("call_id") if isinstance(body, dict) else None
+    if not isinstance(v, str) or not _CALL_ID.match(v):
+        raise RequestError("call_id must be a Modal function call id (fc-...)")
+    return v
 
 
 def check_bearer(header: str | None, secret: str | None) -> bool:

@@ -1200,13 +1200,23 @@ async fn reaper_fails_stale_jobs_and_purges_old_uploads() {
     let (sid, job, _tok) = app.queued_song(&admin).await;
     let job_id = Uuid::parse_str(&job).unwrap();
 
-    // heartbeat older than 5 minutes -> retry scheduled
+    // not started by the worker yet (waiting for a GPU): 6 minutes is fine, 31 is not
     sqlx::query("UPDATE jobs SET last_heartbeat_at = now() - interval '6 minutes' WHERE id = $1")
         .bind(job_id)
         .execute(&app.state.pool)
         .await
         .unwrap();
-    assert_eq!(jobs::fail_stale(&app.state.pool).await.unwrap(), 1);
+    assert_eq!(jobs::fail_stale(&app.state).await.unwrap(), 0);
+    sqlx::query("UPDATE jobs SET last_heartbeat_at = now() - interval '31 minutes' WHERE id = $1")
+        .bind(job_id)
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs::fail_stale(&app.state).await.unwrap(), 1);
+    assert_eq!(
+        *app.modal.cancelled.lock().unwrap(),
+        vec!["fc-test-1".to_string()]
+    );
     let (attempt, status): (i32, String) =
         sqlx::query_as("SELECT attempt, status FROM jobs WHERE id = $1")
             .bind(job_id)
@@ -1215,10 +1225,11 @@ async fn reaper_fails_stale_jobs_and_purges_old_uploads() {
             .unwrap();
     assert_eq!((attempt, status.as_str()), (2, "queued"));
     // a fresh heartbeat is left alone
-    assert_eq!(jobs::fail_stale(&app.state.pool).await.unwrap(), 0);
-    // on the last attempt a stale heartbeat fails the song
-    sqlx::query("UPDATE jobs SET status = 'running', attempt = 3, last_heartbeat_at = now() - interval '6 minutes' WHERE id = $1").bind(job_id).execute(&app.state.pool).await.unwrap();
-    jobs::fail_stale(&app.state.pool).await.unwrap();
+    assert_eq!(jobs::fail_stale(&app.state).await.unwrap(), 0);
+    // once the worker has reported, a heartbeat older than 5 minutes is stale; on the last
+    // attempt that fails the song
+    sqlx::query("UPDATE jobs SET status = 'running', attempt = 3, stage = 'separating', last_heartbeat_at = now() - interval '6 minutes' WHERE id = $1").bind(job_id).execute(&app.state.pool).await.unwrap();
+    assert_eq!(jobs::fail_stale(&app.state).await.unwrap(), 1);
     let s = app.get(&format!("/api/songs/{sid}"), &admin).await;
     assert_eq!(s.body["song"]["status"], "failed");
 

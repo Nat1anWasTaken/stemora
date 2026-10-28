@@ -46,6 +46,13 @@ def test_bearer():
     assert not schema.check_bearer("Bearer ", "")
 
 
+def test_validate_call_id():
+    assert schema.validate_call_id({"call_id": "fc-01ABCxyz"}) == "fc-01ABCxyz"
+    for bad in ({}, {"call_id": "ap-123"}, {"call_id": "fc-../x"}, {"call_id": 5}, []):
+        with pytest.raises(schema.RequestError):
+            schema.validate_call_id(bad)
+
+
 def test_payloads():
     r = W.build_payload("running", "separating", 42.4)
     assert r == {"status": "running", "stage": "separating", "progress": 42}

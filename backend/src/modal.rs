@@ -30,12 +30,23 @@ pub struct SpawnError {
 pub trait Modal: Send + Sync {
     /// Returns the Modal function call id.
     async fn spawn(&self, req: &SpawnRequest) -> Result<String, SpawnError>;
+    /// Cancel a spawned call (queued or running). Best effort.
+    async fn cancel(&self, call_id: &str) -> Result<(), SpawnError>;
 }
 
 pub struct ModalClient {
     endpoint: String,
+    cancel_endpoint: Option<String>,
     secret: String,
     http: reqwest::Client,
+}
+
+/// The `cancel` endpoint lives next to `spawn`: Modal names web endpoints
+/// `https://{workspace}--{app}-{label}.modal.run`, so swap the label.
+pub fn cancel_url(spawn_url: &str) -> Option<String> {
+    spawn_url
+        .contains("-spawn.modal.run")
+        .then(|| spawn_url.replacen("-spawn.modal.run", "-cancel.modal.run", 1))
 }
 
 #[derive(Deserialize)]
@@ -46,6 +57,7 @@ struct SpawnResponse {
 impl ModalClient {
     pub fn new(endpoint: String, secret: String) -> Self {
         Self {
+            cancel_endpoint: cancel_url(&endpoint),
             endpoint,
             secret,
             http: reqwest::Client::builder()
@@ -97,12 +109,43 @@ impl Modal for ModalClient {
         })?;
         Ok(parsed.call_id)
     }
+
+    async fn cancel(&self, call_id: &str) -> Result<(), SpawnError> {
+        let Some(url) = &self.cancel_endpoint else {
+            return Err(SpawnError {
+                message:
+                    "no Modal cancel endpoint (MODAL_ENDPOINT_URL is not a *-spawn.modal.run url)"
+                        .into(),
+                retryable: false,
+            });
+        };
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(&self.secret)
+            .json(&serde_json::json!({ "call_id": call_id }))
+            .send()
+            .await
+            .map_err(|e| SpawnError {
+                message: format!("could not reach the processing service: {e}"),
+                retryable: true,
+            })?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(SpawnError {
+                message: format!("cancel returned {status}"),
+                retryable: status.is_server_error(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Test double: records requests, can be told to fail.
 #[derive(Default)]
 pub struct FakeModal {
     pub calls: std::sync::Mutex<Vec<SpawnRequest>>,
+    pub cancelled: std::sync::Mutex<Vec<String>>,
     pub fail_with: std::sync::Mutex<Option<SpawnError>>,
 }
 
@@ -116,11 +159,26 @@ impl Modal for FakeModal {
         calls.push(req.clone());
         Ok(format!("fc-test-{}", calls.len()))
     }
+
+    async fn cancel(&self, call_id: &str) -> Result<(), SpawnError> {
+        self.cancelled.lock().unwrap().push(call_id.to_owned());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_url_is_derived_from_the_spawn_url() {
+        assert_eq!(
+            cancel_url("https://ws--stemora-spawn.modal.run").as_deref(),
+            Some("https://ws--stemora-cancel.modal.run")
+        );
+        assert_eq!(cancel_url("http://modal.invalid/spawn"), None);
+        assert_eq!(cancel_url(""), None);
+    }
 
     #[tokio::test]
     async fn empty_endpoint_is_a_clear_non_retryable_error() {
