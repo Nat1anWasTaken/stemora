@@ -21,7 +21,10 @@ React 19, TypeScript (strict), Vite, Tailwind CSS v4, shadcn/ui on Base UI, Reac
 - `src/player/store.ts`: zustand store driving the engine; `ui/` holds the player components, `mediaSession.ts` and `keepAlive.ts` handle lock-screen controls and background playback (best effort, a silent looping `<audio>` keeps iOS/Android treating the page as media).
 - `src/lib/upload.ts`: single PUT or 16 MiB multipart upload with per-part retry, ETag collection, then `POST /complete`.
 - `src/components/ui`: shadcn components (Base UI style `base-nova`).
-- Theme tokens, gradients and safe-area utilities: `src/index.css`.
+- Theme tokens, gradients, safe-area utilities and motion (`ease-spring`, `animate-page`, `stagger-children`, `animate-sheet-in/out`, `pressable`, `sheet-drag`): `src/index.css`. Everything respects `prefers-reduced-motion`.
+
+## Mobile player
+Two tabs that fit the screen without scrolling the page: **Mixer** (four stem rows with mute, volume, solo and a menu, plus an "All stems" reset) and **Practice** (metronome, 15 s loop sections, waveform). The full preset-chip row is shown only on desktop. Swipe the grab bar or header down to close the player (`use-sheet-drag.ts`).
 
 ## Shortcuts (desktop player)
 Space play/pause, Left/Right skip 10 s (Shift: 30 s), 1-4 pick a stem, M mute it, S solo it, L cycle loop (set A, set B, clear), Home restart.

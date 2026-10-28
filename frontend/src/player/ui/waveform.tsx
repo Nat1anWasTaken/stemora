@@ -190,7 +190,7 @@ export function Waveform() {
   }, [])
 
   return (
-    <div ref={wrap} className="relative h-full min-h-64 w-full overflow-hidden rounded-3xl border border-border bg-surface/70">
+    <div ref={wrap} className="relative h-full min-h-32 w-full flex-1 overflow-hidden rounded-3xl md:min-h-64 border border-border bg-surface/70">
       <canvas ref={canvas} className="no-gestures absolute inset-0 size-full cursor-pointer" aria-label="Waveform. Drag to seek; drag the A and B handles to adjust the loop." role="img" />
     </div>
   )

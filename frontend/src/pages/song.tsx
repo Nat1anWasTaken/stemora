@@ -25,7 +25,7 @@ export function SongPage() {
   if (song.status === "ready" && data.stems.length > 0) return <Player detail={data} />
 
   return (
-    <div className="player-sheet flex min-h-app flex-col items-center justify-center gap-6 px-4 pt-safe pb-safe">
+    <div className="player-sheet animate-sheet-in flex min-h-app flex-col items-center justify-center gap-6 px-4 pt-safe pb-safe">
       <Button variant="secondary" size="sm" className="absolute top-safe left-4" render={<Link to="/" />}><ArrowLeft />Library</Button>
       <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
         <SongArtwork id={song.id} />

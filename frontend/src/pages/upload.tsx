@@ -61,7 +61,7 @@ function LinkImport({ model, onImported }: { model: Model; onImported: () => voi
       </div>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {imported && (
-        <p role="status" className="flex items-center gap-1.5 text-sm text-success">
+        <p role="status" className="flex animate-in items-center gap-1.5 text-sm text-success fade-in">
           <CheckCircle2 className="size-4 shrink-0" />
           <span className="min-w-0 truncate">Importing {imported}. It shows up in your library.</span>
         </p>
@@ -86,7 +86,7 @@ function ItemRow({ item, onTitle, onRemove, onRetry }: { item: Item; onTitle: (t
   const doneParts = state?.parts.filter((p) => p.status === "done").length ?? 0
 
   return (
-    <li className="surface-soft flex flex-col gap-3 rounded-2xl border border-border p-3">
+    <li className="surface-soft animate-page flex flex-col gap-3 rounded-2xl border border-border p-3">
       <div className="flex items-center gap-3">
         <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-secondary text-muted-foreground">
           {phase === "done" ? <CheckCircle2 className="text-success" /> : phase === "error" ? <AlertTriangle className="text-destructive" /> : <FileAudio />}
@@ -113,12 +113,12 @@ function ItemRow({ item, onTitle, onRemove, onRetry }: { item: Item; onTitle: (t
         </Progress>
       )}
       {phase === "done" && (
-        <p className="flex items-center justify-between text-sm text-success">
+        <p className="flex animate-in items-center justify-between text-sm text-success fade-in">
           <span>Uploaded. Separation has started.</span>
         </p>
       )}
       {phase === "error" && (
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex animate-in items-center justify-between gap-3 fade-in">
           <p role="alert" className="text-sm text-destructive">
             {state?.error}
             {failedParts > 0 && ` (${failedParts} ${failedParts === 1 ? "part" : "parts"} to retry)`}
@@ -183,7 +183,7 @@ export function UploadPage() {
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        className={cn("flex min-h-48 flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-input bg-surface px-6 py-10 text-center transition-colors hover:border-primary/60", dragging && "drop-active")}
+        className={cn("pressable flex min-h-48 flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-input bg-surface px-6 py-10 text-center hover:border-primary/60", dragging && "drop-active")}
       >
         <span className="grid size-14 place-items-center rounded-2xl bg-primary/15 text-primary"><UploadCloud className="size-7" /></span>
         <span className="flex flex-col gap-1">

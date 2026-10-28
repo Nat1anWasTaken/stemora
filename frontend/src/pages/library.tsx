@@ -31,7 +31,7 @@ function SongCard({ song }: { song: Song }) {
   ]
 
   return (
-    <li className="surface-soft relative flex flex-col gap-3 rounded-3xl border border-border p-3 transition-colors hover:border-primary/40">
+    <li className="surface-soft pressable relative flex flex-col gap-3 rounded-3xl border border-border p-3 hover:border-primary/40">
       <div className="flex items-center gap-3">
         <SongArtwork id={song.id} dim={!ready} />
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -108,7 +108,7 @@ export function LibraryPage() {
         </ul>
       )}
       {songs && songs.length === 0 && (
-        <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-border px-6 py-16 text-center">
+        <div className="animate-page flex flex-col items-center gap-4 rounded-3xl border border-dashed border-border px-6 py-16 text-center">
           <Music2 className="size-8 text-muted-foreground" />
           <div className="flex flex-col gap-1">
             <h2 className="text-xl font-semibold">No songs yet</h2>
@@ -118,7 +118,7 @@ export function LibraryPage() {
         </div>
       )}
       {songs && songs.length > 0 && (
-        <ul className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="stagger-children grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {songs.map((s) => <SongCard key={s.id} song={s} />)}
         </ul>
       )}
