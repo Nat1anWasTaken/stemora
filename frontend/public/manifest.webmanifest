@@ -10,7 +10,6 @@
   "background_color": "#0d1117",
   "theme_color": "#0d1117",
   "categories": ["music", "education"],
-  "launch_handler": { "client_mode": "navigate-existing" },
   "shortcuts": [
     { "name": "Upload song", "url": "/upload", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
   ],
