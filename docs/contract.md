@@ -46,7 +46,12 @@ type User = { id: string; email: string; role: "admin" | "user" }
 type SongStatus = "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
 type Song = { id: string; title: string; status: SongStatus; duration_s: number | null; size_bytes: number;
               model: "htdemucs" | "htdemucs_ft"; progress: number; stage: string | null; error: string | null;
-              source_url: string | null /* link the song was imported from */; created_at: string }
+              source_url: string | null /* link the song was imported from */; created_at: string;
+              download: Download | null /* link imports while downloading */ }
+type Download = { downloaded_bytes: number; total_bytes: number | null /* exact, or estimated for HLS/DASH */;
+                  speed_bps: number | null; eta_s: number | null }
+type LinkPreview = { title: string | null; duration_s: number | null; uploader: string | null; site: string | null;
+                     filesize: number | null; problem: string | null /* why importing it would fail */ }
 type Stem = { name: "vocals"|"drums"|"bass"|"other"; url: string /* presigned GET m4a */; size_bytes: number }
 type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null }
 type Usage = { used_bytes: number; quota_bytes: number }
@@ -63,9 +68,12 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `POST /api/songs` `{title, filename, content_type, size, model}` -> `{song: Song, upload: Upload}`
   where `Upload = {mode:"single", url:string, headers:Record<string,string>} | {mode:"multipart", upload_id:string, part_size:number, part_count:number}`.
   Single PUT when size <= 50 MiB, else multipart with 16 MiB parts. Rejects: size > MAX_UPLOAD_MB (413), non-audio content type/extension (415), quota exceeded (403 `quota_exceeded`), rate limit (429).
-- `POST /api/songs/import` `{url, title?, model}` -> Song (status `importing`, stage `fetching`; title is the link until the download reports one, unless `title` is given).
+- `POST /api/songs/import/preview` `{url}` -> LinkPreview. Runs only yt-dlp's metadata lookup; nothing is stored. A link that cannot be imported because of what it is (playlist, live, too long, too large) still returns 200 with `problem` set; a link yt-dlp cannot read at all returns 422 `link_unavailable` with the human-readable reason. Same URL checks as `import` (400 `invalid_url`); own per-user rate limit (429 `rate_limited`).
+- `POST /api/songs/import` `{url, title?, model}` -> Song (status `importing`; title is the link until the lookup reports one, unless `title` is given).
+  While `importing`, `stage` is `waiting` (for a free download slot, see MAX_CONCURRENT_IMPORTS) -> `probing` (reading the link's details; the fetched title and `duration_s` are stored as soon as known) -> `downloading` (`download` set, `progress` = downloaded percent when the size is known, else 0) -> `storing` (uploading to R2, `progress` 100).
   The backend downloads the audio with yt-dlp on its own host (audio-only format when offered, no transcoding), uploads it to R2 as `original.{ext}`, then continues exactly like `complete`. Failures (unsupported/private link, live stream, playlist, longer than MAX_DURATION_S, larger than MAX_UPLOAD_MB, quota, site refusal) set the song `failed` with a human-readable `error`; failed imports have no original, so `reprocess` returns 409 `original_missing`.
   Rejects: non-http(s) links, credentials in the link, or hosts that are/resolve to private, loopback or link-local addresses (400 `invalid_url`), quota already used up (403 `quota_exceeded`), rate limit (429), concurrent-active-job limit (429 `too_many_jobs`; songs still `importing` count as active).
+- `POST /api/songs/{id}/cancel` -> Song. Stops an import that is still `importing` (kills the download) and sets the song `failed` with error "The import was cancelled."; 409 `not_importing` otherwise. Deleting an importing song stops its download too.
 - `POST /api/songs/{id}/upload/parts` `{part_numbers:number[]}` -> `{urls:{part_number:number,url:string}[]}` (multipart only)
 - `POST /api/songs/{id}/complete` `{parts?:{part_number:number,etag:string}[]}` -> Song. Completes multipart if needed, HEADs the object (size must match and be within cap), creates the job, spawns Modal. Idempotent. Concurrent-active-job limit per user -> 429.
 - `GET /api/songs/{id}` -> SongDetail (stems/peaks_url only when ready; presigned URLs valid 1h)

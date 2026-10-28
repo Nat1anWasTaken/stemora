@@ -14,7 +14,7 @@ React 19, TypeScript (strict), Vite, Tailwind CSS v4, shadcn/ui on Base UI, Reac
 | `pnpm mock:audio` | Regenerate the 4 mock stems + peaks in `public/mock` (needs ffmpeg) |
 
 ## Mock mode
-`pnpm dev:mock` serves the whole API from memory: seeded login `dev@stemora.test` / `password` (admin), one ready song with four 20 s generated stems, one processing, one failed. Uploads hit fake presigned `PUT /mock-upload/...` URLs and then run a ~16 s simulated job. `VITE_MOCK_FRESH=1` starts with zero users to try first-run bootstrap; invite token `invalid` shows the invalid-invite page.
+`pnpm dev:mock` serves the whole API from memory: seeded login `dev@stemora.test` / `password` (admin), one ready song with four 20 s generated stems, one processing, one failed. Uploads hit fake presigned `PUT /mock-upload/...` URLs and then run a ~16 s simulated job. `VITE_MOCK_FRESH=1` starts with zero users to try first-run bootstrap; invite token `invalid` shows the invalid-invite page. Link imports walk through the backend's stages (waiting, probing, a ~6 s simulated download, storing) before the job starts; links containing `broken` fail the preview, `long` preview as too long, and `fail` fail mid-import.
 
 ## Structure
 - `src/player/engine.ts`: framework-free Web Audio engine. All stems start at one shared `ctx.currentTime` and offset (sample-accurate sync); seeking recreates sources; A-B loops use the sources' own `loopStart`/`loopEnd`; metronome click scheduler with optional one-bar count-in. Pure logic (mixer/solo/loop maths, peaks) lives in `mixer.ts` / `peaks.ts` and is unit-tested.

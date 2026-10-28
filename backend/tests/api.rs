@@ -211,7 +211,11 @@ impl TestApp {
         let r = self.post("/api/songs/import", cookie, body).await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
         assert_eq!(r.body["status"], "importing");
-        assert_eq!(r.body["stage"], "fetching");
+        assert!(
+            ["waiting", "probing"].contains(&r.body["stage"].as_str().unwrap()),
+            "{:?}",
+            r.body
+        );
         let id = r.body["id"].as_str().unwrap().to_string();
         for _ in 0..200 {
             let d = self.get(&format!("/api/songs/{id}"), cookie).await;
@@ -1379,6 +1383,162 @@ async fn import_failures_are_reported_on_the_song() {
         .await;
     assert_eq!(r.status, StatusCode::CONFLICT);
     assert_eq!(r.body["code"], "original_missing");
+}
+
+#[tokio::test]
+async fn import_reports_progress_and_can_be_cancelled() {
+    let app = app!();
+    let admin = app.admin().await;
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *app.fetcher.gate.lock().unwrap() = Some(gate.clone());
+    *app.fetcher.info.lock().unwrap() = Ok(MediaInfo {
+        title: Some("Fetched Title".into()),
+        duration_s: Some(180.0),
+        uploader: Some("Artist".into()),
+        ..Default::default()
+    });
+    let link = json!({"url":"https://www.youtube.com/watch?v=abc","model":"htdemucs"});
+
+    // Waits mid-download (the fake reports half of 4 MiB): the song shows the live progress,
+    // and the fetched title and duration before the download is done.
+    let wait_downloading = |id: String| {
+        let app = &app;
+        let admin = &admin;
+        async move {
+            for _ in 0..200 {
+                let d = app.get(&format!("/api/songs/{id}"), admin).await;
+                if d.body["song"]["stage"] == "downloading" {
+                    return d.body["song"].clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("import never reported downloading");
+        }
+    };
+    let r = app.post("/api/songs/import", &admin, link.clone()).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let song = wait_downloading(id.clone()).await;
+    assert_eq!(song["status"], "importing");
+    assert_eq!(song["title"], "Fetched Title");
+    assert_eq!(song["duration_s"], 180.0);
+    assert_eq!(song["progress"], 50);
+    assert_eq!(song["download"]["downloaded_bytes"], 2 * MIB);
+    assert_eq!(song["download"]["total_bytes"], 4 * MIB);
+    assert_eq!(song["download"]["eta_s"], 3);
+    let list = app.get("/api/songs", &admin).await;
+    assert_eq!(list.body[0]["download"]["total_bytes"], 4 * MIB);
+
+    let r = app
+        .post(&format!("/api/songs/{id}/cancel"), &admin, json!({}))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["status"], "failed");
+    assert_eq!(r.body["error"], "The import was cancelled.");
+    assert!(r.body["download"].is_null());
+    // The download never finishes, even once it could.
+    gate.add_permits(10);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let d = app.get(&format!("/api/songs/{id}"), &admin).await;
+    assert_eq!(d.body["song"]["status"], "failed");
+    assert!(app.storage.objects.lock().unwrap().is_empty());
+    assert!(app.modal.calls.lock().unwrap().is_empty());
+    let r = app
+        .post(&format!("/api/songs/{id}/cancel"), &admin, json!({}))
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.body["code"], "not_importing");
+
+    // Deleting an import stops it too.
+    gate.forget_permits(10);
+    let r = app.post("/api/songs/import", &admin, link.clone()).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    wait_downloading(id.clone()).await;
+    let r = app
+        .req(
+            Method::DELETE,
+            &format!("/api/songs/{id}"),
+            Some(&admin),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    gate.add_permits(10);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(app.storage.objects.lock().unwrap().is_empty());
+    assert!(!app.state.imports.abort(Uuid::parse_str(&id).unwrap()));
+}
+
+#[tokio::test]
+async fn link_preview() {
+    let app = app!();
+    let admin = app.admin().await;
+    *app.fetcher.info.lock().unwrap() = Ok(MediaInfo {
+        title: Some("Song".into()),
+        duration_s: Some(200.0),
+        uploader: Some("Artist".into()),
+        site: Some("Youtube".into()),
+        filesize: Some(3 * MIB),
+        ..Default::default()
+    });
+    let r = app
+        .post(
+            "/api/songs/import/preview",
+            &admin,
+            json!({"url":"https://www.youtube.com/watch?v=abc"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(
+        r.body,
+        json!({"title":"Song","duration_s":200.0,"uploader":"Artist","site":"Youtube","filesize":3 * MIB,"problem":null})
+    );
+    // Nothing is imported.
+    assert!(
+        app.get("/api/songs", &admin)
+            .await
+            .body
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    *app.fetcher.info.lock().unwrap() = Ok(MediaInfo {
+        duration_s: Some(3600.0),
+        ..Default::default()
+    });
+    let r = app
+        .post(
+            "/api/songs/import/preview",
+            &admin,
+            json!({"url":"https://x.com/a"}),
+        )
+        .await;
+    assert!(
+        r.body["problem"]
+            .as_str()
+            .unwrap()
+            .contains("maximum is 15.0 min")
+    );
+
+    *app.fetcher.info.lock().unwrap() = Err(FetchError("This link is not supported.".into()));
+    let r = app
+        .post(
+            "/api/songs/import/preview",
+            &admin,
+            json!({"url":"https://x.com/a"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(r.body["error"], "This link is not supported.");
+    let r = app
+        .post(
+            "/api/songs/import/preview",
+            &admin,
+            json!({"url":"http://127.0.0.1/"}),
+        )
+        .await;
+    assert_eq!(r.body["code"], "invalid_url");
 }
 
 #[tokio::test]

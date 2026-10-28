@@ -47,3 +47,30 @@ const STAGE_LABELS: Record<string, string> = {
 export function stageLabel(stage: string | null): string {
   return stage ? (STAGE_LABELS[stage] ?? stage) : "Waiting for a worker"
 }
+
+const IMPORT_STAGE_LABELS: Record<string, string> = {
+  waiting: "Waiting for a download slot",
+  probing: "Reading link details",
+  downloading: "Downloading audio",
+  storing: "Saving audio",
+}
+export function importStageLabel(stage: string | null): string {
+  return (stage && IMPORT_STAGE_LABELS[stage]) || "Fetching from link"
+}
+
+/** "12 MB of 45 MB · 2.1 MB/s · 0:15 left" (parts that are unknown are left out) */
+export function downloadSummary(d: { downloaded_bytes: number; total_bytes: number | null; speed_bps: number | null; eta_s: number | null }): string {
+  const parts = [d.total_bytes ? `${formatBytes(d.downloaded_bytes)} of ${formatBytes(d.total_bytes)}` : formatBytes(d.downloaded_bytes)]
+  if (d.speed_bps) parts.push(`${formatBytes(d.speed_bps)}/s`)
+  if (d.eta_s !== null && d.total_bytes && d.downloaded_bytes < d.total_bytes) parts.push(`${formatClock(d.eta_s)} left`)
+  return parts.join(" · ")
+}
+
+/** "youtube.com" from a link, without "www." */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "")
+  } catch {
+    return url
+  }
+}
