@@ -63,6 +63,15 @@ def test_payloads():
     assert W.build_payload("running", "uploading", 250)["progress"] == 100
 
 
+def test_runner_stages_are_known():
+    # An unknown stage trips the assert in build_payload, which also breaks the `failed` webhook.
+    import re
+    from pathlib import Path
+    src = (Path(W.__file__).parent / "runner.py").read_text()
+    used = set(re.findall(r'\.update\("([a-z]+)"', src))
+    assert used and used <= set(W.STAGES)
+
+
 def test_post_retry():
     calls = []
 
