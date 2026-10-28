@@ -1,5 +1,5 @@
 import { Library, LogOut, Plus, UserRound, Users } from "lucide-react"
-import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 import { Logo } from "@/components/app/logo"
@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils"
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn("flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors", isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
+
+const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
+  cn("pressable flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium duration-200", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")
 
 function UsageMeter() {
   const { data } = useUsage()
@@ -38,6 +41,7 @@ export function AppShell() {
   const me = useMe()
   const qc = useQueryClient()
   const nav = useNavigate()
+  const { pathname } = useLocation()
   const admin = me.data?.role === "admin"
   const logout = async () => {
     await api.logout().catch(() => {})
@@ -67,22 +71,24 @@ export function AppShell() {
       </aside>
 
       <main className="min-w-0 flex-1 pb-nav md:pb-0">
-        <Outlet />
+        <div key={pathname} className="animate-page">
+          <Outlet />
+        </div>
       </main>
 
-      <nav className="glass fixed inset-x-4 bottom-nav z-30 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
-        <NavLink to="/" end className={({ isActive }) => cn("flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
+      <nav className="glass fixed inset-x-4 bottom-nav z-30 animate-in duration-500 ease-spring fade-in slide-in-from-bottom-4 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
+        <NavLink to="/" end className={mobileLinkClass}>
           <Library className="size-5" />Library
         </NavLink>
-        <NavLink to="/upload" className={({ isActive }) => cn("flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
+        <NavLink to="/upload" className={mobileLinkClass}>
           <Plus className="size-5" />Upload
         </NavLink>
         {admin && (
-          <NavLink to="/admin/invites" className={({ isActive }) => cn("flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
+          <NavLink to="/admin/invites" className={mobileLinkClass}>
             <Users className="size-5" />Invites
           </NavLink>
         )}
-        <NavLink to="/account" className={({ isActive }) => cn("flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
+        <NavLink to="/account" className={mobileLinkClass}>
           <UserRound className="size-5" />Account
         </NavLink>
       </nav>

@@ -52,11 +52,11 @@ export function Transport() {
       </Button>
       <Button variant="ghost" size="icon-lg" aria-label="Back 10 seconds" disabled={!ready} onClick={() => skip(-10)}><Rewind /></Button>
       <Button variant="play" size="icon-xl" aria-label={playing ? "Pause" : "Play"} disabled={!ready} onClick={toggle}>
-        {status === "loading" ? <Loader2 className="animate-spin" /> : playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
+        {status === "loading" ? <Loader2 className="animate-spin" /> : playing ? <Pause key="pause" className="animate-in fill-current duration-200 zoom-in-50 fade-in" /> : <Play key="play" className="animate-in fill-current duration-200 zoom-in-50 fade-in" />}
       </Button>
       <Button variant="ghost" size="icon-lg" aria-label="Forward 10 seconds" disabled={!ready} onClick={() => skip(10)}><FastForward /></Button>
       <Button variant="toggle" size="icon-lg" aria-label={loopLabel} aria-pressed={!!loop || pendingA !== null} disabled={!ready} onClick={cycleLoop}>
-        {pendingA !== null && !loop ? <span className="text-base font-bold">A</span> : <Repeat />}
+        {pendingA !== null && !loop ? <span className="animate-in text-base font-bold duration-200 zoom-in-50">A</span> : <Repeat />}
       </Button>
     </div>
   )

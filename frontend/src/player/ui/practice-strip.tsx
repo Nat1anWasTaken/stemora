@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react"
 import { Metronome, Minus, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -17,6 +18,13 @@ export function PracticeStrip() {
   const metro = usePlayer((s) => s.metronome)
   const { setLoop, clearLoop, seek, setMetronome } = usePlayer.getState()
   const count = Math.max(1, Math.ceil(duration / SECTION_SECONDS))
+  const strip = useRef<HTMLDivElement>(null)
+
+  // Keep the looped section in view (e.g. after a loop was set from the waveform or the L key).
+  useEffect(() => {
+    strip.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" })
+  }, [loop])
+
   const sections = Array.from({ length: count }, (_, i) => ({ a: i * SECTION_SECONDS, b: Math.min(duration, (i + 1) * SECTION_SECONDS) }))
 
   return (
@@ -45,7 +53,7 @@ export function PracticeStrip() {
         </PopoverContent>
       </Popover>
 
-      <div className="fade-x flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none" role="group" aria-label="Loop a section">
+      <div ref={strip} className="fade-x flex min-w-0 flex-1 snap-x snap-mandatory scroll-px-5 gap-2 overflow-x-auto overscroll-x-contain scrollbar-none" role="group" aria-label="Loop a section">
         {sections.map((s) => {
           const active = !!loop && Math.abs(loop.a - s.a) < 0.05 && Math.abs(loop.b - s.b) < 0.05
           return (
@@ -58,7 +66,7 @@ export function PracticeStrip() {
                 setLoop(s.a, s.b)
                 seek(s.a)
               }}
-              className={cn("flex min-h-14 min-w-20 shrink-0 flex-col items-start justify-center rounded-2xl border px-3", active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/60")}
+              className={cn("pressable flex min-h-14 min-w-20 shrink-0 snap-start flex-col items-start justify-center rounded-2xl border px-3", active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/60")}
             >
               <span className={cn("text-xs", active ? "text-primary-foreground/80" : "text-muted-foreground")}>{active ? "Looping" : "Section"}</span>
               <span className="text-sm font-semibold tabular-nums">{formatClock(s.a)}</span>
