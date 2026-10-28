@@ -12,8 +12,8 @@ import { cn } from "@/lib/utils"
 
 const SECTION_SECONDS = 15
 
-/** Metronome settings cell + a scrolling strip of fixed-length sections; tap one to loop it. */
-export function PracticeStrip() {
+/** Metronome settings cell + the beat/chord strip (tap to expand), or fixed-length sections to loop when there is no analysis. */
+export function PracticeStrip({ onExpand }: { onExpand: () => void }) {
   const duration = usePlayer((s) => s.duration)
   const loop = usePlayer((s) => s.loop)
   const metro = usePlayer((s) => s.metronome)
@@ -55,7 +55,7 @@ export function PracticeStrip() {
         </PopoverContent>
       </Popover>
 
-      {analysis ? <ChordStrip analysis={analysis} /> : <div ref={strip} className="fade-x flex min-w-0 flex-1 snap-x snap-mandatory scroll-px-5 gap-2 overflow-x-auto overscroll-x-contain scrollbar-none" role="group" aria-label="Loop a section">
+      {analysis ? <ChordStrip analysis={analysis} onExpand={onExpand} /> : <div ref={strip} className="fade-x flex min-w-0 flex-1 snap-x snap-mandatory scroll-px-5 gap-2 overflow-x-auto overscroll-x-contain scrollbar-none" role="group" aria-label="Loop a section">
         {sections.map((s) => {
           const active = !!loop && Math.abs(loop.a - s.a) < 0.05 && Math.abs(loop.b - s.b) < 0.05
           return (

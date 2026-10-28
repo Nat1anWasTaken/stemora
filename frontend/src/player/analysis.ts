@@ -6,8 +6,13 @@ export type Analysis = {
   downbeats: number[]
   chords: ChordSegment[]
 }
-/** One beat of the song as shown in the chord strip. */
-export type BeatCell = { time: number; beat: number; bar: number; chord: string | null }
+/**
+ * One beat of the song as shown in the chord strip and chart. `chord` is set where a chord starts and repeated on
+ * downbeats (`held` then marks the repeat); "N" means no chord.
+ */
+export type BeatCell = { time: number; beat: number; bar: number; chord: string | null; held: boolean }
+/** One bar of the chord chart; `end` is where the next bar starts (or the song ends). */
+export type Bar = { bar: number; start: number; end: number; cells: BeatCell[] }
 
 const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x)
 
@@ -72,8 +77,23 @@ export function buildCells(a: Analysis): BeatCell[] {
     const changed = idx !== ci
     ci = idx
     const label = idx >= 0 ? a.chords[idx].label : null
-    return { time, beat, bar, chord: label && label !== "N" && (changed || beat === 1) ? label : null }
+    const shown = !!label && (changed || beat === 1)
+    return { time, beat, bar, chord: shown ? label : null, held: shown && !changed }
   })
+}
+
+/** Group beat cells into bars (pickup beats form bar 0). */
+export function buildBars(cells: BeatCell[], duration: number): Bar[] {
+  const bars: Bar[] = []
+  for (const c of cells) {
+    const last = bars.at(-1)
+    if (last && last.bar === c.bar) last.cells.push(c)
+    else bars.push({ bar: c.bar, start: c.time, end: duration, cells: [c] })
+  }
+  bars.forEach((b, i) => {
+    if (i + 1 < bars.length) b.end = bars[i + 1].start
+  })
+  return bars
 }
 
 /** Split "Abmaj7" into the root ("Ab") and the quality suffix ("maj7"). */

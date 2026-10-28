@@ -213,6 +213,8 @@
   background: color-mix(in oklch, var(--primary) 12%, var(--surface));
   border-color: var(--primary);
 }
+/* Second step of a sliding segmented-control indicator (translate-x-full is the first) */
+@utility translate-x-double { translate: 200% 0; }
 @utility tap-target { min-width: 2.75rem; min-height: 2.75rem; }
 
 /* ---- Motion ---- */
