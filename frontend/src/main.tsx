@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client"
 import { BrowserRouter, Route, Routes } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import "./index.css"
+import { PwaManager } from "@/components/app/pwa"
 import { AppShell, RequireAuth } from "@/components/app/shell"
 import { Toaster } from "@/components/ui/sonner"
 import { ApiError } from "@/lib/api"
@@ -42,6 +43,7 @@ createRoot(document.getElementById("root")!).render(
         </Routes>
       </BrowserRouter>
       <Toaster />
+      <PwaManager />
     </QueryClientProvider>
   </StrictMode>,
 )

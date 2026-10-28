@@ -1,4 +1,4 @@
-import { Library, LogOut, Plus, UserRound, Users } from "lucide-react"
+import { Library, LogOut, Plus, RotateCw, UserRound, Users, WifiOff } from "lucide-react"
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
@@ -30,6 +30,21 @@ function UsageMeter() {
 export function RequireAuth() {
   const me = useMe()
   if (me.isLoading) return <div className="grid min-h-app place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
+  // A network failure (e.g. the installed app opened offline) is not a signed-out user.
+  if (me.isError)
+    return (
+      <div className="flex min-h-app flex-col items-center justify-center gap-4 px-6 pt-safe pb-safe text-center">
+        <WifiOff className="size-10 text-muted-foreground" />
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold">Can't reach Stemora</h1>
+          <p className="text-sm text-muted-foreground">{navigator.onLine ? "The server isn't responding." : "You're offline."} Check your connection and try again.</p>
+        </div>
+        <Button variant="secondary" size="lg" onClick={() => void me.refetch()} disabled={me.isFetching}>
+          {me.isFetching ? <Loader2 className="animate-spin" /> : <RotateCw />}
+          Try again
+        </Button>
+      </div>
+    )
   if (!me.data) return <Navigate to="/login" replace />
   return <Outlet />
 }
