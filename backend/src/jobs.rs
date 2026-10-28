@@ -60,6 +60,7 @@ impl JobStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SongStatus {
+    Importing,
     Uploading,
     Queued,
     Processing,
@@ -70,6 +71,7 @@ pub enum SongStatus {
 impl SongStatus {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Importing => "importing",
             Self::Uploading => "uploading",
             Self::Queued => "queued",
             Self::Processing => "processing",
@@ -79,6 +81,7 @@ impl SongStatus {
     }
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
+            "importing" => Self::Importing,
             "uploading" => Self::Uploading,
             "queued" => Self::Queued,
             "processing" => Self::Processing,
@@ -91,7 +94,9 @@ impl SongStatus {
         use SongStatus::*;
         matches!(
             (self, next),
-            (Uploading, Queued)
+            (Importing, Queued)
+                | (Importing, Failed)
+                | (Uploading, Queued)
                 | (Uploading, Failed)
                 | (Queued, Processing)
                 | (Queued, Failed)
@@ -180,6 +185,44 @@ pub async fn insert_job(
     .execute(conn)
     .await?;
     Ok(id)
+}
+
+/// Move a song whose original is now in R2 from `from` (uploading/importing) to `queued`,
+/// create its job and spawn it. Returns false if the song was no longer in `from`.
+pub async fn enqueue_song(
+    state: &AppState,
+    song_id: Uuid,
+    from: SongStatus,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = state.pool.begin().await?;
+    let model: Option<(String,)> = sqlx::query_as(
+        "UPDATE songs SET status = 'queued', upload_id = NULL, error = NULL, updated_at = now() \
+         WHERE id = $1 AND status = $2 RETURNING model",
+    )
+    .bind(song_id)
+    .bind(from.as_str())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((model,)) = model else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    let job_id = insert_job(&mut tx, song_id, &model).await?;
+    tx.commit().await?;
+    dispatch(state, Some(job_id)).await?;
+    Ok(true)
+}
+
+/// Imports run as in-process tasks, so any song still `importing` when the server starts was
+/// interrupted by a restart.
+pub async fn fail_orphaned_imports(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(
+        "UPDATE songs SET status = 'failed', error = 'The import was interrupted. Please try again.', \
+         updated_at = now() WHERE status = 'importing'",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected())
 }
 
 /// Record a failure for the job's current attempt. The caller must hold the row lock
@@ -432,13 +475,16 @@ mod tests {
     fn song_transitions() {
         use SongStatus::*;
         assert!(Uploading.can_transition_to(Queued));
+        assert!(Importing.can_transition_to(Queued));
+        assert!(Importing.can_transition_to(Failed));
+        assert!(!Importing.can_transition_to(Processing));
         assert!(Queued.can_transition_to(Processing));
         assert!(Processing.can_transition_to(Ready));
         assert!(Ready.can_transition_to(Queued));
         assert!(!Ready.can_transition_to(Processing));
         assert!(!Uploading.can_transition_to(Ready));
         assert!(!Failed.can_transition_to(Ready));
-        for s in [Uploading, Queued, Processing, Ready, Failed] {
+        for s in [Importing, Uploading, Queued, Processing, Ready, Failed] {
             assert_eq!(SongStatus::parse(s.as_str()), Some(s));
         }
     }

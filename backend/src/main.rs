@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // `stemora-backend healthcheck`: used by the container HEALTHCHECK (no curl in distroless).
+    // `stemora-backend healthcheck`: used by the container HEALTHCHECK (no curl in the image).
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         return healthcheck().await;
     }
@@ -34,6 +34,13 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to database")?;
     db::migrate(&pool).await.context("running migrations")?;
+    let orphaned = jobs::fail_orphaned_imports(&pool).await?;
+    if orphaned > 0 {
+        tracing::warn!(
+            orphaned,
+            "marked imports interrupted by the last shutdown as failed"
+        );
+    }
 
     let storage = Arc::new(R2Storage::new(&config)?);
     let modal = Arc::new(ModalClient::new(

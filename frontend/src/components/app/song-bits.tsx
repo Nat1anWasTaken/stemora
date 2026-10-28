@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock, Loader2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Clock, Link2, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import type { Song } from "@/lib/api"
 import { stageLabel } from "@/lib/format"
@@ -26,6 +26,8 @@ export function StatusBadge({ song }: { song: Pick<Song, "status" | "stage" | "p
       return <Badge variant="destructive"><AlertTriangle data-icon="inline-start" />Failed</Badge>
     case "processing":
       return <Badge variant="soft"><Loader2 data-icon="inline-start" className="animate-spin" />{song.progress}%</Badge>
+    case "importing":
+      return <Badge variant="soft"><Link2 data-icon="inline-start" />Importing</Badge>
     case "queued":
       return <Badge variant="warning"><Clock data-icon="inline-start" />Queued</Badge>
     default:

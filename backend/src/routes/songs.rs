@@ -11,6 +11,7 @@ use crate::AppState;
 use crate::auth::AuthUser;
 use crate::db::{self, SONG_VIEW_SELECT, SongRow, SongView, StemRow, owned_song, song_view};
 use crate::error::{AppError, AppResult};
+use crate::import;
 use crate::jobs::{self, SongStatus};
 use crate::storage::{self, PresignedPut};
 use crate::upload::{self, PART_SIZE, UploadPlan};
@@ -20,6 +21,7 @@ pub const STEM_NAMES: [&str; 4] = ["vocals", "drums", "bass", "other"];
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/songs", get(list).post(create))
+        .route("/songs/import", post(import_link))
         .route("/songs/{id}", get(detail).patch(rename).delete(remove))
         .route("/songs/{id}/upload/parts", post(part_urls))
         .route("/songs/{id}/complete", post(complete))
@@ -151,6 +153,59 @@ async fn create(
     }
     let song = song_view(&st.pool, song_id).await?;
     Ok(Json(json!({"song": song, "upload": upload_json})))
+}
+
+#[derive(Deserialize)]
+struct ImportReq {
+    url: String,
+    #[serde(default)]
+    title: String,
+    model: String,
+}
+
+/// Start importing a song from a link; the download runs in the background.
+async fn import_link(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Json(r): Json<ImportReq>,
+) -> AppResult<Json<SongView>> {
+    check_rate(&st, u.id)?;
+    upload::validate_model(&r.model)?;
+    let url = import::validate_url(&r.url)?;
+    if db::used_bytes(&st.pool, u.id).await? >= st.config.quota_bytes() {
+        return Err(AppError::forbidden(
+            "quota_exceeded",
+            "storage quota exceeded",
+        ));
+    }
+    if db::active_jobs(&st.pool, u.id).await? >= st.config.max_concurrent_jobs {
+        return Err(AppError::too_many(
+            "too_many_jobs",
+            "too many songs are processing; wait for one to finish",
+        ));
+    }
+    // Until the download reports a title, the link is the placeholder title.
+    let title: String = {
+        let t = r.title.trim();
+        if t.is_empty() { url.as_str() } else { t }
+    }
+    .chars()
+    .take(200)
+    .collect();
+    let song_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO songs (id, user_id, title, filename, content_type, size_bytes, status, model, original_key, source_url) \
+         VALUES ($1, $2, $3, '', 'application/octet-stream', 0, 'importing', $4, '', $5)",
+    )
+    .bind(song_id)
+    .bind(u.id)
+    .bind(&title)
+    .bind(&r.model)
+    .bind(&url)
+    .execute(&st.pool)
+    .await?;
+    import::spawn(st.clone(), song_id);
+    Ok(Json(song_view(&st.pool, song_id).await?))
 }
 
 #[derive(Deserialize)]
@@ -301,20 +356,7 @@ async fn complete(
         return Err(AppError::new(status, code, msg));
     }
 
-    let mut tx = st.pool.begin().await?;
-    let claimed = sqlx::query(
-        "UPDATE songs SET status = 'queued', upload_id = NULL, error = NULL, updated_at = now() WHERE id = $1 AND status = 'uploading'",
-    )
-    .bind(id)
-    .execute(&mut *tx)
-    .await?;
-    if claimed.rows_affected() == 0 {
-        tx.rollback().await?;
-        return Ok(Json(song_view(&st.pool, id).await?));
-    }
-    let job_id = jobs::insert_job(&mut tx, id, &song.model).await?;
-    tx.commit().await?;
-    jobs::dispatch(&st, Some(job_id)).await?;
+    jobs::enqueue_song(&st, id, SongStatus::Uploading).await?;
     Ok(Json(song_view(&st.pool, id).await?))
 }
 
@@ -345,12 +387,14 @@ async fn reprocess(
             "too many songs are processing; wait for one to finish",
         ));
     }
-    if st
-        .storage
-        .head(&song.original_key)
-        .await
-        .map_err(AppError::bad_gateway)?
-        .is_none()
+    // A failed link import never stored an original (empty key).
+    if song.original_key.is_empty()
+        || st
+            .storage
+            .head(&song.original_key)
+            .await
+            .map_err(AppError::bad_gateway)?
+            .is_none()
     {
         return Err(AppError::conflict(
             "original_missing",

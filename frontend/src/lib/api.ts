@@ -3,7 +3,7 @@
 export type StemName = "vocals" | "drums" | "bass" | "other"
 export type Role = "admin" | "user"
 export type User = { id: string; email: string; role: Role }
-export type SongStatus = "uploading" | "queued" | "processing" | "ready" | "failed"
+export type SongStatus = "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
 export type Model = "htdemucs" | "htdemucs_ft"
 export type Song = {
   id: string
@@ -15,6 +15,8 @@ export type Song = {
   progress: number
   stage: string | null
   error: string | null
+  /** Link the song was imported from (yt-dlp on the server). */
+  source_url: string | null
   created_at: string
 }
 export type Stem = { name: StemName; url: string; size_bytes: number }
@@ -91,6 +93,7 @@ export const api = {
   song: (id: string) => request<SongDetail>(`/songs/${id}`),
   createSong: (b: { title: string; filename: string; content_type: string; size: number; model: Model }) =>
     request<{ song: Song; upload: Upload }>("/songs", { method: "POST", body: b }),
+  importSong: (b: { url: string; title?: string; model: Model }) => request<Song>("/songs/import", { method: "POST", body: b }),
   partUrls: (id: string, part_numbers: number[]) =>
     request<{ urls: { part_number: number; url: string }[] }>(`/songs/${id}/upload/parts`, { method: "POST", body: { part_numbers } }),
   complete: (id: string, parts?: { part_number: number; etag: string }[]) =>
@@ -104,4 +107,9 @@ export const api = {
 export const stemDownloadUrl = (songId: string, name: StemName, format: "m4a" | "flac") =>
   `/api/songs/${songId}/stems/${name}/download?format=${format}`
 
-export const isActive = (s: Pick<Song, "status">) => s.status === "queued" || s.status === "processing" || s.status === "uploading"
+export const isActive = (s: Pick<Song, "status">) =>
+  s.status === "queued" || s.status === "processing" || s.status === "uploading" || s.status === "importing"
+
+/** A failed link import never stored an original, so it can only be imported again. */
+export const isFailedImport = (s: Pick<Song, "status" | "source_url" | "size_bytes">) =>
+  s.status === "failed" && s.source_url !== null && s.size_bytes === 0

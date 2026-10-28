@@ -1,17 +1,74 @@
-import { useCallback, useRef, useState, useSyncExternalStore, type DragEvent } from "react"
+import { useCallback, useRef, useState, useSyncExternalStore, type DragEvent, type FormEvent } from "react"
 import { Link } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle2, FileAudio, Loader2, RefreshCw, UploadCloud, X } from "lucide-react"
+import { AlertTriangle, CheckCircle2, FileAudio, Link2, Loader2, RefreshCw, UploadCloud, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
-import type { Model } from "@/lib/api"
+import { api, type Model } from "@/lib/api"
 import { formatBytes, titleFromFilename } from "@/lib/format"
 import { keys } from "@/lib/queries"
 import { UploadController } from "@/lib/upload"
 import { cn } from "@/lib/utils"
+
+function LinkImport({ model, onImported }: { model: Model; onImported: () => void }) {
+  const [url, setUrl] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [imported, setImported] = useState<string | null>(null)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!url.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    setImported(null)
+    try {
+      await api.importSong({ url: url.trim(), model })
+      setImported(url.trim())
+      setUrl("")
+      onImported()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the import")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
+      <div className="flex flex-col gap-1">
+        <Label htmlFor="link">Import from a link</Label>
+        <p className="text-sm text-muted-foreground">Paste a YouTube, SoundCloud or other link. The server downloads the audio for you.</p>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          id="link"
+          type="url"
+          inputMode="url"
+          autoComplete="off"
+          placeholder="https://www.youtube.com/watch?v=..."
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          className="h-11 flex-1"
+        />
+        <Button type="submit" size="lg" variant="secondary" disabled={busy || !url.trim()}>
+          {busy ? <Loader2 className="animate-spin" /> : <Link2 />}
+          Import
+        </Button>
+      </div>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {imported && (
+        <p role="status" className="flex items-center gap-1.5 text-sm text-success">
+          <CheckCircle2 className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">Importing {imported}. It shows up in your library.</span>
+        </p>
+      )}
+    </form>
+  )
+}
 
 type Item = { id: string; file: File; title: string; ctrl: UploadController | null }
 
@@ -117,7 +174,7 @@ export function UploadPage() {
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-page md:px-8 md:py-10">
       <header className="flex flex-col gap-1">
         <h1 className="text-3xl font-semibold md:text-4xl">Upload</h1>
-        <p className="text-muted-foreground">Add a track. It is split into vocals, drums, bass and other.</p>
+        <p className="text-muted-foreground">Add a track or paste a link. It is split into vocals, drums, bass and other.</p>
       </header>
 
       <button
@@ -136,6 +193,14 @@ export function UploadPage() {
       </button>
       <input ref={input} type="file" accept="audio/*" multiple hidden onChange={(e) => { if (e.target.files) add(e.target.files); e.target.value = "" }} />
       {rejected.length > 0 && <p role="alert" className="text-sm text-destructive">Skipped (not audio): {rejected.join(", ")}</p>}
+
+      <LinkImport
+        model={hq ? "htdemucs_ft" : "htdemucs"}
+        onImported={() => {
+          setAnyDone(true)
+          void qc.invalidateQueries({ queryKey: keys.songs })
+        }}
+      />
 
       {items.length > 0 && (
         <ul className="flex flex-col gap-3">
@@ -156,7 +221,7 @@ export function UploadPage() {
           <Label htmlFor="hq">High quality</Label>
           <p className="text-sm text-muted-foreground">Uses the fine-tuned model (htdemucs_ft). Cleaner stems, but roughly 4x slower and costlier to process.</p>
         </div>
-        <Switch id="hq" checked={hq} onCheckedChange={setHq} disabled={pending.length === 0 && items.length > 0} />
+        <Switch id="hq" checked={hq} onCheckedChange={setHq} />
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row">

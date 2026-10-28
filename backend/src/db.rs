@@ -25,13 +25,15 @@ pub struct SongView {
     pub progress: i32,
     pub stage: Option<String>,
     pub error: Option<String>,
+    pub source_url: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub const SONG_VIEW_SELECT: &str = "SELECT s.id, s.title, s.status, s.duration_s, s.size_bytes, s.model, \
     CASE WHEN s.status = 'ready' THEN 100 ELSE COALESCE(j.progress, 0) END AS progress, \
-    CASE WHEN s.status IN ('ready', 'failed', 'uploading') THEN NULL ELSE j.stage END AS stage, \
-    s.error, s.created_at \
+    CASE WHEN s.status = 'importing' THEN 'fetching' \
+        WHEN s.status IN ('ready', 'failed', 'uploading') THEN NULL ELSE j.stage END AS stage, \
+    s.error, s.source_url, s.created_at \
     FROM songs s LEFT JOIN LATERAL ( \
         SELECT progress, stage FROM jobs WHERE song_id = s.id ORDER BY created_at DESC LIMIT 1 \
     ) j ON true";
@@ -58,6 +60,7 @@ pub struct SongRow {
     pub original_key: String,
     pub upload_id: Option<String>,
     pub error: Option<String>,
+    pub source_url: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -103,10 +106,12 @@ pub async fn used_bytes(pool: &PgPool, user_id: Uuid) -> Result<i64, sqlx::Error
     Ok(songs + stems)
 }
 
+/// Queued/running jobs plus link imports still downloading.
 pub async fn active_jobs(pool: &PgPool, user_id: Uuid) -> Result<i64, sqlx::Error> {
     let (n,): (i64,) = sqlx::query_as(
-        "SELECT count(*) FROM jobs j JOIN songs s ON s.id = j.song_id \
-         WHERE s.user_id = $1 AND j.status IN ('queued', 'running')",
+        "SELECT (SELECT count(*) FROM jobs j JOIN songs s ON s.id = j.song_id \
+                 WHERE s.user_id = $1 AND j.status IN ('queued', 'running')) \
+              + (SELECT count(*) FROM songs WHERE user_id = $1 AND status = 'importing')",
     )
     .bind(user_id)
     .fetch_one(pool)
