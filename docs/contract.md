@@ -37,6 +37,7 @@ GPU function: `retries=0`, scale-to-zero (no min_containers), timeout 20 min, we
  "peaks_key":"...","analysis_key":"..."}
 ```
 `duration_s`, `stems`, `peaks_key`, `analysis_key` only on `done` (`analysis_key` omitted if analysis failed). `stage` may also be `analyzing`. `error`/`retryable` only on `failed`. Worker retries each webhook POST up to 3 times with backoff. Running updates double as heartbeats (send at least every ~20s while separating). Validation failures (not audio, too long, no audio stream) are `retryable:false`; infra/transient failures are `retryable:true`.
+Cancellation: the backend answers `410 {"code":"job_gone"}` when the job no longer exists (its song was deleted), and `200 {"ok":true,"ignored":"stale_attempt"|"terminal","cancel":true}` when the attempt was superseded or the job already finished. On either the worker stops at its next check (per Demucs chunk, between stages, before each R2 upload), sends no `failed` update and does not retry the POST. On `410` it also deletes every R2 object it uploaded in this run (only its own keys, never the whole prefix); on `cancel:true` it leaves them, since a newer attempt writes the same keys.
 `callback_token` = hex(HMAC-SHA256(WEBHOOK_SIGNING_KEY, "{job_id}:{attempt}")). The backend recomputes and compares in constant time; the worker never sees the signing key.
 
 ## Backend HTTP API (all JSON under `/api`, session cookie `stemora_session`, HttpOnly, SameSite=Lax, Secure when `PUBLIC_BASE_URL` is https)
@@ -75,7 +76,7 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `POST /api/songs/{id}/reprocess` `{model}` -> Song (needs original still present; deletes old stems)
 - `GET /api/songs/{id}/stems/{name}/download?format=m4a|flac` -> 302 to presigned GET with `Content-Disposition: attachment; filename="{title} - {name}.{ext}"`
 - `GET /api/me/usage` -> Usage
-Webhook: `POST /api/webhooks/jobs/{job_id}` (token auth as above, not cookie). Idempotent; ignores updates for jobs already in a terminal state or for a stale attempt.
+Webhook: `POST /api/webhooks/jobs/{job_id}` (token auth as above, not cookie). Idempotent; ignores updates for jobs already in a terminal state or for a stale attempt (and tells the worker to stop, see Cancellation above). Deleting a song makes its running worker stop at its next update (heartbeat every ~15s) and remove what it already uploaded.
 
 Job/song state machine: song `uploading` -> (complete) `queued` (or `importing` -> (download stored) `queued` | `failed`; songs still `importing` when the backend starts were interrupted and are marked `failed`) -> (first `running` webhook) `processing` -> `ready` | `failed`. Retryable failure with attempts < 3 re-spawns after backoff (30s, 120s) and stays `processing`/`queued`; reaper fails jobs without a heartbeat for 5 minutes (retry if attempts left) and deletes `uploading` songs older than 24h (abort multipart, remove objects).
 
