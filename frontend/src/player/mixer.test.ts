@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { applyPreset, clampLoop, currentPreset, defaultMixer, effectiveGain, loopedPosition, toggleIn } from "@/player/mixer"
 import { parseMixer } from "@/player/mixerStorage"
+import { buildCells, lastAtOrBefore, parseAnalysis, splitChord } from "@/player/analysis"
 import { binPeaks, computePeaks, parsePeaks } from "@/player/peaks"
 
 describe("effectiveGain", () => {
@@ -87,5 +88,36 @@ describe("peaks", () => {
     ch[3] = -0.8
     ch[25] = 0.5
     expect(computePeaks([ch], 20, 1 / 1)).toEqual([expect.closeTo(0.8, 5), 0.5])
+  })
+})
+
+describe("analysis", () => {
+  const a = parseAnalysis({
+    version: 1,
+    bpm: 120,
+    beats_per_bar: 4,
+    beats: [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4],
+    downbeats: [0.5, 2.5],
+    chords: [{ start: 0.5, end: 2.5, label: "Abmaj7" }, { start: 2.5, end: 4.5, label: "Bb" }],
+  })
+
+  it("rejects bad input", () => {
+    expect(parseAnalysis(null)).toBeNull()
+    expect(parseAnalysis({ version: 2 })).toBeNull()
+    expect(parseAnalysis({ version: 1, beats: [], downbeats: [], chords: [] })).toBeNull()
+  })
+
+  it("numbers beats and shows chords on changes and downbeats", () => {
+    const cells = buildCells(a!)
+    expect(cells.map((c) => `${c.bar}.${c.beat}`)).toEqual(["1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "2.4"])
+    expect(cells.map((c) => c.chord)).toEqual(["Abmaj7", null, null, null, "Bb", null, null, null])
+  })
+
+  it("finds positions and splits labels", () => {
+    expect(lastAtOrBefore([1, 2, 3], 0.5)).toBe(-1)
+    expect(lastAtOrBefore([1, 2, 3], 2)).toBe(1)
+    expect(lastAtOrBefore([1, 2, 3], 9)).toBe(2)
+    expect(splitChord("Abmaj7")).toEqual({ root: "Ab", suffix: "maj7" })
+    expect(splitChord("Gm")).toEqual({ root: "G", suffix: "m" })
   })
 })

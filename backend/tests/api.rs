@@ -615,6 +615,7 @@ async fn songs_full_flow() {
     assert_eq!(s.body["stems"][0]["name"], "vocals");
     assert_eq!(s.body["stems"][0]["size_bytes"], 1000);
     assert!(s.body["peaks_url"].as_str().unwrap().contains("peaks.json"));
+    assert!(s.body["analysis_url"].as_str().unwrap().contains("analysis.json"));
 
     // usage = original + stems
     let u = app.get("/api/me/usage", &bob).await;

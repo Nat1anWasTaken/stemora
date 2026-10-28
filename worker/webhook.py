@@ -9,7 +9,7 @@ BACKOFF_S = (1.0, 3.0)  # sleeps between the 3 attempts
 
 
 def build_payload(status, stage, progress, *, error=None, retryable=None,
-                  duration_s=None, stems=None, peaks_key=None) -> dict:
+                  duration_s=None, stems=None, peaks_key=None, analysis_key=None) -> dict:
     assert status in ("running", "done", "failed")
     assert stage in STAGES
     p = {"status": status, "stage": stage, "progress": int(max(0, min(100, round(progress))))}
@@ -20,6 +20,8 @@ def build_payload(status, stage, progress, *, error=None, retryable=None,
         p["duration_s"] = round(float(duration_s), 3)
         p["stems"] = stems
         p["peaks_key"] = peaks_key
+    if analysis_key is not None:
+        p["analysis_key"] = analysis_key
     return p
 
 
@@ -84,10 +86,10 @@ class Reporter:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def done(self, duration_s, stems, peaks_key):
+    def done(self, duration_s, stems, peaks_key, analysis_key=None):
         self.stop_heartbeat()
         return self._send(build_payload("done", "done", 100, duration_s=duration_s,
-                                        stems=stems, peaks_key=peaks_key))
+                                        stems=stems, peaks_key=peaks_key, analysis_key=analysis_key))
 
     def failed(self, error, retryable):
         self.stop_heartbeat()
