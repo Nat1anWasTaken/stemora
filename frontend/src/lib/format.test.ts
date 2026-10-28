@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatBytes, formatClock, formatRemaining, relativeTime, stageLabel, titleFromFilename } from "@/lib/format"
+import { downloadSummary, formatBytes, formatClock, formatRemaining, hostOf, importStageLabel, relativeTime, stageLabel, titleFromFilename } from "@/lib/format"
 
 describe("format", () => {
   it("formats clocks", () => {
@@ -11,6 +11,18 @@ describe("format", () => {
   it("formats remaining", () => {
     expect(formatRemaining(10, 20)).toBe("-0:10")
     expect(formatRemaining(30, 20)).toBe("-0:00")
+  })
+  it("summarises downloads", () => {
+    const MB = 1024 * 1024
+    expect(downloadSummary({ downloaded_bytes: 2 * MB, total_bytes: 8 * MB, speed_bps: 1.5 * MB, eta_s: 4 })).toBe("2.0 MB of 8.0 MB · 1.5 MB/s · 0:04 left")
+    expect(downloadSummary({ downloaded_bytes: 2 * MB, total_bytes: null, speed_bps: null, eta_s: null })).toBe("2.0 MB")
+    expect(downloadSummary({ downloaded_bytes: 8 * MB, total_bytes: 8 * MB, speed_bps: null, eta_s: 0 })).toBe("8.0 MB of 8.0 MB")
+  })
+  it("labels import stages and hosts", () => {
+    expect(importStageLabel("downloading")).toBe("Downloading audio")
+    expect(importStageLabel(null)).toBe("Fetching from link")
+    expect(hostOf("https://www.youtube.com/watch?v=x")).toBe("youtube.com")
+    expect(hostOf("not a link")).toBe("not a link")
   })
   it("formats bytes", () => {
     expect(formatBytes(0)).toBe("0 B")

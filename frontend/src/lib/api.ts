@@ -18,6 +18,25 @@ export type Song = {
   /** Link the song was imported from (yt-dlp on the server). */
   source_url: string | null
   created_at: string
+  /** Live download state while a link import is downloading. */
+  download: Download | null
+}
+export type Download = {
+  downloaded_bytes: number
+  /** Exact, or estimated for streamed (HLS/DASH) sources. */
+  total_bytes: number | null
+  speed_bps: number | null
+  eta_s: number | null
+}
+/** What a link points to, looked up before importing it. */
+export type LinkPreview = {
+  title: string | null
+  duration_s: number | null
+  uploader: string | null
+  site: string | null
+  filesize: number | null
+  /** Why importing it would fail, if it would. */
+  problem: string | null
 }
 export type Stem = { name: StemName; url: string; size_bytes: number }
 export type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null }
@@ -94,6 +113,8 @@ export const api = {
   createSong: (b: { title: string; filename: string; content_type: string; size: number; model: Model }) =>
     request<{ song: Song; upload: Upload }>("/songs", { method: "POST", body: b }),
   importSong: (b: { url: string; title?: string; model: Model }) => request<Song>("/songs/import", { method: "POST", body: b }),
+  previewLink: (url: string) => request<LinkPreview>("/songs/import/preview", { method: "POST", body: { url } }),
+  cancelImport: (id: string) => request<Song>(`/songs/${id}/cancel`, { method: "POST" }),
   partUrls: (id: string, part_numbers: number[]) =>
     request<{ urls: { part_number: number; url: string }[] }>(`/songs/${id}/upload/parts`, { method: "POST", body: { part_numbers } }),
   complete: (id: string, parts?: { part_number: number; etag: string }[]) =>
@@ -109,6 +130,13 @@ export const stemDownloadUrl = (songId: string, name: StemName, format: "m4a" | 
 
 export const isActive = (s: Pick<Song, "status">) =>
   s.status === "queued" || s.status === "processing" || s.status === "uploading" || s.status === "importing"
+
+/** Determinate progress (0-100) when known, else null for an indeterminate bar. */
+export const progressValue = (s: Pick<Song, "status" | "stage" | "progress" | "download">): number | null => {
+  if (s.status === "processing") return s.progress
+  if (s.status === "importing" && (s.stage === "storing" || s.download?.total_bytes)) return s.progress
+  return null
+}
 
 /** A failed link import never stored an original, so it can only be imported again. */
 export const isFailedImport = (s: Pick<Song, "status" | "source_url" | "size_bytes">) =>

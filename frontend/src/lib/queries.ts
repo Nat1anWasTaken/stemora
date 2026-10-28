@@ -63,11 +63,17 @@ export function useSongActions() {
   const reimport = useMutation({
     mutationFn: async (s: Song) => {
       const title = s.title === s.source_url ? undefined : s.title
-      await api.importSong({ url: s.source_url ?? "", title, model: s.model })
+      const fresh = await api.importSong({ url: s.source_url ?? "", title, model: s.model })
       await api.remove(s.id)
+      return fresh
     },
     onSuccess: (_d, s) => { toast.success("Import started"); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
     onError: (e) => { toast.error(message(e)); refresh() },
   })
-  return { remove, rename, reprocess, reimport }
+  const cancelImport = useMutation({
+    mutationFn: (s: Song) => api.cancelImport(s.id),
+    onSuccess: (_d, s) => { toast.success("Import cancelled"); refresh(s.id) },
+    onError: (e, s) => { toast.error(message(e)); refresh(s.id) },
+  })
+  return { remove, rename, reprocess, reimport, cancelImport }
 }

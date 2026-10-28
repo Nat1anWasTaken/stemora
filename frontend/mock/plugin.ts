@@ -21,8 +21,9 @@ interface MockSong {
   error: string | null
   source_url: string | null
   created_at: string
-  /** link import finishes downloading at this time (ms) */
-  importUntil?: number
+  download: { downloaded_bytes: number; total_bytes: number | null; speed_bps: number | null; eta_s: number | null } | null
+  /** link import started at this time (ms) */
+  importStart?: number
   /** link import ends with this error instead */
   importFail?: string
   /** simulation start (ms) for queued/processing songs */
@@ -47,21 +48,39 @@ export function mockApi(): Plugin {
   const now = Date.now()
   const iso = (ms: number) => new Date(ms).toISOString()
   const songs: MockSong[] = [
-    { id: randomUUID(), title: "Mock Song - Four Stems", status: "ready", duration_s: 20, size_bytes: 3.1 * MIB, model: "htdemucs", progress: 100, stage: "done", error: null, source_url: null, created_at: iso(now - 3600e3) },
-    { id: randomUUID(), title: "Rainy Day Blues (live)", status: "processing", duration_s: null, size_bytes: 8.4 * MIB, model: "htdemucs_ft", progress: 0, stage: "separating", error: null, source_url: null, created_at: iso(now - 60e3), simStart: now - 5e3 },
-    { id: randomUUID(), title: "corrupt-recording.mp3", status: "failed", duration_s: null, size_bytes: 0.2 * MIB, model: "htdemucs", progress: 35, stage: "validating", error: "File does not contain a decodable audio stream.", source_url: null, created_at: iso(now - 7200e3), fixedFail: true },
+    { id: randomUUID(), title: "Mock Song - Four Stems", status: "ready", duration_s: 20, size_bytes: 3.1 * MIB, model: "htdemucs", progress: 100, stage: "done", error: null, source_url: null, download: null, created_at: iso(now - 3600e3) },
+    { id: randomUUID(), title: "Rainy Day Blues (live)", status: "processing", duration_s: null, size_bytes: 8.4 * MIB, model: "htdemucs_ft", progress: 0, stage: "separating", error: null, source_url: null, download: null, created_at: iso(now - 60e3), simStart: now - 5e3 },
+    { id: randomUUID(), title: "corrupt-recording.mp3", status: "failed", duration_s: null, size_bytes: 0.2 * MIB, model: "htdemucs", progress: 35, stage: "validating", error: "File does not contain a decodable audio stream.", source_url: null, download: null, created_at: iso(now - 7200e3), fixedFail: true },
   ]
   songs.forEach((s) => (s.size_bytes = Math.round(s.size_bytes)))
 
-  function tick(s: MockSong) {
-    if (s.importUntil !== undefined) {
-      if (Date.now() < s.importUntil) return
-      s.importUntil = undefined
-      if (s.importFail) { s.status = "failed"; s.stage = null; s.error = s.importFail; return }
-      if (s.title === s.source_url) s.title = "Imported Song (mock)"
-      s.size_bytes = Math.round(4.2 * MIB)
-      s.simStart = Date.now()
+  const IMPORT_SIZE = Math.round(6.3 * MIB)
+  // Mirrors the backend's import stages: waiting -> probing -> downloading -> storing.
+  function tickImport(s: MockSong) {
+    if (s.importStart === undefined || s.status !== "importing") return
+    const t = (Date.now() - s.importStart) / 1000
+    s.download = null
+    if (t < 1) { s.stage = "waiting"; s.progress = 0; return }
+    if (t < 2.5) { s.stage = "probing"; return }
+    if (s.importFail) { s.status = "failed"; s.stage = null; s.error = s.importFail; s.importStart = undefined; return }
+    if (s.title === s.source_url) s.title = "Imported Song (mock)"
+    s.duration_s = 214
+    if (t < 9) {
+      const f = (t - 2.5) / 6.5
+      s.stage = "downloading"
+      s.progress = Math.round(f * 100)
+      s.download = { downloaded_bytes: Math.round(f * IMPORT_SIZE), total_bytes: IMPORT_SIZE, speed_bps: IMPORT_SIZE / 6.5, eta_s: Math.ceil(9 - t) }
+      return
     }
+    if (t < 10) { s.stage = "storing"; s.progress = 100; return }
+    s.importStart = undefined
+    s.size_bytes = IMPORT_SIZE
+    s.simStart = Date.now()
+  }
+
+  function tick(s: MockSong) {
+    tickImport(s)
+    if (s.status === "importing") return
     if (s.simStart === undefined || s.fixedFail) return
     const t = (Date.now() - s.simStart) / 1000
     if (t < 2) { s.status = "queued"; s.progress = 0; s.stage = null }
@@ -73,7 +92,7 @@ export function mockApi(): Plugin {
   }
   const publicSong = (s: MockSong) => {
     tick(s)
-    const { simStart: _a, fixedFail: _b, multipart: _c, importUntil: _d, importFail: _e, ...rest } = s
+    const { simStart: _a, fixedFail: _b, multipart: _c, importStart: _d, importFail: _e, ...rest } = s
     void _a; void _b; void _c; void _d; void _e
     return rest
   }
@@ -187,20 +206,29 @@ export function mockApi(): Plugin {
             const b = await readBody(req)
             if (!String(b.content_type ?? "").startsWith("audio/") && !/\.(mp3|m4a|wav|flac|ogg|opus|aac)$/i.test(String(b.filename))) return err(res, 415, "unsupported_media_type", "That does not look like an audio file")
             if (b.size > 200 * MIB) return err(res, 413, "too_large", "File is larger than 200 MB")
-            const s: MockSong = { id: randomUUID(), title: String(b.title), status: "uploading", duration_s: null, size_bytes: Number(b.size), model: b.model === "htdemucs_ft" ? "htdemucs_ft" : "htdemucs", progress: 0, stage: null, error: null, source_url: null, created_at: iso(Date.now()) }
+            const s: MockSong = { id: randomUUID(), title: String(b.title), status: "uploading", duration_s: null, size_bytes: Number(b.size), model: b.model === "htdemucs_ft" ? "htdemucs_ft" : "htdemucs", progress: 0, stage: null, error: null, source_url: null, download: null, created_at: iso(Date.now()) }
             songs.push(s)
             if (b.size <= 50 * MIB) return json(res, 200, { song: publicSong(s), upload: { mode: "single", url: `/mock-upload/${s.id}`, headers: { "Content-Type": String(b.content_type || "application/octet-stream") } } })
             s.multipart = true
             const part_size = 16 * MIB
             return json(res, 200, { song: publicSong(s), upload: { mode: "multipart", upload_id: randomUUID(), part_size, part_count: Math.ceil(b.size / part_size) } })
           }
-          // Links containing "fail" fail after the fake download; others continue into the normal simulation.
+          // Links containing "broken" cannot be read, "long" are too long, "fail" fail during the import.
+          if (path === "/api/songs/import/preview" && method === "POST") {
+            const b = await readBody(req)
+            const link = String(b.url ?? "").trim()
+            if (!/^https?:\/\/[^/\s]+\.[^/\s]+/.test(link)) return err(res, 400, "invalid_url", "not a valid link")
+            await new Promise((r) => setTimeout(r, 800))
+            if (link.includes("broken")) return err(res, 422, "link_unavailable", "The link is private, removed or unavailable.")
+            const long = link.includes("long")
+            return json(res, 200, { title: "Imported Song (mock)", duration_s: long ? 3600 : 214, uploader: "Mock Artist", site: "Youtube", filesize: IMPORT_SIZE, problem: long ? "Audio is 60.0 min long; the maximum is 15.0 min." : null })
+          }
           if (path === "/api/songs/import" && method === "POST") {
             const b = await readBody(req)
             const link = String(b.url ?? "").trim()
             if (!/^https?:\/\/[^/\s]+\.[^/\s]+/.test(link)) return err(res, 400, "invalid_url", "not a valid link")
             const title = String(b.title ?? "").trim() || link.slice(0, 200)
-            const s: MockSong = { id: randomUUID(), title, status: "importing", duration_s: null, size_bytes: 0, model: b.model === "htdemucs_ft" ? "htdemucs_ft" : "htdemucs", progress: 0, stage: "fetching", error: null, source_url: link, created_at: iso(Date.now()), importUntil: Date.now() + 3000, importFail: link.includes("fail") ? "The link is private, removed or unavailable." : undefined }
+            const s: MockSong = { id: randomUUID(), title, status: "importing", duration_s: null, size_bytes: 0, model: b.model === "htdemucs_ft" ? "htdemucs_ft" : "htdemucs", progress: 0, stage: "waiting", error: null, source_url: link, download: null, created_at: iso(Date.now()), importStart: Date.now(), importFail: link.includes("fail") ? "The link is private, removed or unavailable." : undefined }
             songs.push(s)
             return json(res, 200, publicSong(s))
           }
@@ -220,6 +248,12 @@ export function mockApi(): Plugin {
             if (sub === "upload/parts" && method === "POST") {
               const b = await readBody(req)
               return json(res, 200, { urls: (b.part_numbers as number[]).map((n) => ({ part_number: n, url: `/mock-upload/${s.id}/part/${n}` })) })
+            }
+            if (sub === "cancel" && method === "POST") {
+              tick(s)
+              if (s.status !== "importing") return err(res, 409, "not_importing", "the song is no longer importing")
+              s.status = "failed"; s.stage = null; s.download = null; s.importStart = undefined; s.error = "The import was cancelled."
+              return json(res, 200, publicSong(s))
             }
             if (sub === "complete" && method === "POST") {
               if (s.status === "uploading") { s.status = "queued"; s.simStart = Date.now() }

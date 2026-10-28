@@ -27,11 +27,14 @@ pub struct SongView {
     pub error: Option<String>,
     pub source_url: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Link imports only, while downloading (filled in by [`crate::import::ImportTracker`]).
+    #[sqlx(skip)]
+    pub download: Option<crate::fetch::DownloadProgress>,
 }
 
 pub const SONG_VIEW_SELECT: &str = "SELECT s.id, s.title, s.status, s.duration_s, s.size_bytes, s.model, \
     CASE WHEN s.status = 'ready' THEN 100 ELSE COALESCE(j.progress, 0) END AS progress, \
-    CASE WHEN s.status = 'importing' THEN 'fetching' \
+    CASE WHEN s.status = 'importing' THEN 'waiting' \
         WHEN s.status IN ('ready', 'failed', 'uploading') THEN NULL ELSE j.stage END AS stage, \
     s.error, s.source_url, s.created_at \
     FROM songs s LEFT JOIN LATERAL ( \

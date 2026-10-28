@@ -22,10 +22,12 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/songs", get(list).post(create))
         .route("/songs/import", post(import_link))
+        .route("/songs/import/preview", post(preview_link))
         .route("/songs/{id}", get(detail).patch(rename).delete(remove))
         .route("/songs/{id}/upload/parts", post(part_urls))
         .route("/songs/{id}/complete", post(complete))
         .route("/songs/{id}/reprocess", post(reprocess))
+        .route("/songs/{id}/cancel", post(cancel_import))
         .route("/songs/{id}/stems/{name}/download", get(download))
 }
 
@@ -40,13 +42,23 @@ fn check_rate(st: &AppState, user: Uuid) -> AppResult<()> {
     }
 }
 
+/// A song as the API shows it, with the live state of a running link import.
+async fn live_view(st: &AppState, id: Uuid) -> AppResult<SongView> {
+    let mut v = song_view(&st.pool, id).await?;
+    st.imports.annotate(&mut v);
+    Ok(v)
+}
+
 async fn list(State(st): State<AppState>, AuthUser(u): AuthUser) -> AppResult<Json<Vec<SongView>>> {
-    let rows = sqlx::query_as(&format!(
+    let mut rows: Vec<SongView> = sqlx::query_as(&format!(
         "{SONG_VIEW_SELECT} WHERE s.user_id = $1 ORDER BY s.created_at DESC"
     ))
     .bind(u.id)
     .fetch_all(&st.pool)
     .await?;
+    for r in &mut rows {
+        st.imports.annotate(r);
+    }
     Ok(Json(rows))
 }
 
@@ -205,7 +217,47 @@ async fn import_link(
     .execute(&st.pool)
     .await?;
     import::spawn(st.clone(), song_id);
-    Ok(Json(song_view(&st.pool, song_id).await?))
+    Ok(Json(live_view(&st, song_id).await?))
+}
+
+#[derive(Deserialize)]
+struct PreviewReq {
+    url: String,
+}
+
+/// Look up what a link points to (title, length, ...) without importing it.
+async fn preview_link(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Json(r): Json<PreviewReq>,
+) -> AppResult<Json<import::Preview>> {
+    if !st.preview_limiter.check(&u.id) {
+        return Err(AppError::too_many(
+            "rate_limited",
+            "too many link lookups, please slow down",
+        ));
+    }
+    let url = import::validate_url(&r.url)?;
+    import::preview(&st, &url)
+        .await
+        .map(Json)
+        .map_err(|e| AppError::new(StatusCode::UNPROCESSABLE_ENTITY, "link_unavailable", e.0))
+}
+
+/// Stop a link import that is still downloading; the song is marked failed.
+async fn cancel_import(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<SongView>> {
+    let song = owned_song(&st.pool, u.id, id).await?;
+    if song.status != SongStatus::Importing.as_str() || !import::cancel(&st, id).await {
+        return Err(AppError::conflict(
+            "not_importing",
+            "the song is no longer importing",
+        ));
+    }
+    Ok(Json(live_view(&st, id).await?))
 }
 
 #[derive(Deserialize)]
@@ -445,7 +497,7 @@ async fn detail(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
     owned_song(&st.pool, u.id, id).await?;
-    let song = song_view(&st.pool, id).await?;
+    let song = live_view(&st, id).await?;
     let (mut stems, mut peaks_url, mut analysis_url) = (Vec::new(), None, None);
     if song.status == SongStatus::Ready.as_str() {
         let rows: Vec<StemRow> = sqlx::query_as("SELECT * FROM stems WHERE song_id = $1")
@@ -493,7 +545,7 @@ async fn rename(
     if n == 0 {
         return Err(AppError::not_found());
     }
-    Ok(Json(song_view(&st.pool, id).await?))
+    Ok(Json(live_view(&st, id).await?))
 }
 
 async fn remove(
@@ -502,6 +554,8 @@ async fn remove(
     Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     let song: SongRow = owned_song(&st.pool, u.id, id).await?;
+    // Stop a running download first so it does not store anything afterwards.
+    st.imports.abort(id);
     if let Some(upload_id) = &song.upload_id
         && let Err(e) = st
             .storage
