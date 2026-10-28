@@ -3,3 +3,6 @@ packages: []
 allowBuilds:
   esbuild: true
   msw: false
+
+overrides:
+  rollup: 4.65.1
