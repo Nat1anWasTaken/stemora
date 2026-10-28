@@ -59,9 +59,6 @@ def test_payloads():
 def test_post_retry():
     calls = []
 
-    class R:
-        def __init__(s, c): s.status_code = c
-
     seq = iter([500, Exception("net"), 200])
 
     def post(*a, **k):
@@ -69,15 +66,114 @@ def test_post_retry():
         v = next(seq)
         if isinstance(v, Exception):
             raise v
-        return R(v)
+        return Resp(v)
 
     slept = []
-    assert W.post_with_retry("u", "t", {}, post=post, sleep=slept.append)
+    assert W.post_with_retry("u", "t", {}, post=post, sleep=slept.append) == W.OK
     assert len(calls) == 3 and slept == [1.0, 3.0]
-    assert not W.post_with_retry("u", "t", {}, post=lambda *a, **k: R(500), sleep=lambda s: None)
+    assert W.post_with_retry("u", "t", {}, post=lambda *a, **k: Resp(500), sleep=lambda s: None) == W.ERROR
     n = []
-    assert not W.post_with_retry("u", "t", {}, post=lambda *a, **k: (n.append(1), R(401))[1], sleep=lambda s: None)
+    assert W.post_with_retry("u", "t", {}, post=lambda *a, **k: (n.append(1), Resp(401))[1],
+                             sleep=lambda s: None) == W.ERROR
     assert len(n) == 1
+
+
+class Resp:
+    def __init__(s, code, body=None):
+        s.status_code, s._body = code, body
+
+    def json(s):
+        if s._body is None:
+            raise ValueError("no json")
+        return s._body
+
+
+@pytest.mark.parametrize("resp,expected", [
+    (Resp(200, {"ok": True, "ignored": "stale_attempt", "cancel": True}), W.CANCEL),
+    (Resp(410, {"code": "job_gone"}), W.GONE),
+    (Resp(200, {"ok": True}), W.OK),
+    (Resp(200), W.OK),
+])
+def test_post_cancel_is_not_retried(resp, expected):
+    n = []
+    assert W.post_with_retry("u", "t", {}, post=lambda *a, **k: (n.append(1), resp)[1],
+                             sleep=lambda s: None) == expected
+    assert len(n) == 1
+
+
+def test_reporter_cancel_and_gone():
+    results = iter([W.OK, W.CANCEL])
+    sent = []
+    r = W.Reporter("u", "t", post=lambda u, t, p: sent.append(p) or next(results))
+    r.update("separating", 10)
+    r.check()
+    r.update("separating", 20)
+    assert r.cancelled.is_set() and not r.gone.is_set()
+    with pytest.raises(W.Cancelled):
+        r.check()
+    assert r.failed("boom", retryable=True) == W.CANCEL
+    assert len(sent) == 2  # no failed webhook after a cancel
+
+    g = W.Reporter("u", "t", post=lambda u, t, p: W.GONE)
+    g.update("uploading", 96)
+    assert g.cancelled.is_set() and g.gone.is_set()
+
+
+class FakeRun:
+    """Drives runner.run_job with the pipeline stubbed out; `answer(payload)` is the backend."""
+
+    def __init__(self, monkeypatch, answer):
+        import runner
+        self.runner, self.sent, self.uploaded, self.deleted = runner, [], [], []
+        self.answer = answer
+        monkeypatch.setenv("R2_BUCKET", "b")
+        stems = {n: np.zeros((2, 10), dtype=np.float32) for n in P.STEMS}
+        for name, fn in {
+            "r2_client": lambda env: object(),
+            "download": lambda c, b, k, d: None,
+            "probe": lambda p, m: 1.0,
+            "decode": lambda p: np.zeros((2, 10), dtype=np.float32),
+            "separate": lambda wav, model, progress_cb, **kw: (progress_cb(0.5), stems)[1],
+            "encode_stem": lambda s, d, n: (d / f"{n}.m4a", d / f"{n}.flac"),
+            "upload": lambda c, b, path, key, kind: self.uploaded.append(key) or 1,
+            "delete": lambda c, b, key: self.deleted.append(key),
+        }.items():
+            monkeypatch.setattr(P, name, fn)
+        monkeypatch.setattr(runner, "_analyse", lambda rep, mono, duration, work: None)
+
+        def post(url, token, payload):
+            self.sent.append(payload)
+            return self.answer(payload)
+        monkeypatch.setattr(runner, "Reporter", lambda u, t: W.Reporter(u, t, heartbeat_s=3600, post=post))
+
+    def run(self):
+        return self.runner.run_job(body())
+
+
+def test_run_job_ok(monkeypatch):
+    f = FakeRun(monkeypatch, lambda p: W.OK)
+    assert f.run() == {"ok": True}
+    assert len(f.uploaded) == 9 and f.deleted == [] and f.sent[-1]["status"] == "done"
+
+
+def test_run_job_stops_before_uploading_when_cancelled(monkeypatch):
+    f = FakeRun(monkeypatch, lambda p: W.CANCEL if p["stage"] == "uploading" else W.OK)
+    assert f.run() == {"ok": False, "cancelled": True}
+    assert f.uploaded == [] and f.deleted == []
+    assert all(p["status"] == "running" for p in f.sent)  # no failed webhook
+
+
+def test_run_job_deletes_its_uploads_when_song_deleted_mid_upload(monkeypatch):
+    f = FakeRun(monkeypatch, lambda p: W.GONE if p["status"] == "done" else W.OK)
+    assert f.run() == {"ok": False, "cancelled": True}
+    assert len(f.uploaded) == 9 and sorted(f.deleted) == sorted(f.uploaded)
+
+
+def test_run_job_superseded_attempt_keeps_shared_keys(monkeypatch):
+    # A stale-attempt cancel must not delete keys a newer attempt also writes.
+    f = FakeRun(monkeypatch, lambda p: W.CANCEL if p["status"] == "done" else W.OK)
+    assert f.run() == {"ok": True}
+    assert f.deleted == []
 
 
 def test_peaks():

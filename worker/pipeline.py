@@ -185,5 +185,9 @@ def upload(client, bucket, path: Path, key: str, kind: str) -> int:
     return path.stat().st_size
 
 
+def delete(client, bucket, key: str):
+    client.delete_object(Bucket=bucket, Key=key)
+
+
 def song_prefix(user_id, song_id):
     return f"users/{user_id}/songs/{song_id}"
