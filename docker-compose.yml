@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stemora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: stemora
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stemora"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://stemora:${POSTGRES_PASSWORD}@postgres:5432/stemora
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL}
+      R2_ENDPOINT: ${R2_ENDPOINT:?}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?}
+      R2_BUCKET: ${R2_BUCKET:?}
+      MODAL_ENDPOINT_URL: ${MODAL_ENDPOINT_URL:?}
+      MODAL_SHARED_SECRET: ${MODAL_SHARED_SECRET:?}
+      WEBHOOK_SIGNING_KEY: ${WEBHOOK_SIGNING_KEY:?}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-200}
+      MAX_DURATION_S: ${MAX_DURATION_S:-900}
+      USER_QUOTA_MB: ${USER_QUOTA_MB:-5000}
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-2}
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  pgdata:

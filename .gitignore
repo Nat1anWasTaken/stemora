@@ -1,0 +1,12 @@
+target/
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.local
+__pycache__/
+.venv/
+.pytest_cache/
+.DS_Store
+.agents/

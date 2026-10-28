@@ -1,0 +1,6 @@
+.secrets.local
+.venv/
+__pycache__/
+.pytest_cache/
+out/
+*.egg-info/

@@ -1,0 +1,13 @@
+[project]
+name = "stemora-worker"
+version = "0.1.0"
+description = "Stemora Modal worker (Demucs stem separation)"
+requires-python = ">=3.11"
+dependencies = ["modal==1.6.3", "numpy", "requests", "fastapi"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
