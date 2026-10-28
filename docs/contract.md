@@ -8,7 +8,9 @@ users/{user_id}/songs/{song_id}/original.{ext}
 users/{user_id}/songs/{song_id}/stems/{name}.m4a     # AAC 192k stereo 44.1kHz, playback (universal decodeAudioData support, Safari included)
 users/{user_id}/songs/{song_id}/stems/{name}.flac    # lossless, download
 users/{user_id}/songs/{song_id}/peaks.json           # {"version":1,"samples_per_second":20,"stems":{"vocals":[0..1 floats,...],...}} (normalised 0..1 max-abs per bucket)
+users/{user_id}/songs/{song_id}/analysis.json        # optional: beat / bar / chord analysis of the full mix
 ```
+`analysis.json`: `{"version":1,"duration_s":123.4,"bpm":120.0|null,"beats_per_bar":4,"beats":[sec,...],"downbeats":[sec,...],"chords":[{"start":sec,"end":sec,"label":"Abmaj7"|"N"}]}`. `downbeats` is a subset of `beats`; chord segments are contiguous and aligned to beats; `N` = no chord. Labels are root (flats: `Db Eb Gb Ab Bb`) + suffix (`m`, `7`, `maj7`, `m7`, `dim`, `aug`, `6`, `m6`, `sus2`, `sus4`, `m7b5`, `dim7`, `mMaj7`). Produced best-effort by the worker (Beat This! + BTC chord model); songs processed before this feature, or where analysis failed, have no file.
 Stem names are exactly: `vocals`, `drums`, `bass`, `other`. UUIDs are lowercase hyphenated.
 WAV is not produced (FLAC is the lossless download).
 
@@ -32,9 +34,9 @@ GPU function: `retries=0`, scale-to-zero (no min_containers), timeout 20 min, we
  "error":"human readable (failed only)","retryable":true|false,
  "duration_s":123.4,
  "stems":[{"name":"vocals","m4a_key":"...","flac_key":"...","m4a_size":123,"flac_size":456}],
- "peaks_key":"..."}
+ "peaks_key":"...","analysis_key":"..."}
 ```
-`duration_s`, `stems`, `peaks_key` only on `done`. `error`/`retryable` only on `failed`. Worker retries each webhook POST up to 3 times with backoff. Running updates double as heartbeats (send at least every ~20s while separating). Validation failures (not audio, too long, no audio stream) are `retryable:false`; infra/transient failures are `retryable:true`.
+`duration_s`, `stems`, `peaks_key`, `analysis_key` only on `done` (`analysis_key` omitted if analysis failed). `stage` may also be `analyzing`. `error`/`retryable` only on `failed`. Worker retries each webhook POST up to 3 times with backoff. Running updates double as heartbeats (send at least every ~20s while separating). Validation failures (not audio, too long, no audio stream) are `retryable:false`; infra/transient failures are `retryable:true`.
 `callback_token` = hex(HMAC-SHA256(WEBHOOK_SIGNING_KEY, "{job_id}:{attempt}")). The backend recomputes and compares in constant time; the worker never sees the signing key.
 
 ## Backend HTTP API (all JSON under `/api`, session cookie `stemora_session`, HttpOnly, SameSite=Lax, Secure when `PUBLIC_BASE_URL` is https)
@@ -48,7 +50,7 @@ type Song = { id: string; title: string; status: SongStatus; duration_s: number 
               model: "htdemucs" | "htdemucs_ft"; progress: number; stage: string | null; error: string | null;
               created_at: string }
 type Stem = { name: "vocals"|"drums"|"bass"|"other"; url: string /* presigned GET m4a */; size_bytes: number }
-type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null }
+type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null /* presigned; the object may be missing (404) */ }
 type Usage = { used_bytes: number; quota_bytes: number }
 ```
 Auth:

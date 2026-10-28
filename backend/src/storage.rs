@@ -31,6 +31,10 @@ pub fn stems_prefix(user_id: Uuid, song_id: Uuid) -> String {
 pub fn stem_key(user_id: Uuid, song_id: Uuid, name: &str, ext: &str) -> String {
     format!("{}{name}.{ext}", stems_prefix(user_id, song_id))
 }
+pub fn analysis_key(user_id: Uuid, song_id: Uuid) -> String {
+    format!("{}analysis.json", song_prefix(user_id, song_id))
+}
+
 pub fn peaks_key(user_id: Uuid, song_id: Uuid) -> String {
     format!("{}peaks.json", song_prefix(user_id, song_id))
 }
@@ -364,6 +368,7 @@ mod tests {
             format!("{base}stems/bass.flac")
         );
         assert_eq!(peaks_key(u, s), format!("{base}peaks.json"));
+        assert_eq!(analysis_key(u, s), format!("{base}analysis.json"));
     }
 
     #[test]

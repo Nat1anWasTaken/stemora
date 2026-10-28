@@ -31,6 +31,20 @@ def _separate_and_encode(wav, model, work: Path, rep=None, timings=None, device=
     return peaks, files
 
 
+def _analyse(rep, mono, duration, work: Path):
+    """Beats/bars/chords -> analysis.json in `work`. Best effort: a failure here must not fail the job."""
+    import json
+    rep.update("analyzing", 94)
+    try:
+        import analysis
+        out = work / "analysis.json"
+        out.write_text(json.dumps(analysis.analyse(mono, duration), separators=(",", ":")))
+        return out
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        return None
+
+
 def run_job(job: dict):
     rep = Reporter(job["callback_url"], job["callback_token"])
     work = Path(tempfile.mkdtemp(prefix="stemora-"))
@@ -49,9 +63,12 @@ def run_job(job: dict):
 
         rep.update("separating", 5)
         peaks, files = _separate_and_encode(wav, job["model"], work, rep)
+        mono = wav.mean(0)
         del wav
+        analysis_json = _analyse(rep, mono, duration, work)
+        del mono
 
-        rep.update("uploading", 95)
+        rep.update("uploading", 96)
         prefix = P.song_prefix(job["user_id"], job["song_id"])
         stems_out = []
         for name in P.STEMS:
@@ -65,7 +82,11 @@ def run_job(job: dict):
         pj.write_text(json.dumps(peaks, separators=(",", ":")))
         peaks_key = f"{prefix}/peaks.json"
         P.upload(s3, bucket, pj, peaks_key, "json")
-        rep.done(duration, stems_out, peaks_key)
+        analysis_key = None
+        if analysis_json:
+            analysis_key = f"{prefix}/analysis.json"
+            P.upload(s3, bucket, analysis_json, analysis_key, "json")
+        rep.done(duration, stems_out, peaks_key, analysis_key)
         return {"ok": True}
     except P.ValidationError as e:
         rep.failed(str(e), retryable=False)
@@ -92,5 +113,18 @@ def run_local(audio: bytes, filename: str, model: str, device=None):
         timings["total"] = time.time() - t0
         return {"duration_s": duration, "timings": timings, "peaks": peaks,
                 "files": {n: {"m4a": a.read_bytes(), "flac": b.read_bytes()} for n, (a, b) in files.items()}}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def analyse_local(audio: bytes, filename: str, device=None):
+    import analysis
+    work = Path(tempfile.mkdtemp(prefix="stemora-test-"))
+    try:
+        src = work / ("in" + Path(filename).suffix)
+        src.write_bytes(audio)
+        duration = P.probe(str(src), 7200)
+        mono = P.decode(str(src)).mean(0)
+        return analysis.analyse(mono, duration, device)
     finally:
         shutil.rmtree(work, ignore_errors=True)
