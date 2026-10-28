@@ -61,6 +61,9 @@ export function StemRow({ name, songId, selected, onSelect }: { name: StemName; 
           onValueChange={(v) => setVolume(name, (Array.isArray(v) ? v[0] : v) / 100)}
         />
       </div>
+      <Button variant="toggle" size="icon-lg" onClick={() => toggleSolo(name)} aria-pressed={soloed} aria-label={`${soloed ? "Unsolo" : "Solo"} ${STEM_LABEL[name]}`}>
+        <Headphones />
+      </Button>
       <ActionMenu title={STEM_LABEL[name]} entries={entries} trigger={<Button variant="ghost" size="icon-lg" aria-label={`${STEM_LABEL[name]} options`}><MoreHorizontal /></Button>} />
     </li>
   )

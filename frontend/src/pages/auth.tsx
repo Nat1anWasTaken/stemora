@@ -7,13 +7,15 @@ import { Logo } from "@/components/app/logo"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useThemeColor } from "@/hooks/use-theme-color"
 import { api } from "@/lib/api"
 import { keys, useMe } from "@/lib/queries"
 
 function AuthLayout({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+  useThemeColor("--sheet-top")
   return (
     <div className="player-sheet flex min-h-app flex-col items-center justify-center px-4 py-10 pt-safe pb-safe">
-      <div className="flex w-full max-w-sm flex-col gap-8">
+      <div className="stagger-children flex w-full max-w-sm flex-col gap-8">
         <Logo />
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-semibold">{title}</h1>

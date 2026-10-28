@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Link, useNavigate } from "react-router"
-import { Ban, Music2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react"
+import { Ban, Music2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCw, Sparkles, Trash2 } from "lucide-react"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
 import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-bits"
@@ -9,6 +9,8 @@ import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { isActive, isFailedImport, progressValue, type Song } from "@/lib/api"
 import { formatBytes, formatClock, hostOf, relativeTime } from "@/lib/format"
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
+import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useSongActions, useSongs } from "@/lib/queries"
 
 function SongCard({ song }: { song: Song }) {
@@ -20,6 +22,8 @@ function SongCard({ song }: { song: Song }) {
   const working = isActive(song)
   const failedImport = isFailedImport(song)
   const importing = song.status === "importing"
+  const row = useRef<HTMLDivElement>(null)
+  const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
 
   const entries: MenuEntry[] = [
     ...(importing ? [{ key: "cancel", label: "Cancel import", icon: <Ban />, onSelect: () => cancelImport.mutate(song) } as MenuEntry] : []),
@@ -33,7 +37,21 @@ function SongCard({ song }: { song: Song }) {
   ]
 
   return (
-    <li className="surface-soft relative flex flex-col gap-3 rounded-3xl border border-border p-3 transition-colors hover:border-primary/40">
+    <li className="pressable relative">
+      <div className="absolute inset-0.5 flex justify-end rounded-3xl bg-destructive/20" aria-hidden={!swipe.open}>
+        <button
+          type="button"
+          tabIndex={swipe.open ? 0 : -1}
+          onClick={() => {
+            swipe.close()
+            setConfirm(true)
+          }}
+          className="flex w-24 flex-col items-center justify-center gap-1 text-xs font-medium text-destructive"
+        >
+          <Trash2 className="size-5" />Delete
+        </button>
+      </div>
+      <div ref={row} className="surface-soft swipe-row relative flex flex-col gap-3 rounded-3xl border border-border p-3 hover:border-primary/40">
       <div className="flex items-center gap-3">
         <SongArtwork id={song.id} dim={!ready} />
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -86,6 +104,7 @@ function SongCard({ song }: { song: Song }) {
           </div>
         </div>
       )}
+      </div>
       <RenameDialog open={renaming} onOpenChange={setRenaming} title={song.title} onRename={(t) => rename.mutate({ id: song.id, title: t })} />
       <ConfirmDialog
         open={confirm}
@@ -101,9 +120,16 @@ function SongCard({ song }: { song: Song }) {
 }
 
 export function LibraryPage() {
-  const { data: songs, isLoading, error } = useSongs()
+  const { data: songs, isLoading, error, refetch } = useSongs()
+  const pull = useRef<HTMLDivElement>(null)
+  usePullToRefresh(pull, refetch)
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pt-page md:px-8 md:py-10">
+      <div ref={pull} className="ptr-indicator pointer-events-none fixed inset-x-0 top-safe z-20 flex justify-center" aria-hidden>
+        <span className="grid size-10 place-items-center rounded-full border border-border bg-popover text-primary shadow-lg">
+          <RotateCw className="ptr-spin size-5" />
+        </span>
+      </div>
       <header className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-semibold md:text-4xl">Library</h1>
@@ -119,7 +145,7 @@ export function LibraryPage() {
         </ul>
       )}
       {songs && songs.length === 0 && (
-        <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-border px-6 py-16 text-center">
+        <div className="animate-page flex flex-col items-center gap-4 rounded-3xl border border-dashed border-border px-6 py-16 text-center">
           <Music2 className="size-8 text-muted-foreground" />
           <div className="flex flex-col gap-1">
             <h2 className="text-xl font-semibold">No songs yet</h2>
@@ -129,7 +155,7 @@ export function LibraryPage() {
         </div>
       )}
       {songs && songs.length > 0 && (
-        <ul className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="stagger-children grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {songs.map((s) => <SongCard key={s.id} song={s} />)}
         </ul>
       )}

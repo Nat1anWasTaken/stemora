@@ -3,6 +3,7 @@ import { ArrowLeft, Ban, Link2, Loader2, RefreshCw } from "lucide-react"
 import { ProcessingLine, SongArtwork } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { useThemeColor } from "@/hooks/use-theme-color"
 import { isFailedImport, progressValue } from "@/lib/api"
 import { formatClock, hostOf } from "@/lib/format"
 import { useSong, useSongActions } from "@/lib/queries"
@@ -13,6 +14,7 @@ export function SongPage() {
   const nav = useNavigate()
   const { data, error, isLoading } = useSong(id)
   const { reprocess, reimport, cancelImport } = useSongActions()
+  useThemeColor("--sheet-top")
 
   if (isLoading) return <div className="grid min-h-app place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
   if (error || !data) {
@@ -29,7 +31,7 @@ export function SongPage() {
   const importing = song.status === "importing"
 
   return (
-    <div className="player-sheet flex min-h-app flex-col items-center justify-center gap-6 px-4 pt-safe pb-safe">
+    <div className="player-sheet animate-sheet-in flex min-h-app flex-col items-center justify-center gap-6 px-4 pt-safe pb-safe">
       <Button variant="secondary" size="sm" className="absolute top-safe left-4" render={<Link to="/" />}><ArrowLeft />Library</Button>
       <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
         <SongArtwork id={song.id} />

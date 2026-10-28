@@ -51,7 +51,7 @@ export function InvitesPage() {
         </div>
       )}
       {list.data?.length === 0 && <p className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">No invites yet.</p>}
-      <ul className="flex flex-col gap-3">
+      <ul className="stagger-children flex flex-col gap-3">
         {list.data?.map((inv) => <InviteRow key={inv.id} inv={inv} />)}
       </ul>
     </div>
