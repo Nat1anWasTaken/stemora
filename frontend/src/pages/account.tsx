@@ -1,12 +1,13 @@
 import { useState, type ComponentProps, type FormEvent, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Loader2, LogOut } from "lucide-react"
+import { Download, Loader2, LogOut, Share } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { api } from "@/lib/api"
+import { promptInstall, useInstallState } from "@/lib/install"
 import { keys, useMe } from "@/lib/queries"
 
 function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) {
@@ -102,6 +103,22 @@ function PasswordForm() {
   )
 }
 
+function InstallSection() {
+  const state = useInstallState()
+  if (state === "installed" || state === "unavailable") return null
+  return (
+    <Section title="Install app" description="Add Stemora to your home screen for a full-screen player and lock-screen controls.">
+      {state === "prompt" ? (
+        <Button size="lg" className="self-start" onClick={() => void promptInstall()}><Download />Install Stemora</Button>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          In Safari, tap <Share className="inline size-4 align-text-bottom" /> Share, then <span className="font-medium text-foreground">Add to Home Screen</span>.
+        </p>
+      )}
+    </Section>
+  )
+}
+
 export function AccountPage() {
   const me = useMe()
   const qc = useQueryClient()
@@ -124,6 +141,7 @@ export function AccountPage() {
       </header>
       <EmailForm current={me.data.email} />
       <PasswordForm />
+      <InstallSection />
     </div>
   )
 }
