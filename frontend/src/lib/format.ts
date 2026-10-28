@@ -36,6 +36,7 @@ export function titleFromFilename(name: string): string {
 }
 
 const STAGE_LABELS: Record<string, string> = {
+  fetching: "Fetching from link",
   downloading: "Fetching file",
   validating: "Checking audio",
   separating: "Separating stems",

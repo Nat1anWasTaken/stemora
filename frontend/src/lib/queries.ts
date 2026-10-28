@@ -59,5 +59,15 @@ export function useSongActions() {
     onSuccess: (_d, v) => { toast.success("Processing started"); refresh(v.id) },
     onError: (e) => toast.error(message(e)),
   })
-  return { remove, rename, reprocess }
+  // Import the same link again, then drop the failed song.
+  const reimport = useMutation({
+    mutationFn: async (s: Song) => {
+      const title = s.title === s.source_url ? undefined : s.title
+      await api.importSong({ url: s.source_url ?? "", title, model: s.model })
+      await api.remove(s.id)
+    },
+    onSuccess: (_d, s) => { toast.success("Import started"); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
+    onError: (e) => { toast.error(message(e)); refresh() },
+  })
+  return { remove, rename, reprocess, reimport }
 }

@@ -13,6 +13,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use stemora_backend::auth::webhook_token;
 use stemora_backend::config::Config;
+use stemora_backend::fetch::{FakeFetcher, FetchError, MediaInfo};
 use stemora_backend::modal::{FakeModal, SpawnError};
 use stemora_backend::storage::{self, FakeStorage};
 use stemora_backend::{AppState, build_router, db, jobs};
@@ -26,6 +27,7 @@ struct TestApp {
     state: AppState,
     storage: Arc<FakeStorage>,
     modal: Arc<FakeModal>,
+    fetcher: Arc<FakeFetcher>,
 }
 
 async fn setup_with(tweak: impl FnOnce(&mut Config)) -> Option<TestApp> {
@@ -58,12 +60,15 @@ async fn setup_with(tweak: impl FnOnce(&mut Config)) -> Option<TestApp> {
     tweak(&mut cfg);
     let storage = Arc::new(FakeStorage::default());
     let modal = Arc::new(FakeModal::default());
-    let state = AppState::new(pool, cfg, storage.clone(), modal.clone());
+    let fetcher = Arc::new(FakeFetcher::default());
+    let state =
+        AppState::new(pool, cfg, storage.clone(), modal.clone()).with_fetcher(fetcher.clone());
     Some(TestApp {
         router: build_router(state.clone()),
         state,
         storage,
         modal,
+        fetcher,
     })
 }
 
@@ -199,6 +204,23 @@ impl TestApp {
             .unwrap();
         let token = webhook_token(&self.state.config.webhook_signing_key, job_id, 1);
         (id, job_id.to_string(), token)
+    }
+
+    /// Start a link import and wait for it to leave `importing`. Returns the final song.
+    async fn import(&self, cookie: &str, body: Value) -> Value {
+        let r = self.post("/api/songs/import", cookie, body).await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+        assert_eq!(r.body["status"], "importing");
+        assert_eq!(r.body["stage"], "fetching");
+        let id = r.body["id"].as_str().unwrap().to_string();
+        for _ in 0..200 {
+            let d = self.get(&format!("/api/songs/{id}"), cookie).await;
+            if d.body["song"]["status"] != "importing" {
+                return d.body["song"].clone();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("import did not finish");
     }
 
     fn done_body(&self, uid: Uuid, sid: &str) -> Value {
@@ -1259,4 +1281,164 @@ async fn concurrent_job_limit_and_rate_limit() {
         }
     }
     assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn import_from_link_queues_a_job() {
+    let app = app!();
+    let admin = app.admin().await;
+    let song = app
+        .import(
+            &admin,
+            json!({"url":"https://www.youtube.com/watch?v=abc","model":"htdemucs_ft"}),
+        )
+        .await;
+    assert_eq!(song["status"], "queued", "{song:?}");
+    assert_eq!(song["title"], "Fetched Title");
+    assert_eq!(song["source_url"], "https://www.youtube.com/watch?v=abc");
+    assert_eq!(song["size_bytes"], 4 * MIB);
+    let id = song["id"].as_str().unwrap();
+    let uid = app.song_user_id(id).await;
+    let key = storage::original_key(uid, Uuid::parse_str(id).unwrap(), "webm");
+    assert!(app.storage.has(&key));
+    // The song turns `queued` just before the job is spawned.
+    for _ in 0..100 {
+        if !app.modal.calls.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let calls = app.modal.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].original_key, key);
+    assert_eq!(calls[0].model, "htdemucs_ft");
+
+    // A title the user typed is kept.
+    let song = app
+        .import(
+            &admin,
+            json!({"url":"https://soundcloud.com/a/b","title":"Mine","model":"htdemucs"}),
+        )
+        .await;
+    assert_eq!(song["title"], "Mine");
+    let u = app.get("/api/me/usage", &admin).await;
+    assert_eq!(u.body["used_bytes"], 8 * MIB);
+}
+
+#[tokio::test]
+async fn import_failures_are_reported_on_the_song() {
+    let app = app!();
+    let admin = app.admin().await;
+    let link = json!({"url":"https://example.com/watch","model":"htdemucs"});
+
+    *app.fetcher.info.lock().unwrap() = Ok(MediaInfo {
+        duration_s: Some(3600.0),
+        ..Default::default()
+    });
+    let song = app.import(&admin, link.clone()).await;
+    assert_eq!(song["status"], "failed");
+    assert!(
+        song["error"]
+            .as_str()
+            .unwrap()
+            .contains("maximum is 15.0 min")
+    );
+    // The placeholder title (the link) stays when nothing better is known.
+    assert_eq!(song["title"], "https://example.com/watch");
+
+    *app.fetcher.info.lock().unwrap() = Ok(MediaInfo {
+        is_live: true,
+        ..Default::default()
+    });
+    let song = app.import(&admin, link.clone()).await;
+    assert!(song["error"].as_str().unwrap().contains("Live"));
+
+    *app.fetcher.info.lock().unwrap() = Err(FetchError("This link is not supported.".into()));
+    let song = app.import(&admin, link.clone()).await;
+    assert_eq!(song["error"], "This link is not supported.");
+
+    *app.fetcher.info.lock().unwrap() = Ok(MediaInfo::default());
+    *app.fetcher.file.lock().unwrap() = Ok(("webm".into(), 300 * MIB));
+    let song = app.import(&admin, link.clone()).await;
+    assert!(song["error"].as_str().unwrap().contains("200 MB"));
+
+    *app.fetcher.file.lock().unwrap() = Ok(("html".into(), MIB));
+    let song = app.import(&admin, link.clone()).await;
+    assert!(song["error"].as_str().unwrap().contains("not audio"));
+    let id = song["id"].as_str().unwrap();
+    assert!(app.storage.objects.lock().unwrap().is_empty());
+    assert!(app.modal.calls.lock().unwrap().is_empty());
+
+    // Failed imports cannot be reprocessed (there is no original), only re-imported.
+    let r = app
+        .post(
+            &format!("/api/songs/{id}/reprocess"),
+            &admin,
+            json!({"model":"htdemucs"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.body["code"], "original_missing");
+}
+
+#[tokio::test]
+async fn import_validation_and_limits() {
+    let app = app!();
+    let admin = app.admin().await;
+    for url in [
+        "not a link",
+        "ftp://x.com/a",
+        "http://127.0.0.1/",
+        "http://localhost/a",
+    ] {
+        let r = app
+            .post(
+                "/api/songs/import",
+                &admin,
+                json!({"url":url,"model":"htdemucs"}),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{url}");
+        assert_eq!(r.body["code"], "invalid_url");
+    }
+    let r = app
+        .post(
+            "/api/songs/import",
+            &admin,
+            json!({"url":"https://x.com/a","model":"nope"}),
+        )
+        .await;
+    assert_eq!(r.body["code"], "invalid_model");
+
+    // Imports still downloading count toward the concurrent-job limit.
+    *app.fetcher.info.lock().unwrap() = Err(FetchError("x".into()));
+    let link = json!({"url":"https://example.com/a","model":"htdemucs"});
+    let _permits = app
+        .state
+        .import_slots
+        .clone()
+        .acquire_many_owned(2)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let r = app.post("/api/songs/import", &admin, link.clone()).await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    let r = app.post("/api/songs/import", &admin, link.clone()).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(r.body["code"], "too_many_jobs");
+
+    // A restart leaves them orphaned; startup marks them failed.
+    assert_eq!(
+        jobs::fail_orphaned_imports(&app.state.pool).await.unwrap(),
+        2
+    );
+    let list = app.get("/api/songs", &admin).await;
+    assert!(
+        list.body
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["status"] == "failed")
+    );
 }

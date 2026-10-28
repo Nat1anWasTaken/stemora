@@ -1,6 +1,7 @@
 //! Cloudflare R2 (S3-compatible) wrapper. The `Storage` trait lets tests swap in an in-memory fake.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -11,11 +12,14 @@ use rusty_s3::{Bucket, Credentials, UrlStyle};
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::upload::{PART_SIZE, SINGLE_PUT_MAX};
 
 /// Lifetime of presigned GET URLs handed to the player.
 pub const GET_URL_TTL: Duration = Duration::from_secs(3600);
 /// Lifetime of presigned upload URLs (large files on slow links need time).
 pub const UPLOAD_URL_TTL: Duration = Duration::from_secs(6 * 3600);
+/// Per-request timeout for server-side uploads (up to 50 MiB in one PUT).
+const PUT_TIMEOUT: Duration = Duration::from_secs(600);
 
 // ---- Key building (R2 layout from docs/contract.md) ----
 
@@ -66,6 +70,8 @@ pub trait Storage: Send + Sync {
     async fn delete(&self, key: &str) -> Result<()>;
     /// Delete every object under `prefix` (list + delete).
     async fn delete_prefix(&self, prefix: &str) -> Result<()>;
+    /// Server-side upload of a local file (single PUT or multipart). Returns its size.
+    async fn put_file(&self, key: &str, path: &Path, content_type: &str) -> Result<u64>;
 }
 
 // ---- R2 implementation ----
@@ -254,6 +260,55 @@ impl Storage for R2Storage {
             }
         }
     }
+
+    async fn put_file(&self, key: &str, path: &Path, content_type: &str) -> Result<u64> {
+        use tokio::io::AsyncReadExt;
+        let size = tokio::fs::metadata(path).await?.len();
+        if size as i64 <= SINGLE_PUT_MAX {
+            let body = tokio::fs::read(path).await?;
+            let PresignedPut { url, headers } = self.presign_put(key, content_type);
+            let mut req = self.http.put(url).timeout(PUT_TIMEOUT).body(body);
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            ensure_ok(self.send(req).await?, "put").await?;
+            return Ok(size);
+        }
+        let upload_id = self.create_multipart(key, content_type).await?;
+        let result: Result<()> = async {
+            let mut file = tokio::fs::File::open(path).await?;
+            let mut parts = Vec::new();
+            for n in 1u16.. {
+                let mut buf = Vec::with_capacity(PART_SIZE as usize);
+                (&mut file)
+                    .take(PART_SIZE as u64)
+                    .read_to_end(&mut buf)
+                    .await?;
+                if buf.is_empty() {
+                    break;
+                }
+                let url = self.presign_part(key, &upload_id, n);
+                let resp = self
+                    .send(self.http.put(url).timeout(PUT_TIMEOUT).body(buf))
+                    .await?;
+                let resp = ensure_ok(resp, "upload part").await?;
+                let etag = resp
+                    .headers()
+                    .get(reqwest::header::ETAG)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| anyhow!("upload part response without ETag"))?
+                    .to_string();
+                parts.push((n, etag));
+            }
+            self.complete_multipart(key, &upload_id, &parts).await
+        }
+        .await;
+        if let Err(e) = result {
+            let _ = self.abort_multipart(key, &upload_id).await;
+            return Err(e);
+        }
+        Ok(size)
+    }
 }
 
 // ---- In-memory fake (used by tests) ----
@@ -340,6 +395,11 @@ impl Storage for FakeStorage {
             .unwrap()
             .retain(|k, _| !k.starts_with(prefix));
         Ok(())
+    }
+    async fn put_file(&self, key: &str, path: &Path, _ct: &str) -> Result<u64> {
+        let size = std::fs::metadata(path)?.len();
+        self.put(key, size);
+        Ok(size)
     }
 }
 

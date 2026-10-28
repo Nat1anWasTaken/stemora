@@ -4,6 +4,8 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod fetch;
+pub mod import;
 pub mod jobs;
 pub mod modal;
 pub mod ratelimit;
@@ -21,6 +23,7 @@ use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::fetch::{Fetcher, YtDlp};
 use crate::modal::Modal;
 use crate::ratelimit::RateLimiter;
 use crate::storage::Storage;
@@ -31,7 +34,10 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub storage: Arc<dyn Storage>,
     pub modal: Arc<dyn Modal>,
-    /// Per-user limiter for POST /songs, /complete and /reprocess.
+    pub fetcher: Arc<dyn Fetcher>,
+    /// Bounds concurrent link imports across all users.
+    pub import_slots: Arc<tokio::sync::Semaphore>,
+    /// Per-user limiter for POST /songs, /songs/import, /complete and /reprocess.
     pub upload_limiter: Arc<RateLimiter<Uuid>>,
     /// Limiter for login attempts, keyed by email.
     pub login_limiter: Arc<RateLimiter<String>>,
@@ -44,14 +50,24 @@ impl AppState {
         storage: Arc<dyn Storage>,
         modal: Arc<dyn Modal>,
     ) -> Self {
+        let fetcher = Arc::new(YtDlp::new(config.ytdlp_path.clone()));
+        let import_slots = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_imports));
         Self {
             pool,
             config: Arc::new(config),
             storage,
             modal,
+            fetcher,
+            import_slots,
             upload_limiter: Arc::new(RateLimiter::new(30, Duration::from_secs(600))),
             login_limiter: Arc::new(RateLimiter::new(10, Duration::from_secs(600))),
         }
+    }
+
+    /// Replace the yt-dlp fetcher (tests use [`fetch::FakeFetcher`]).
+    pub fn with_fetcher(mut self, fetcher: Arc<dyn Fetcher>) -> Self {
+        self.fetcher = fetcher;
+        self
     }
 }
 

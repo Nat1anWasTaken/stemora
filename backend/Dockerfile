@@ -11,9 +11,22 @@ COPY migrations ./migrations
 COPY src ./src
 RUN cargo build --release --locked
 
-FROM gcr.io/distroless/cc-debian12:nonroot
+# Not distroless: link imports run yt-dlp (Python) with ffmpeg for HLS/DASH sites and deno for
+# YouTube's JS challenges. Bump YTDLP_VERSION and rebuild when sites change.
+FROM denoland/deno:bin-2.9.6 AS deno
+
+FROM debian:bookworm-slim
+ARG YTDLP_VERSION=2026.10.26
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates ffmpeg python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/yt-dlp \
+    && /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[default]==${YTDLP_VERSION}" \
+    && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp \
+    && useradd --system --uid 65532 --create-home --home-dir /home/stemora stemora
+COPY --from=deno /deno /usr/local/bin/deno
 COPY --from=builder /app/target/release/stemora-backend /usr/local/bin/stemora-backend
-USER nonroot:nonroot
+USER stemora
 ENV BIND_ADDR=0.0.0.0:8080
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

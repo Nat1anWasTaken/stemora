@@ -22,6 +22,9 @@ The interface is defined in [`../docs/contract.md`](../docs/contract.md).
 | `MAX_DURATION_S` | `900` | Passed to the worker |
 | `USER_QUOTA_MB` | `5000` | Per-user: sum of original sizes + stem sizes |
 | `MAX_CONCURRENT_JOBS` | `2` | Queued+running jobs per user (429 beyond) |
+| `MAX_CONCURRENT_IMPORTS` | `2` | Link imports (yt-dlp downloads) running at once across all users; more wait their turn |
+| `IMPORT_TIMEOUT_S` | `600` | A link import that takes longer fails |
+| `YTDLP_PATH` | `yt-dlp` | yt-dlp executable (the Docker image ships one, with ffmpeg and deno) |
 | `COOKIE_SECURE` | auto | Overrides the Secure flag (default: on iff `PUBLIC_BASE_URL` is https) |
 | `LOG_FORMAT` / `RUST_LOG` | text / `info` | `LOG_FORMAT=json` for structured logs |
 
@@ -74,6 +77,19 @@ Browsers upload and play directly against R2 with presigned URLs, so the bucket 
 
 `ETag` must be exposed: the multipart upload needs each part's ETag to complete the upload.
 Add `http://localhost:5173` (or your dev origin) to `AllowedOrigins` for local development.
+
+## Importing from links
+
+`POST /api/songs/import` downloads the audio with yt-dlp **on this server** (so it uses this host's IP),
+uploads it to R2 as the song's original and then queues the normal Modal job. The download runs as an
+in-process task: songs left `importing` by a restart are marked failed at startup. Sites change often;
+when imports from a site start failing, rebuild the image with a newer yt-dlp
+(`docker compose build --build-arg YTDLP_VERSION=<version> backend`). YouTube may ask datacenter IPs to
+sign in ("confirm you're not a bot"); that surfaces as a failed song with that message. Host checks
+reject links to private/loopback addresses, but yt-dlp follows redirects on its own, so this is best
+effort rather than a hard SSRF boundary.
+
+To try the real yt-dlp locally: `STEMORA_IMPORT_TEST_URL=<link> cargo test -- --ignored real_ytdlp`.
 
 ## Notes
 

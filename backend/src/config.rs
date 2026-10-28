@@ -32,6 +32,11 @@ pub struct Config {
     pub user_quota_mb: u64,
     pub max_concurrent_jobs: i64,
     pub cookie_secure: bool,
+    /// yt-dlp executable used to import songs from links.
+    pub ytdlp_path: String,
+    /// Imports (yt-dlp downloads) running at once across all users.
+    pub max_concurrent_imports: usize,
+    pub import_timeout_s: u64,
 }
 
 impl Config {
@@ -87,6 +92,14 @@ impl Config {
                 "must be >= 1".into(),
             ));
         }
+        let max_concurrent_imports: usize =
+            num(opt("MAX_CONCURRENT_IMPORTS"), "MAX_CONCURRENT_IMPORTS", 2)?;
+        if max_concurrent_imports < 1 {
+            return Err(ConfigError::Invalid(
+                "MAX_CONCURRENT_IMPORTS",
+                "must be >= 1".into(),
+            ));
+        }
         Ok(Config {
             database_url: req("DATABASE_URL")?,
             public_base_url,
@@ -104,6 +117,9 @@ impl Config {
             user_quota_mb: num(opt("USER_QUOTA_MB"), "USER_QUOTA_MB", 5000)?,
             max_concurrent_jobs,
             cookie_secure,
+            ytdlp_path: opt("YTDLP_PATH").unwrap_or_else(|| "yt-dlp".into()),
+            max_concurrent_imports,
+            import_timeout_s: num(opt("IMPORT_TIMEOUT_S"), "IMPORT_TIMEOUT_S", 600)?,
         })
     }
 
@@ -180,6 +196,9 @@ mod tests {
         assert!(c.cookie_secure);
         assert!(c.modal_endpoint_url.is_empty());
         assert_eq!(c.max_upload_bytes(), 200 * 1024 * 1024);
+        assert_eq!(c.ytdlp_path, "yt-dlp");
+        assert_eq!(c.max_concurrent_imports, 2);
+        assert_eq!(c.import_timeout_s, 600);
     }
 
     #[test]
@@ -203,6 +222,7 @@ mod tests {
         assert!(lookup(&[("WEBHOOK_SIGNING_KEY", "short")], &[]).is_err());
         assert!(lookup(&[("PUBLIC_BASE_URL", "ftp://x")], &[]).is_err());
         assert!(lookup(&[("MAX_CONCURRENT_JOBS", "0")], &[]).is_err());
+        assert!(lookup(&[("MAX_CONCURRENT_IMPORTS", "0")], &[]).is_err());
     }
 
     #[test]

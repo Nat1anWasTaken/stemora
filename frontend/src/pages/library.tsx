@@ -7,22 +7,23 @@ import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { Song } from "@/lib/api"
+import { isActive, isFailedImport, type Song } from "@/lib/api"
 import { formatBytes, formatClock, relativeTime } from "@/lib/format"
 import { useSongActions, useSongs } from "@/lib/queries"
 
 function SongCard({ song }: { song: Song }) {
   const nav = useNavigate()
-  const { remove, rename, reprocess } = useSongActions()
+  const { remove, rename, reprocess, reimport } = useSongActions()
   const [confirm, setConfirm] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const ready = song.status === "ready"
-  const working = song.status === "queued" || song.status === "processing" || song.status === "uploading"
+  const working = isActive(song)
+  const failedImport = isFailedImport(song)
 
   const entries: MenuEntry[] = [
     ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
-    ...(song.status === "failed" || ready
+    ...((song.status === "failed" && !failedImport) || ready
       ? [{ key: "hq", label: song.model === "htdemucs_ft" ? "Reprocess" : "Reprocess in high quality", icon: <Sparkles />, onSelect: () => reprocess.mutate({ id: song.id, model: "htdemucs_ft" }) } as MenuEntry]
       : []),
     { key: "sep", separator: true },
@@ -62,9 +63,15 @@ function SongCard({ song }: { song: Song }) {
         <div className="relative z-10 flex flex-col gap-2">
           <p className="text-sm text-destructive">{song.error ?? "Processing failed."}</p>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: song.model })}>
-              <RefreshCw />Retry
-            </Button>
+            {failedImport ? (
+              <Button size="sm" variant="secondary" disabled={reimport.isPending} onClick={() => reimport.mutate(song)}>
+                <RefreshCw />Retry import
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: song.model })}>
+                <RefreshCw />Retry
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -96,7 +103,7 @@ export function LibraryPage() {
 
       {error && <p role="alert" className="text-destructive">{error.message}</p>}
       {isLoading && (
-        <ul className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-24" />)}
         </ul>
       )}
@@ -111,7 +118,7 @@ export function LibraryPage() {
         </div>
       )}
       {songs && songs.length > 0 && (
-        <ul className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {songs.map((s) => <SongCard key={s.id} song={s} />)}
         </ul>
       )}
