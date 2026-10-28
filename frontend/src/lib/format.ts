@@ -41,6 +41,7 @@ const STAGE_LABELS: Record<string, string> = {
   validating: "Checking audio",
   separating: "Separating stems",
   encoding: "Encoding",
+  analyzing: "Detecting beats and chords",
   uploading: "Saving stems",
   done: "Done",
 }

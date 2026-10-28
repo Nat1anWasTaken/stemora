@@ -240,8 +240,8 @@ export function mockApi(): Plugin {
             if (!sub && method === "GET") {
               const p = publicSong(s)
               return json(res, 200, s.status === "ready"
-                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json" }
-                : { song: p, stems: [], peaks_url: null })
+                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json" }
+                : { song: p, stems: [], peaks_url: null, analysis_url: null })
             }
             if (!sub && method === "PATCH") { const b = await readBody(req); s.title = String(b.title); return json(res, 200, publicSong(s)) }
             if (!sub && method === "DELETE") { songs.splice(songs.indexOf(s), 1); return json(res, 204) }

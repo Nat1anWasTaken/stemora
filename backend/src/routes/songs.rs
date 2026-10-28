@@ -462,6 +462,10 @@ async fn reprocess(
         .delete(&storage::peaks_key(u.id, id))
         .await
         .map_err(AppError::bad_gateway)?;
+    st.storage
+        .delete(&storage::analysis_key(u.id, id))
+        .await
+        .map_err(AppError::bad_gateway)?;
     let mut tx = st.pool.begin().await?;
     let claimed = sqlx::query(
         "UPDATE songs SET status = 'queued', model = $2, error = NULL, duration_s = NULL, updated_at = now() \
@@ -494,7 +498,7 @@ async fn detail(
 ) -> AppResult<Json<Value>> {
     owned_song(&st.pool, u.id, id).await?;
     let song = live_view(&st, id).await?;
-    let (mut stems, mut peaks_url) = (Vec::new(), None);
+    let (mut stems, mut peaks_url, mut analysis_url) = (Vec::new(), None, None);
     if song.status == SongStatus::Ready.as_str() {
         let rows: Vec<StemRow> = sqlx::query_as("SELECT * FROM stems WHERE song_id = $1")
             .bind(id)
@@ -506,9 +510,11 @@ async fn detail(
             }
         }
         peaks_url = Some(st.storage.presign_get(&storage::peaks_key(u.id, id), None));
+        // Optional object (older songs have none): the client treats a 404 as "no analysis".
+        analysis_url = Some(st.storage.presign_get(&storage::analysis_key(u.id, id), None));
     }
     Ok(Json(
-        json!({"song": song, "stems": stems, "peaks_url": peaks_url}),
+        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url}),
     ))
 }
 

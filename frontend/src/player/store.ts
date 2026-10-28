@@ -4,6 +4,7 @@ import { StemEngine, type Metronome } from "@/player/engine"
 import { startKeepAlive, stopKeepAlive } from "@/player/keepAlive"
 import { applyPreset, clampLoop, defaultMixer, toggleIn, type LoopRegion, type MixerState, type Preset } from "@/player/mixer"
 import { loadMixer, saveMixer } from "@/player/mixerStorage"
+import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
 
 let engine: StemEngine | null = null
@@ -24,6 +25,7 @@ type PlayerState = {
   pendingA: number | null
   metronome: Metronome
   peaks: Peaks | null
+  analysis: Analysis | null
 
   load: (detail: SongDetail) => Promise<void>
   unload: () => void
@@ -68,6 +70,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
     pendingA: null,
     metronome: { enabled: false, bpm: 100, countIn: false },
     peaks: null,
+    analysis: null,
 
     async load(detail) {
       get().unload()
@@ -75,12 +78,20 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine = e
       abort = new AbortController()
       const mixer = loadMixer(detail.song.id)
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, loop: null, pendingA: null, playing: false, peaks: null })
+      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, loop: null, pendingA: null, playing: false, peaks: null, analysis: null })
       e.onEnded = () => {
         stopKeepAlive()
         set({ playing: false })
       }
       try {
+        // Beat/chord analysis is optional and never blocks playback.
+        if (detail.analysis_url) {
+          void fetchAnalysis(detail.analysis_url).then((analysis) => {
+            if (engine !== e || !analysis) return
+            set({ analysis })
+            if (analysis.bpm) get().setMetronome({ bpm: analysis.bpm })
+          })
+        }
         const peaksPromise = detail.peaks_url ? fetchPeaks(detail.peaks_url) : Promise.resolve(null)
         await e.load(detail.stems.map((s) => ({ name: s.name, url: s.url })), (p) => engine === e && set({ loadProgress: p }), abort.signal)
         if (engine !== e) return
@@ -100,7 +111,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine?.dispose()
       engine = null
       stopKeepAlive()
-      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null })
+      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null })
     },
     play() {
       if (!engine || get().status !== "ready") return

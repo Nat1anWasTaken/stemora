@@ -27,8 +27,9 @@ React 19, TypeScript (strict), Vite, Tailwind CSS v4, shadcn/ui on Base UI, Reac
 Space play/pause, Left/Right skip 10 s (Shift: 30 s), 1-4 pick a stem, M mute it, S solo it, L cycle loop (set A, set B, clear), Home restart.
 
 ## Deployment
-`Dockerfile` builds the SPA and serves it with nginx (`nginx.conf`): history fallback, gzip, long cache for `/assets`, and `location /api/` proxied to `http://backend:8080` (1 MB body limit; files go directly to R2). The R2 bucket CORS must allow `PUT` from the site origin and **expose the `ETag` header**, otherwise multipart uploads cannot complete.
+`Dockerfile` builds the SPA and serves it with nginx (`nginx.conf`): history fallback, gzip, long cache for `/assets`, no-cache for `sw.js`, and `location /api/` proxied to `http://backend:8080` (1 MB body limit; files go directly to R2). The R2 bucket CORS must allow `PUT` from the site origin and **expose the `ETag` header**, otherwise multipart uploads cannot complete.
 
 ## Notes
-- iOS: audio starts from the first Play tap (AudioContext resume). The player is an installable PWA (manifest + icons); there is no offline mode.
+- iOS: audio starts from the first Play tap (AudioContext resume).
+- PWA: `vite-plugin-pwa` (generateSW) precaches the app shell, so the installed app opens offline and shows a "Can't reach Stemora" screen instead of bouncing to login. `/api` and the presigned stem URLs are never cached, so songs still need a connection. `public/manifest.webmanifest` stays the manifest source. A new deploy shows a Reload toast (`src/components/app/pwa.tsx`, also checks hourly); the Account page offers Install (Chromium prompt, or Safari's Add to Home Screen hint). The service worker only runs in `pnpm build`/`pnpm preview`, not in `pnpm dev`.
 - Peaks come from `peaks_url`; if missing they are computed from the decoded audio.

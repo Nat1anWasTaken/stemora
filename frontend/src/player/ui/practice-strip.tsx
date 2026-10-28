@@ -6,6 +6,7 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { formatClock } from "@/lib/format"
 import { usePlayer } from "@/player/store"
+import { ChordStrip } from "@/player/ui/chord-strip"
 import { cn } from "@/lib/utils"
 
 const SECTION_SECONDS = 15
@@ -15,6 +16,7 @@ export function PracticeStrip() {
   const duration = usePlayer((s) => s.duration)
   const loop = usePlayer((s) => s.loop)
   const metro = usePlayer((s) => s.metronome)
+  const analysis = usePlayer((s) => s.analysis)
   const { setLoop, clearLoop, seek, setMetronome } = usePlayer.getState()
   const count = Math.max(1, Math.ceil(duration / SECTION_SECONDS))
   const sections = Array.from({ length: count }, (_, i) => ({ a: i * SECTION_SECONDS, b: Math.min(duration, (i + 1) * SECTION_SECONDS) }))
@@ -45,7 +47,7 @@ export function PracticeStrip() {
         </PopoverContent>
       </Popover>
 
-      <div className="fade-x flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none" role="group" aria-label="Loop a section">
+      {analysis ? <ChordStrip analysis={analysis} /> : <div className="fade-x flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none" role="group" aria-label="Loop a section">
         {sections.map((s) => {
           const active = !!loop && Math.abs(loop.a - s.a) < 0.05 && Math.abs(loop.b - s.b) < 0.05
           return (
@@ -65,7 +67,7 @@ export function PracticeStrip() {
             </button>
           )
         })}
-      </div>
+      </div>}
     </div>
   )
 }

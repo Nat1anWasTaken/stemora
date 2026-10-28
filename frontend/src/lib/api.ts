@@ -39,7 +39,7 @@ export type LinkPreview = {
   problem: string | null
 }
 export type Stem = { name: StemName; url: string; size_bytes: number }
-export type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null }
+export type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null }
 export type Usage = { used_bytes: number; quota_bytes: number }
 export type Upload =
   | { mode: "single"; url: string; headers: Record<string, string> }
