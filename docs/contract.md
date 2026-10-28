@@ -55,6 +55,7 @@ Auth:
 - `GET /api/auth/status` -> `{needs_bootstrap: boolean}` (public)
 - `POST /api/auth/bootstrap` `{email,password}` -> User (only while zero users exist, else 403; creates admin + session)
 - `POST /api/auth/login` `{email,password}` -> User; `POST /api/auth/logout` -> 204; `GET /api/auth/me` -> User | 401
+- `PATCH /api/auth/me` `{current_password, email?, new_password?}` -> User (401 wrong password, 409 email taken; a password change signs out other sessions)
 - `GET /api/invites/{token}` -> `{valid:boolean}` (public); `POST /api/auth/accept-invite` `{token,email,password}` -> User
 - `POST /api/admin/invites` (admin) -> `{token, url, expires_at}` (url = PUBLIC_BASE_URL + "/invite/" + token); `GET /api/admin/invites` (admin) -> list
 Songs (auth required, scoped to the session user; other users' ids return 404):

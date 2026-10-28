@@ -241,6 +241,96 @@ macro_rules! app {
 }
 
 #[tokio::test]
+async fn update_me_changes_email_and_password() {
+    let app = app!();
+    let admin = app.admin().await;
+    let other_session = {
+        let r = app
+            .req(
+                Method::POST,
+                "/api/auth/login",
+                None,
+                None,
+                Some(json!({"email":"admin@example.com","password":"password123"})),
+            )
+            .await;
+        cookie_of(&r)
+    };
+    let user = app.user(&admin, "taken@example.com").await;
+    let patch = |cookie: String, body: Value| {
+        let app = &app;
+        async move {
+            app.req(
+                Method::PATCH,
+                "/api/auth/me",
+                Some(&cookie),
+                None,
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    // Wrong current password, duplicate email, weak password are rejected.
+    let r = patch(
+        admin.clone(),
+        json!({"current_password":"nope","email":"me@example.com"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = patch(
+        admin.clone(),
+        json!({"current_password":"password123","email":"Taken@Example.com"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    let r = patch(
+        admin.clone(),
+        json!({"current_password":"password123","new_password":"short"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // Email + password change keeps the role and this session, drops other sessions.
+    let r = patch(
+        admin.clone(),
+        json!({"current_password":"password123","email":" Me@Example.com ","new_password":"newpassword456"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["email"], "me@example.com");
+    assert_eq!(r.body["role"], "admin");
+    assert_eq!(app.get("/api/auth/me", &admin).await.status, StatusCode::OK);
+    assert_eq!(
+        app.get("/api/auth/me", &other_session).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(app.get("/api/auth/me", &user).await.status, StatusCode::OK);
+
+    let login = |email: &str, password: &str| {
+        let body = json!({"email": email, "password": password});
+        let app = &app;
+        async move {
+            app.req(Method::POST, "/api/auth/login", None, None, Some(body))
+                .await
+                .status
+        }
+    };
+    assert_eq!(
+        login("me@example.com", "newpassword456").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        login("me@example.com", "password123").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        login("admin@example.com", "newpassword456").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
 async fn auth_and_invites() {
     let app = app!();
     let r = app

@@ -17,7 +17,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/bootstrap", post(bootstrap))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
-        .route("/auth/me", get(me))
+        .route("/auth/me", get(me).patch(update_me))
         .route("/invites/{token}", get(invite_valid))
         .route("/auth/accept-invite", post(accept_invite))
 }
@@ -133,6 +133,66 @@ async fn logout(State(st): State<AppState>, jar: CookieJar) -> AppResult<(Cookie
 
 async fn me(AuthUser(u): AuthUser) -> Json<User> {
     Json(u)
+}
+
+#[derive(Deserialize)]
+struct UpdateMeReq {
+    current_password: String,
+    email: Option<String>,
+    new_password: Option<String>,
+}
+
+/// Change the signed-in user's email and/or password. Requires the current password;
+/// a password change signs out every other session.
+async fn update_me(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    jar: CookieJar,
+    Json(r): Json<UpdateMeReq>,
+) -> AppResult<Json<User>> {
+    let (hash,): (String,) = sqlx::query_as("SELECT password_hash FROM users WHERE id = $1")
+        .bind(u.id)
+        .fetch_one(&st.pool)
+        .await?;
+    if !verify_password(r.current_password, hash).await {
+        return Err(AppError::new(
+            StatusCode::UNAUTHORIZED,
+            "invalid_credentials",
+            "current password is incorrect",
+        ));
+    }
+    let email = r.email.as_deref().map(normalize_email).transpose()?;
+    let new_hash = match r.new_password {
+        Some(p) => {
+            validate_password(&p)?;
+            Some(hash_password(p).await?)
+        }
+        None => None,
+    };
+    let mut tx = st.pool.begin().await?;
+    let user: User = match sqlx::query_as(
+        "UPDATE users SET email = COALESCE($2, email), password_hash = COALESCE($3, password_hash) WHERE id = $1 RETURNING id, email, role",
+    )
+    .bind(u.id)
+    .bind(&email)
+    .bind(&new_hash)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(u) => u,
+        Err(e) if is_unique_violation(&e) => return Err(AppError::conflict("email_taken", "an account with that email already exists")),
+        Err(e) => return Err(e.into()),
+    };
+    if new_hash.is_some() {
+        let current = jar.get(SESSION_COOKIE).map(|c| hash_token(c.value()));
+        sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash IS DISTINCT FROM $2")
+            .bind(u.id)
+            .bind(current)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(user))
 }
 
 async fn invite_valid(
