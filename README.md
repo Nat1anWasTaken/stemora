@@ -12,7 +12,7 @@ per-stem volume, mute/solo, seek, A-B loop, downloads, and a personal library.
 ## Run it
 1. Create a private Cloudflare R2 bucket and an S3 API token; set bucket CORS (PUT/GET/HEAD from your origin, expose `ETag`).
 2. Deploy the worker: see `worker/README.md` (`modal secret create stemora-r2 ...`, `stemora-auth`, `modal deploy app.py`).
-3. `cp .env.example .env`, fill it in, then `docker compose up -d --build`.
+3. `cp .env.example .env`, fill it in, then `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build` (or point your reverse proxy at the `frontend` service, port 80).
 4. Open the site; the first visit creates the admin account. Admins create invite links for everyone else.
 
 See `AGENTS.md` for contributor notes (including the `@shadcn/lint` rule).
