@@ -12,6 +12,7 @@ import { AccountPage } from "@/pages/account"
 import { BootstrapPage, InvitePage, LoginPage } from "@/pages/auth"
 import { InvitesPage } from "@/pages/invites"
 import { LibraryPage } from "@/pages/library"
+import { QueuePage } from "@/pages/queue"
 import { SongPage } from "@/pages/song"
 import { UploadPage } from "@/pages/upload"
 
@@ -38,6 +39,7 @@ createRoot(document.getElementById("root")!).render(
             <Route element={<AppShell />}>
               <Route index element={<LibraryPage />} />
               <Route path="/upload" element={<UploadPage />} />
+              <Route path="/queue" element={<QueuePage />} />
               <Route path="/admin/invites" element={<InvitesPage />} />
               <Route path="/account" element={<AccountPage />} />
             </Route>

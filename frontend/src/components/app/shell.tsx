@@ -1,14 +1,17 @@
-import { Library, LogOut, Plus, RotateCw, UserRound, Users, WifiOff } from "lucide-react"
+import { Library, ListOrdered, LogOut, Plus, RotateCw, UserRound, Users, WifiOff } from "lucide-react"
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 import { Logo } from "@/components/app/logo"
 import { PageTransition } from "@/components/app/page-transition"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { api } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
 import { keys, useMe, useUsage } from "@/lib/queries"
+import { useQueue } from "@/lib/queue"
+import { uploads } from "@/lib/uploads"
 import { cn } from "@/lib/utils"
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -16,6 +19,16 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 
 const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn("pressable flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium duration-200", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")
+
+/** Songs running or waiting, for the Queue nav item. */
+function QueueCount({ count, floating }: { count: number; floating?: boolean }) {
+  if (count === 0) return null
+  return (
+    <Badge variant="count" className={floating ? "absolute -top-1.5 -right-2.5" : "ml-auto"} aria-label={`${count} in queue`}>
+      {count > 99 ? "99+" : count}
+    </Badge>
+  )
+}
 
 function UsageMeter() {
   const { data } = useUsage()
@@ -58,8 +71,10 @@ export function AppShell() {
   const qc = useQueryClient()
   const nav = useNavigate()
   const admin = me.data?.role === "admin"
+  const { count } = useQueue()
   const logout = async () => {
     await api.logout().catch(() => {})
+    uploads.reset()
     qc.clear()
     qc.setQueryData(keys.me, null)
     nav("/login", { replace: true })
@@ -71,6 +86,7 @@ export function AppShell() {
         <Button size="lg" render={<NavLink to="/upload" />}><Plus />Upload song</Button>
         <nav className="flex flex-col gap-1" aria-label="Main">
           <NavLink to="/" end className={linkClass}><Library className="size-5" />Library</NavLink>
+          <NavLink to="/queue" className={linkClass}><ListOrdered className="size-5" />Queue<QueueCount count={count} /></NavLink>
           {admin && <NavLink to="/admin/invites" className={linkClass}><Users className="size-5" />Invites</NavLink>}
         </nav>
         <div className="mt-auto flex flex-col gap-4">
@@ -97,6 +113,13 @@ export function AppShell() {
         </NavLink>
         <NavLink to="/upload" className={mobileLinkClass}>
           <Plus className="size-5" />Upload
+        </NavLink>
+        <NavLink to="/queue" className={mobileLinkClass}>
+          <span className="relative">
+            <ListOrdered className="size-5" />
+            <QueueCount count={count} floating />
+          </span>
+          Queue
         </NavLink>
         {admin && (
           <NavLink to="/admin/invites" className={mobileLinkClass}>
