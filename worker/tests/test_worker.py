@@ -270,3 +270,18 @@ def test_build_analysis():
     beats = np.arange(0.5, 8.5, 0.5)
     out = A.build_analysis(beats, A.snap_downbeats(beats, np.array([0.52, 2.49, 4.5])), [], 8.0)
     assert out["bpm"] == 120.0 and out["beats_per_bar"] == 4 and out["downbeats"] == [0.5, 2.5, 4.5]
+
+
+def test_estimate_key():
+    import analysis as A
+
+    def prog(*labels):
+        return [{"start": i * 2.0, "end": i * 2.0 + 2.0, "label": lab} for i, lab in enumerate(labels)]
+
+    assert A.parse_chord("Bbmaj7") == (10, "maj7") and A.parse_chord("Dbm7b5") == (1, "m7b5") and A.parse_chord("N") is None
+    assert A.estimate_key(prog("C", "F", "G7", "C", "Am", "F", "G", "C")) == "C"
+    assert A.estimate_key(prog("Dm", "Gm", "A7", "Dm", "Bb", "Gm", "A7", "Dm")) == "Dm"
+    assert A.estimate_key(prog("Eb", "Ab", "Bb7", "Eb")) == "Eb"
+    assert A.estimate_key(prog("N", "N")) is None and A.estimate_key([]) is None
+    beats = np.arange(0.5, 8.5, 0.5)
+    assert A.build_analysis(beats, beats[::4], prog("C", "F", "G", "C"), 8.0)["key"] == "C"

@@ -22,6 +22,13 @@ BTC_FPS = BTC_SR / BTC_HOP  # frames per second of the chord model
 
 ROOTS = ("C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B")
 QUALITIES = ("m", "", "dim", "aug", "m6", "6", "m7", "mMaj7", "maj7", "7", "dim7", "m7b5", "sus2", "sus4")
+# Chord tones (semitones above the root) per quality, for key estimation.
+INTERVALS = {"m": (0, 3, 7), "": (0, 4, 7), "dim": (0, 3, 6), "aug": (0, 4, 8), "m6": (0, 3, 7, 9), "6": (0, 4, 7, 9),
+             "m7": (0, 3, 7, 10), "mMaj7": (0, 3, 7, 11), "maj7": (0, 4, 7, 11), "7": (0, 4, 7, 10),
+             "dim7": (0, 3, 6, 9), "m7b5": (0, 3, 6, 10), "sus2": (0, 2, 7), "sus4": (0, 5, 7)}
+# Krumhansl-Kessler key profiles, tonic first.
+MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 
 
 def btc_labels() -> list[str]:
@@ -58,6 +65,38 @@ def merge_chords(times: list[float], labels: list[str], end: float) -> list[dict
     return out
 
 
+def parse_chord(label: str) -> tuple[int, str] | None:
+    """"Bbmaj7" -> (10, "maj7"); None for "N" or anything unrecognised."""
+    for root in sorted(ROOTS, key=len, reverse=True):
+        if label.startswith(root) and label[len(root):] in INTERVALS:
+            return ROOTS.index(root), label[len(root):]
+    return None
+
+
+def estimate_key(chords: list[dict]) -> str | None:
+    """Krumhansl-Schmuckler over a duration-weighted pitch-class profile of the chord tones -> "D" / "Dm" / None.
+
+    Roots count double and 6ths/7ths half, so the triads decide the key."""
+    profile = np.zeros(12)
+    for c in chords:
+        parsed = parse_chord(c["label"])
+        if not parsed:
+            continue
+        root, quality = parsed
+        dur = max(0.0, c["end"] - c["start"])
+        for k, i in enumerate(INTERVALS[quality]):
+            profile[(root + i) % 12] += dur * (2.0 if i == 0 else 1.0 if k < 3 else 0.5)
+    if not profile.any():
+        return None
+    best, key = -2.0, None
+    for tonic in range(12):
+        for template, suffix in ((MAJOR_PROFILE, ""), (MINOR_PROFILE, "m")):
+            r = float(np.corrcoef(profile, np.roll(template, tonic))[0, 1])
+            if r > best:
+                best, key = r, ROOTS[tonic] + suffix
+    return key
+
+
 def _bar_numbers(beats: np.ndarray, downbeats: np.ndarray) -> tuple[list[int], int]:
     """Beat position in bar (1-based) for each beat, and the dominant beats-per-bar."""
     pos, cur, counts = [], 0, []
@@ -87,6 +126,7 @@ def build_analysis(beats, downbeats, chords: list[dict], duration: float) -> dic
         "version": VERSION,
         "duration_s": round(duration, 3),
         "bpm": bpm,
+        "key": estimate_key(chords),
         "beats_per_bar": sig,
         "beats": [round(float(b), 3) for b in beats],
         "downbeats": [round(float(b), 3) for b in downbeats],

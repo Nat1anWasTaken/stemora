@@ -193,6 +193,8 @@
 @utility fade-x {
   mask-image: linear-gradient(90deg, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent);
 }
+/* Tick dial track: half-width inline padding so the first and last tick (w-3) can scroll to the centre line */
+@utility dial-track { padding-inline: calc(50% - 0.375rem); }
 @utility scrollbar-none {
   scrollbar-width: none;
   &::-webkit-scrollbar { display: none; }

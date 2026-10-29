@@ -1,8 +1,9 @@
-import { FastForward, Loader2, Metronome, Pause, Play, Repeat, Rewind } from "lucide-react"
+import { FastForward, Hash, Loader2, Metronome, Pause, Play, Rewind } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { formatClock, formatRemaining } from "@/lib/format"
 import { usePlayer } from "@/player/store"
+import { KeyPanel, TempoPanel } from "@/player/ui/practice-sheets"
 import { usePosition } from "@/player/ui/use-position"
 import { useState } from "react"
 
@@ -39,25 +40,20 @@ export function SeekBar() {
 export function Transport() {
   const playing = usePlayer((s) => s.playing)
   const status = usePlayer((s) => s.status)
-  const metro = usePlayer((s) => s.metronome)
-  const loop = usePlayer((s) => s.loop)
-  const pendingA = usePlayer((s) => s.pendingA)
-  const { toggle, skip, setMetronome, cycleLoop } = usePlayer.getState()
+  const metronome = usePlayer((s) => s.metronome.enabled)
+  const speed = usePlayer((s) => s.speed)
+  const semitones = usePlayer((s) => s.semitones)
+  const { toggle, skip } = usePlayer.getState()
   const ready = status === "ready"
-  const loopLabel = loop ? "Clear loop" : pendingA !== null ? "Set loop end (B)" : "Set loop start (A)"
   return (
     <div className="flex items-center justify-between gap-1">
-      <Button variant="toggle" size="icon-lg" aria-label="Metronome" aria-pressed={metro.enabled} onClick={() => setMetronome({ enabled: !metro.enabled })}>
-        <Metronome />
-      </Button>
+      <TempoPanel trigger={<Button variant="toggle" size="icon-lg" aria-label="Metronome and tempo" aria-pressed={metronome || speed !== 1}><Metronome /></Button>} />
       <Button variant="ghost" size="icon-lg" aria-label="Back 10 seconds" disabled={!ready} onClick={() => skip(-10)}><Rewind /></Button>
       <Button variant="play" size="icon-xl" aria-label={playing ? "Pause" : "Play"} disabled={!ready} onClick={toggle}>
         {status === "loading" ? <Loader2 className="animate-spin" /> : playing ? <Pause key="pause" className="animate-in fill-current duration-200 zoom-in-50 fade-in" /> : <Play key="play" className="animate-in fill-current duration-200 zoom-in-50 fade-in" />}
       </Button>
       <Button variant="ghost" size="icon-lg" aria-label="Forward 10 seconds" disabled={!ready} onClick={() => skip(10)}><FastForward /></Button>
-      <Button variant="toggle" size="icon-lg" aria-label={loopLabel} aria-pressed={!!loop || pendingA !== null} disabled={!ready} onClick={cycleLoop}>
-        {pendingA !== null && !loop ? <span className="animate-in text-base font-bold duration-200 zoom-in-50">A</span> : <Repeat />}
-      </Button>
+      <KeyPanel trigger={<Button variant="toggle" size="icon-lg" aria-label="Song key" aria-pressed={semitones !== 0}><Hash /></Button>} />
     </div>
   )
 }

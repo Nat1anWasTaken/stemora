@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { LocateFixed, Minimize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { buildBars, buildCells, lastAtOrBefore, splitChord } from "@/player/analysis"
+import { buildBars, buildCells, lastAtOrBefore, splitChord, transposeChord } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
 import { usePosition } from "@/player/ui/use-position"
 import { cn } from "@/lib/utils"
@@ -17,6 +17,7 @@ export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
   const duration = usePlayer((s) => s.duration)
   const playing = usePlayer((s) => s.playing)
   const loop = usePlayer((s) => s.loop)
+  const semitones = usePlayer((s) => s.semitones)
   const { seek, setLoop, clearLoop } = usePlayer.getState()
   const cells = useMemo(() => (analysis ? buildCells(analysis) : []), [analysis])
   const bars = useMemo(() => buildBars(cells, duration), [cells, duration])
@@ -87,13 +88,13 @@ export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
                 <div className={cn("grid gap-0.5 rounded-2xl", COLS[analysis.beatsPerBar] ?? "grid-cols-4", looped && "ring-2 ring-primary")}>
                   {b.cells.map((c) => {
                     const on = c.time === activeTime
-                    const chord = c.chord && c.chord !== "N" ? splitChord(c.chord) : null
+                    const chord = c.chord && c.chord !== "N" ? splitChord(transposeChord(c.chord, semitones)) : null
                     return (
                       <button
                         key={c.time}
                         type="button"
                         aria-current={on}
-                        aria-label={`Bar ${c.bar} beat ${c.beat}${c.chord ? `, ${c.chord === "N" ? "no chord" : c.chord}` : ""}`}
+                        aria-label={`Bar ${c.bar} beat ${c.beat}${c.chord ? `, ${c.chord === "N" ? "no chord" : transposeChord(c.chord, semitones)}` : ""}`}
                         onClick={() => seek(c.time)}
                         className={cn(
                           "pressable flex min-h-16 items-center justify-center px-1 text-lg font-semibold first:rounded-l-2xl last:rounded-r-2xl",

@@ -6,6 +6,7 @@ import { applyPreset, clampLoop, defaultMixer, toggleIn, type LoopRegion, type M
 import { loadMixer, saveMixer } from "@/player/mixerStorage"
 import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
+import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED, tempoUnit } from "@/player/tempo"
 
 let engine: StemEngine | null = null
 let abort: AbortController | null = null
@@ -24,6 +25,12 @@ type PlayerState = {
   loop: LoopRegion | null
   pendingA: number | null
   metronome: Metronome
+  /** Playback speed, 1 = original tempo. */
+  speed: number
+  /** Key change in semitones. */
+  semitones: number
+  /** Whether the SoundTouch worklet loaded (null while loading); without it speed changes also shift the pitch and the key cannot change. */
+  canShift: boolean | null
   peaks: Peaks | null
   analysis: Analysis | null
 
@@ -42,7 +49,9 @@ type PlayerState = {
   cycleLoop: () => void
   setLoop: (a: number, b: number) => void
   clearLoop: () => void
-  setMetronome: (m: Partial<Metronome>) => void
+  setMetronome: (enabled: boolean) => void
+  setSpeed: (speed: number) => void
+  setSemitones: (n: number) => void
 }
 
 export const usePlayer = create<PlayerState>((set, get) => {
@@ -57,6 +66,13 @@ export const usePlayer = create<PlayerState>((set, get) => {
     set({ loop })
     engine?.setLoop(loop)
   }
+  // The click follows the song: the detected BPM (or 100) scaled by the playback speed.
+  const applyMetronome = () => {
+    const { metronome, speed, analysis } = get()
+    const bpm = Math.min(240, Math.max(30, Math.round(tempoUnit(analysis?.bpm ?? null) * speed)))
+    set({ metronome: { ...metronome, bpm } })
+    engine?.setMetronome({ ...metronome, bpm })
+  }
 
   return {
     songId: null,
@@ -68,7 +84,10 @@ export const usePlayer = create<PlayerState>((set, get) => {
     mixer: defaultMixer(),
     loop: null,
     pendingA: null,
-    metronome: { enabled: false, bpm: 100, countIn: false },
+    metronome: { enabled: false, bpm: 100 },
+    speed: 1,
+    semitones: 0,
+    canShift: null,
     peaks: null,
     analysis: null,
 
@@ -78,7 +97,9 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine = e
       abort = new AbortController()
       const mixer = loadMixer(detail.song.id)
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, loop: null, pendingA: null, playing: false, peaks: null, analysis: null })
+      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, canShift: null })
+      applyMetronome()
+      void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
       e.onEnded = () => {
         stopKeepAlive()
         set({ playing: false })
@@ -89,7 +110,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
           void fetchAnalysis(detail.analysis_url).then((analysis) => {
             if (engine !== e || !analysis) return
             set({ analysis })
-            if (analysis.bpm) get().setMetronome({ bpm: analysis.bpm })
+            applyMetronome()
           })
         }
         const peaksPromise = detail.peaks_url ? fetchPeaks(detail.peaks_url) : Promise.resolve(null)
@@ -111,7 +132,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine?.dispose()
       engine = null
       stopKeepAlive()
-      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null })
+      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0 })
     },
     play() {
       if (!engine || get().status !== "ready") return
@@ -157,11 +178,20 @@ export const usePlayer = create<PlayerState>((set, get) => {
       set({ pendingA: null })
       applyLoop(null)
     },
-    setMetronome(m) {
-      const next = { ...get().metronome, ...m }
-      next.bpm = Math.min(240, Math.max(30, Math.round(next.bpm)))
-      set({ metronome: next })
-      engine?.setMetronome(next)
+    setMetronome(enabled) {
+      set({ metronome: { ...get().metronome, enabled } })
+      applyMetronome()
+    },
+    setSpeed(speed) {
+      const s = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed))
+      set({ speed: s })
+      engine?.setSpeed(s)
+      applyMetronome()
+    },
+    setSemitones(n) {
+      const st = Math.min(MAX_SEMITONES, Math.max(-MAX_SEMITONES, Math.round(n)))
+      set({ semitones: st })
+      engine?.setPitch(st)
     },
   }
 })
