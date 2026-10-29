@@ -22,13 +22,43 @@ def test_validate_ok():
 
 
 @pytest.mark.parametrize("kw", [
-    {"model": "nope"}, {"attempt": 0}, {"attempt": True}, {"job_id": "X"},
+    {"model": "nope"}, {"model": "htdemucs_ft"}, {"attempt": 0}, {"attempt": True}, {"job_id": "X"},
     {"original_key": "users/other/songs/x/original.mp3"}, {"original_key": f"users/{U}/songs/{S}/../x/original.mp3"},
     {"callback_url": "ftp://x"}, {"callback_token": "zz"}, {"max_duration_s": 0}, {"max_duration_s": "9"},
 ])
 def test_validate_bad(kw):
     with pytest.raises(schema.RequestError):
         schema.validate_request(body(**kw))
+
+
+def test_models_are_wired():
+    assert set(P.SCNET_MODELS) <= set(schema.MODELS)
+    assert set(P.SCNET_SOURCES) == set(P.STEMS)
+    for spec in P.SCNET_MODELS.values():
+        assert spec["config"]["sources"] == list(P.SCNET_SOURCES) and len(spec["sha256"]) == 64
+
+
+def test_scnet_overlap_add_reconstructs_the_mix(monkeypatch):
+    # A stand-in "model" that hands each source a quarter of its input: if the chunking,
+    # padding and cross-fade weights are right, the stems sum back to the mix everywhere.
+    torch = pytest.importorskip("torch")
+
+    class Quarter(torch.nn.Module):
+        sources = P.SCNET_SOURCES
+
+        def forward(self, x):
+            return (x / 4)[:, None].expand(-1, 4, -1, -1)
+
+    monkeypatch.setattr(P, "load_scnet", lambda name: Quarter())
+    rng = np.random.default_rng(1)
+    prog = []
+    for n in (500, 1000, 9001):  # shorter than a chunk, too short to pad, reflect-padded
+        wav = rng.standard_normal((2, n)).astype(np.float32)
+        out = P._separate_scnet(wav, "scnet_xl_ihf", prog.append, "cpu", chunk=800, batch=3)
+        assert set(out) == set(P.STEMS) and out["vocals"].shape == wav.shape
+        assert np.allclose(sum(out.values()), wav, atol=1e-5)
+        assert prog[-1] == 1.0 and prog == sorted(prog)
+        prog.clear()
 
 
 def test_validate_missing_and_nonobject():

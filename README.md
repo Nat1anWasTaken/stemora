@@ -6,7 +6,7 @@ per-stem volume, mute/solo, seek, A-B loop, downloads, and a personal library.
 
 - `frontend/` React + TypeScript + Vite + Tailwind v4 + shadcn/ui (Base UI), mobile-first player
 - `backend/` Rust (axum, sqlx, Postgres): users, invites, songs, jobs, presigned R2 uploads
-- `worker/` Modal app running Demucs (`htdemucs` / `htdemucs_ft`) and posting progress webhooks
+- `worker/` Modal app running Demucs (`htdemucs`) or SCNet (`scnet_xl_ihf`) and posting progress webhooks
 - `docs/contract.md` the interface between the three
 
 ## Run it

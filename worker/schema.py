@@ -2,7 +2,7 @@
 import re
 import uuid
 
-MODELS = ("htdemucs", "htdemucs_ft")
+MODELS = ("htdemucs", "scnet_xl_ihf")
 REQUIRED = (
     "job_id", "attempt", "user_id", "song_id", "original_key",
     "model", "callback_url", "callback_token", "max_duration_s",

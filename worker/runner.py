@@ -17,7 +17,7 @@ def _separate_and_encode(wav, model, work: Path, rep=None, timings=None, device=
 
     def cb(f):
         if rep:
-            rep.check()  # called per Demucs chunk, so a cancel stops the GPU within seconds
+            rep.check()  # called per model chunk/batch, so a cancel stops the GPU within seconds
             rep.set_progress(5 + 85 * f)
 
     stems = P.separate(wav, model, progress_cb=cb, shifts=1, device=device)

@@ -1,6 +1,6 @@
 """Pure-ish pipeline functions: probe, decode, separate, encode, peaks, upload.
 
-Heavy imports (torch, demucs, boto3) are lazy so the unit-testable parts
+Heavy imports (torch, demucs, scnet, boto3) are lazy so the unit-testable parts
 (peaks, normalisation) import with only numpy installed.
 """
 import json
@@ -9,6 +9,10 @@ import types
 from pathlib import Path
 
 import numpy as np
+from scnet.checkpoints import CHECKPOINTS as SCNET_MODELS
+from scnet.checkpoints import CHUNK as SCNET_CHUNK
+from scnet.checkpoints import OVERLAP as SCNET_OVERLAP
+from scnet.checkpoints import SOURCES as SCNET_SOURCES
 
 SR = 44100
 STEMS = ("vocals", "drums", "bass", "other")
@@ -85,12 +89,27 @@ def _patch_progress(cb, n_runs):
 
 def separate(wav: np.ndarray, model_name: str, progress_cb=lambda f: None, shifts: int = 1,
              device: str | None = None) -> dict:
-    """Run Demucs on (2, n) float32. Returns {stem: (2, n) float32}."""
+    """Separate (2, n) float32 into {stem: (2, n) float32} with Demucs or SCNet."""
+    import torch
+
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    if model_name in SCNET_MODELS:
+        stems = _separate_scnet(wav, model_name, progress_cb, device)
+    else:
+        stems = _separate_demucs(wav, model_name, progress_cb, shifts, device)
+    if device == "cuda":
+        torch.cuda.empty_cache()
+    missing = set(STEMS) - set(stems)
+    if missing:
+        raise RuntimeError(f"model did not produce stems: {sorted(missing)}")
+    return {k: stems[k] for k in STEMS}
+
+
+def _separate_demucs(wav, model_name, progress_cb, shifts, device) -> dict:
     import torch
     from demucs.apply import BagOfModels, apply_model
     from demucs.pretrained import get_model
 
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     model = get_model(model_name)
     n_models = len(model.models) if isinstance(model, BagOfModels) else 1
     model.to(device).eval()
@@ -106,14 +125,70 @@ def separate(wav: np.ndarray, model_name: str, progress_cb=lambda f: None, shift
         restore()
     out = out * (ref.std() + 1e-8) + ref.mean()
     out = out.cpu().numpy().astype(np.float32)
-    stems = {name: out[i] for i, name in enumerate(model.sources)}
-    del model, out
-    if device == "cuda":
-        torch.cuda.empty_cache()
-    missing = set(STEMS) - set(stems)
-    if missing:
-        raise RuntimeError(f"model did not produce stems: {sorted(missing)}")
-    return {k: stems[k] for k in STEMS}
+    return {name: out[i] for i, name in enumerate(model.sources)}
+
+
+def load_scnet(model_name: str):
+    """Build an SCNet from its config and load the baked-in checkpoint (CPU)."""
+    import torch
+    from scnet.model import SCNet
+
+    spec = SCNET_MODELS[model_name]
+    model = SCNet(**spec["config"])
+    state = torch.load(spec["path"], map_location="cpu", weights_only=True)
+    model.load_state_dict(state.get("state_dict", state))
+    return model.eval()
+
+
+def _fade_window(size: int, fade: int, fade_in: bool, fade_out: bool):
+    import torch
+    w = torch.ones(size)
+    if fade_in:
+        w[:fade] = torch.linspace(0, 1, fade)
+    if fade_out:
+        w[-fade:] = torch.linspace(1, 0, fade)
+    return w
+
+
+def _separate_scnet(wav, model_name, progress_cb, device, chunk=SCNET_CHUNK, batch=4) -> dict:
+    """Overlap-add over fixed-size chunks with linear cross-fades (port of MSST's `demix`).
+    The track is reflect-padded by one overlap so its edges get full context."""
+    import torch
+    import torch.nn.functional as F
+
+    model = load_scnet(model_name).to(device)
+    step = chunk // SCNET_OVERLAP
+    border, fade = chunk - step, chunk // 10
+    mix = torch.from_numpy(wav).to(device)
+    n = mix.shape[-1]
+    pad = border if n > 2 * border else 0
+    if pad:
+        mix = F.pad(mix, (pad, pad), mode="reflect")
+    total = mix.shape[-1]
+    starts = list(range(0, total, step))
+    out = torch.zeros((len(model.sources),) + mix.shape, device=device)
+    weight = torch.zeros(total, device=device)
+    with torch.inference_mode(), torch.autocast(device_type="cuda", enabled=device == "cuda"):
+        for b in range(0, len(starts), batch):
+            group = starts[b:b + batch]
+            parts = []
+            for s in group:
+                part = mix[:, s:s + chunk]
+                missing = chunk - part.shape[-1]
+                if missing:
+                    mode = "reflect" if part.shape[-1] > chunk // 2 else "constant"
+                    part = F.pad(part, (0, missing), mode=mode)
+                parts.append(part)
+            y = model(torch.stack(parts)).float()
+            for j, s in enumerate(group):
+                seg = min(chunk, total - s)
+                w = _fade_window(chunk, fade, s > 0, s + chunk < total).to(device)[:seg]
+                out[..., s:s + seg] += y[j, ..., :seg] * w
+                weight[s:s + seg] += w
+            progress_cb(min((b + len(group)) / len(starts), 1.0))
+    out = (out / weight)[..., pad:pad + n].cpu().numpy().astype(np.float32)
+    del model, mix, weight
+    return {name: out[i] for i, name in enumerate(SCNET_SOURCES)}
 
 
 def normalise(stems: dict, ceiling: float = 0.99) -> dict:
