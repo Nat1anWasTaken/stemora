@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from "react"
 import type { Song } from "@/lib/api"
-import { useSongs } from "@/lib/queries"
+import { useInFlightSongs, useSongsById } from "@/lib/queries"
 import { isTransferring, useUploads, type LocalUpload } from "@/lib/uploads"
 
 /**
- * Everything in flight for the user, built from the server's song list (the queue itself lives
+ * Everything in flight for the user, built from the server's in-flight and failed songs (the queue itself lives
  * on the server, so it is the same on every device) plus the file transfers running in this tab.
  */
 export type QueueView = {
@@ -68,9 +68,13 @@ export const clearFinished = (songs: Song[]) => {
 }
 
 export function useQueue(): QueueView & { isLoading: boolean; error: Error | null } {
-  const { data: songs = [], isLoading, error } = useSongs()
+  const { data: inFlight, isLoading, error } = useInFlightSongs()
   const local = useUploads()
   const tracked = useSyncExternalStore(subscribeSeen, () => seen)
+  // Seen songs that left the in-flight list have finished (or were deleted): look them up by id.
+  const gone = inFlight ? [...tracked].filter((id) => !inFlight.some((s) => s.id === id)) : []
+  const done = useSongsById(gone)
+  const songs = [...(inFlight ?? []), ...done]
   const next = trackSeen(tracked, songs)
   // Remember new ones after render; this render already uses `next`.
   if (next !== tracked) queueMicrotask(() => setSeen(new Set([...seen, ...next])))

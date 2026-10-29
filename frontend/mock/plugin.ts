@@ -57,7 +57,41 @@ export function mockApi(): Plugin {
     { id: randomUUID(), title: "Rainy Day Blues (live)", status: "processing", duration_s: null, size_bytes: 8.4 * MIB, model: "scnet_xl_ihf", progress: 0, stage: "separating", error: null, source_url: null, download: null, created_at: iso(now - 60e3), simStart: now - 5e3 },
     { id: randomUUID(), title: "corrupt-recording.mp3", status: "failed", duration_s: null, size_bytes: 0.2 * MIB, model: "htdemucs", progress: 35, stage: "validating", error: "File does not contain a decodable audio stream.", source_url: null, download: null, created_at: iso(now - 7200e3), fixedFail: true },
   ]
+  // Enough ready songs to page through the library (infinite scroll loads 30 at a time).
+  const FILLER = ["Morning Coffee", "Neon Skyline", "Paper Planes", "Golden Hour", "Midnight Drive", "Ocean Avenue", "Static Hearts", "Velvet Rain", "Northern Lights", "Slow Burn", "Wildflower", "City of Glass", "Echoes", "Low Tide", "Fever Dream", "Silver Lining", "Back Porch Jam", "Lost in Tokyo", "Satellite", "Brass & Bones"]
+  if (process.env.VITE_MOCK_FRESH !== "1") {
+    for (let i = 0; i < 40; i++) {
+      const title = `${FILLER[i % FILLER.length]}${i >= FILLER.length ? " (Live)" : ""}`
+      songs.push({ id: randomUUID(), title, status: "ready", duration_s: 120 + ((i * 37) % 240), size_bytes: (3 + (i % 7)) * MIB, model: i % 3 === 0 ? "scnet_xl_ihf" : "htdemucs", progress: 100, stage: "done", error: null, source_url: null, download: null, created_at: iso(now - (2 + i * 9) * 3600e3) })
+    }
+  }
   songs.forEach((s) => (s.size_bytes = Math.round(s.size_bytes)))
+
+  /** GET /api/songs: same params and shape as the backend; the cursor is just an offset here. */
+  const SORTS: Record<string, (a: MockSong, b: MockSong) => number> = {
+    newest: (a, b) => b.created_at.localeCompare(a.created_at),
+    oldest: (a, b) => a.created_at.localeCompare(b.created_at),
+    title: (a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()),
+    title_desc: (a, b) => b.title.toLowerCase().localeCompare(a.title.toLowerCase()),
+    longest: (a, b) => (b.duration_s ?? -1) - (a.duration_s ?? -1),
+    shortest: (a, b) => (a.duration_s ?? -1) - (b.duration_s ?? -1),
+  }
+  const STATUSES = ["pending", "importing", "uploading", "queued", "processing", "ready", "failed"]
+  function listSongs(res: ServerResponse, params: URLSearchParams) {
+    const compare = SORTS[params.get("sort") || "newest"]
+    if (!compare) return err(res, 400, "invalid_sort", "unknown sort order")
+    const offset = Number(params.get("cursor") || 0)
+    if (!Number.isInteger(offset) || offset < 0) return err(res, 400, "invalid_cursor", "invalid cursor")
+    const limit = Math.min(100, Math.max(1, Number(params.get("limit")) || 30))
+    songs.forEach(tick)
+    const q = (params.get("q") ?? "").trim().toLowerCase()
+    const statuses = params.get("status")?.split(",").filter(Boolean) ?? null
+    if (statuses?.some((st) => !STATUSES.includes(st))) return err(res, 400, "invalid_status", "unknown song status")
+    const matching = songs.filter((s) => s.title.toLowerCase().includes(q) && (!statuses || statuses.includes(s.status))).sort((a, b) => compare(a, b) || a.id.localeCompare(b.id))
+    const page = matching.slice(offset, offset + limit)
+    const next = offset + limit < matching.length ? String(offset + limit) : null
+    return json(res, 200, { songs: page.map(publicSong), next_cursor: next, total: matching.length })
+  }
 
   const IMPORT_SIZE = Math.round(6.3 * MIB)
   // Mirrors the backend's import stages: waiting -> probing -> downloading -> storing.
@@ -225,7 +259,7 @@ export function mockApi(): Plugin {
 
           // ---- songs
           if (path.startsWith("/api/songs")) pump()
-          if (path === "/api/songs" && method === "GET") return json(res, 200, [...songs].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(publicSong))
+          if (path === "/api/songs" && method === "GET") return listSongs(res, url.searchParams)
           if (path === "/api/songs" && method === "POST") {
             const b = await readBody(req)
             if (!String(b.content_type ?? "").startsWith("audio/") && !/\.(mp3|m4a|wav|flac|ogg|opus|aac)$/i.test(String(b.filename))) return err(res, 415, "unsupported_media_type", "That does not look like an audio file")

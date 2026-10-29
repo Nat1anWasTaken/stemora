@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { api, isActive, isLinkImport, retryModel, type Model, type Song } from "@/lib/api"
+import { api, isActive, isLinkImport, retryModel, type Model, type Song, type SongPage, type SongSort, type SongStatus } from "@/lib/api"
 
 export const keys = {
   me: ["me"] as const,
@@ -14,11 +14,47 @@ export const keys = {
 export const useMe = () => useQuery({ queryKey: keys.me, queryFn: api.me, staleTime: 60_000, retry: false })
 export const useUsage = () => useQuery({ queryKey: keys.usage, queryFn: api.usage, refetchInterval: 30_000 })
 
-/** Polls every 2s while any song is still being processed. */
-export const useSongs = () =>
+/** The library, a page at a time. Polls every 2s while any loaded song is still being processed. */
+export const useLibrary = ({ q, sort }: { q: string; sort: SongSort }) =>
+  useInfiniteQuery({
+    queryKey: [...keys.songs, { q, sort }],
+    queryFn: ({ pageParam }) => api.songs({ q, sort, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (p) => p.next_cursor,
+    placeholderData: keepPreviousData,
+    refetchInterval: (query) => (query.state.data?.pages.some((p) => p.songs.some(isActive)) ? 2000 : false),
+  })
+
+/** Follows a few songs by id, polling each every 2s while it is still being worked on (deleted ones drop out). */
+export const useSongsById = (ids: string[]) =>
+  useQueries({
+    queries: ids.map((id) => ({
+      queryKey: keys.song(id),
+      queryFn: () => api.song(id),
+      retry: false,
+      refetchInterval: (q: { state: { data?: { song: Song }; error: Error | null } }) =>
+        q.state.error || (q.state.data && !isActive(q.state.data.song)) ? false : 2000,
+    })),
+    combine: (results) => results.flatMap((r) => (r.data ? [r.data.song] : [])),
+  })
+
+/** What the queue shows: everything in flight, plus failed songs. */
+const IN_FLIGHT: SongStatus[] = ["pending", "uploading", "importing", "queued", "processing", "failed"]
+
+/** Every in-flight or failed song (all pages). Polls every 2s while any is still being worked on. */
+export const useInFlightSongs = () =>
   useQuery({
-    queryKey: keys.songs,
-    queryFn: api.songs,
+    queryKey: [...keys.songs, "in-flight"],
+    queryFn: async () => {
+      const all: Song[] = []
+      let cursor: string | null = null
+      do {
+        const page: SongPage = await api.songs({ status: IN_FLIGHT, limit: 100, cursor })
+        all.push(...page.songs)
+        cursor = page.next_cursor
+      } while (cursor)
+      return all
+    },
     refetchInterval: (q) => (q.state.data?.some(isActive) ? 2000 : false),
   })
 

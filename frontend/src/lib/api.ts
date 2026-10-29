@@ -49,6 +49,11 @@ export type LinkPreview = {
   /** Why importing it would fail, if it would. */
   problem: string | null
 }
+/** Library sort orders understood by `GET /api/songs`. */
+export type SongSort = "newest" | "oldest" | "title" | "title_desc" | "longest" | "shortest"
+export type SongQuery = { q?: string; sort?: SongSort; status?: SongStatus[]; cursor?: string | null; limit?: number }
+/** One page of the library. */
+export type SongPage = { songs: Song[]; next_cursor: string | null; total: number }
 export type Stem = { name: StemName; url: string; size_bytes: number }
 export type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null }
 export type Usage = { used_bytes: number; quota_bytes: number }
@@ -98,6 +103,18 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
   return data as T
 }
 
+/** Query string for `GET /api/songs`, leaving out defaults. */
+export function songsQuery({ q, sort, status, cursor, limit }: SongQuery): string {
+  const params = new URLSearchParams()
+  if (q?.trim()) params.set("q", q.trim())
+  if (sort && sort !== "newest") params.set("sort", sort)
+  if (status?.length) params.set("status", status.join(","))
+  if (limit) params.set("limit", String(limit))
+  if (cursor) params.set("cursor", cursor)
+  const s = params.toString()
+  return s ? `?${s}` : ""
+}
+
 export const api = {
   authStatus: () => request<{ needs_bootstrap: boolean }>("/auth/status"),
   bootstrap: (email: string, password: string) => request<User>("/auth/bootstrap", { method: "POST", body: { email, password } }),
@@ -119,7 +136,7 @@ export const api = {
   createInvite: () => request<Invite>("/admin/invites", { method: "POST" }),
   listInvites: () => request<InviteSummary[]>("/admin/invites"),
 
-  songs: () => request<Song[]>("/songs"),
+  songs: (p: SongQuery = {}) => request<SongPage>(`/songs${songsQuery(p)}`),
   song: (id: string) => request<SongDetail>(`/songs/${id}`),
   createSong: (b: { title: string; filename: string; content_type: string; size: number; model: Model }) =>
     request<{ song: Song; upload: Upload }>("/songs", { method: "POST", body: b }),

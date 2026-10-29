@@ -204,6 +204,12 @@
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
+/* Sticky toolbar: page-coloured so it is invisible at rest, blurring what scrolls under it */
+@utility glass-page {
+  background: color-mix(in oklch, var(--background) 85%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
 @utility glow-primary {
   box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 40%, transparent), 0 10px 32px -8px color-mix(in oklch, var(--primary) 55%, transparent);
 }

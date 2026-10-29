@@ -3,17 +3,21 @@ import { Badge } from "@/components/ui/badge"
 import { isHighQuality, type Song } from "@/lib/api"
 import { downloadSummary, importStageLabel, queuePlace, stageLabel } from "@/lib/format"
 
-const HEIGHTS = ["h-4", "h-5", "h-6", "h-7", "h-8"] as const
+const ARTWORK = {
+  default: { box: "size-14 gap-1 rounded-2xl p-3", bar: "w-1.5", heights: ["h-4", "h-5", "h-6", "h-7", "h-8"] },
+  sm: { box: "size-11 gap-0.5 rounded-xl p-2.5", bar: "w-1", heights: ["h-2", "h-3", "h-4", "h-5", "h-6"] },
+} as const
 
 /** Small four-bar glyph; bar heights are derived from the id so each song has its own mark. */
-export function SongArtwork({ id, dim }: { id: string; dim?: boolean }) {
-  const h = (i: number) => HEIGHTS[parseInt(id.slice(i * 2, i * 2 + 2) || "0", 16) % HEIGHTS.length]
+export function SongArtwork({ id, dim, size = "default" }: { id: string; dim?: boolean; size?: keyof typeof ARTWORK }) {
+  const a = ARTWORK[size]
+  const h = (i: number) => a.heights[parseInt(id.slice(i * 2, i * 2 + 2) || "0", 16) % a.heights.length]
   return (
-    <span className={`flex size-14 shrink-0 items-end justify-center gap-1 rounded-2xl bg-secondary p-3 ${dim ? "opacity-60" : ""}`} aria-hidden>
-      <span className={`w-1.5 rounded-full bg-vocals ${h(0)}`} />
-      <span className={`w-1.5 rounded-full bg-drums ${h(1)}`} />
-      <span className={`w-1.5 rounded-full bg-bass ${h(2)}`} />
-      <span className={`w-1.5 rounded-full bg-other ${h(3)}`} />
+    <span className={`flex shrink-0 items-end justify-center bg-secondary ${a.box} ${dim ? "opacity-60" : ""}`} aria-hidden>
+      <span className={`rounded-full bg-vocals ${a.bar} ${h(0)}`} />
+      <span className={`rounded-full bg-drums ${a.bar} ${h(1)}`} />
+      <span className={`rounded-full bg-bass ${a.bar} ${h(2)}`} />
+      <span className={`rounded-full bg-other ${a.bar} ${h(3)}`} />
     </span>
   )
 }

@@ -3,7 +3,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -65,17 +65,175 @@ async fn live_view(st: &AppState, id: Uuid) -> AppResult<SongView> {
     Ok(v)
 }
 
-async fn list(State(st): State<AppState>, AuthUser(u): AuthUser) -> AppResult<Json<Vec<SongView>>> {
-    let mut rows: Vec<SongView> = sqlx::query_as(&format!(
-        "{SONG_VIEW_SELECT} WHERE s.user_id = $1 ORDER BY s.created_at DESC"
-    ))
-    .bind(u.id)
-    .fetch_all(&st.pool)
-    .await?;
+#[derive(Deserialize)]
+struct ListParams {
+    q: Option<String>,
+    sort: Option<String>,
+    limit: Option<i64>,
+    cursor: Option<String>,
+    /// Comma-separated song statuses to include (all when absent).
+    status: Option<String>,
+}
+
+/// Library sort orders: (SQL key expression, descending).
+fn sort_key(sort: &str) -> Option<(&'static str, bool)> {
+    Some(match sort {
+        "newest" => ("s.created_at", true),
+        "oldest" => ("s.created_at", false),
+        "title" => ("lower(s.title)", false),
+        "title_desc" => ("lower(s.title)", true),
+        "longest" => ("COALESCE(s.duration_s, -1)", true),
+        "shortest" => ("COALESCE(s.duration_s, -1)", false),
+        _ => return None,
+    })
+}
+
+/// The same key expression applied to the cursor's raw value (bound as text).
+fn cursor_key(sort: &str) -> &'static str {
+    match sort {
+        "newest" | "oldest" => "$4::text::timestamptz",
+        "title" | "title_desc" => "lower($4::text)",
+        _ => "COALESCE($4::text::float8, -1)",
+    }
+}
+
+/// Opaque keyset cursor: hex of `{"k": raw sort field of the last row, "id": its id}`.
+#[derive(Serialize, Deserialize)]
+struct Cursor {
+    k: Option<String>,
+    id: Uuid,
+}
+
+fn cursor_field(sort: &str, s: &SongView) -> Option<String> {
+    match sort {
+        "newest" | "oldest" => Some(s.created_at.to_rfc3339()),
+        "title" | "title_desc" => Some(s.title.clone()),
+        _ => s.duration_s.map(|d| d.to_string()),
+    }
+}
+
+/// Whether the cursor's key fits the sort, so it never reaches a failing SQL cast.
+fn cursor_matches_sort(sort: &str, c: &Cursor) -> bool {
+    match sort {
+        "newest" | "oldest" => {
+            c.k.as_deref()
+                .is_some_and(|k| chrono::DateTime::parse_from_rfc3339(k).is_ok())
+        }
+        "title" | "title_desc" => c.k.is_some(),
+        _ => {
+            c.k.as_deref()
+                .is_none_or(|k| k.parse::<f64>().is_ok_and(f64::is_finite))
+        }
+    }
+}
+
+fn encode_cursor(c: &Cursor) -> String {
+    hex::encode(serde_json::to_vec(c).unwrap_or_default())
+}
+
+fn decode_cursor(s: &str) -> Option<Cursor> {
+    serde_json::from_slice(&hex::decode(s).ok()?).ok()
+}
+
+/// `%`, `_` and `\` match literally in the search text.
+fn like_pattern(q: &str) -> String {
+    let mut p = String::from("%");
+    for c in q.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            p.push('\\');
+        }
+        p.push(c);
+    }
+    p.push('%');
+    p
+}
+
+async fn list(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Query(p): Query<ListParams>,
+) -> AppResult<Json<Value>> {
+    let sort = p
+        .sort
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("newest");
+    let (key, desc) = sort_key(sort)
+        .ok_or_else(|| AppError::bad_request("invalid_sort", "unknown sort order"))?;
+    let limit = p.limit.unwrap_or(30).clamp(1, 100);
+    let cursor = match p.cursor.as_deref().filter(|c| !c.is_empty()) {
+        Some(c) => Some(
+            decode_cursor(c)
+                .filter(|c| cursor_matches_sort(sort, c))
+                .ok_or_else(|| AppError::bad_request("invalid_cursor", "invalid cursor"))?,
+        ),
+        None => None,
+    };
+    let pattern =
+        p.q.as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(like_pattern);
+
+    let statuses = match p.status.as_deref().filter(|s| !s.is_empty()) {
+        Some(list) => Some(
+            list.split(',')
+                .map(|s| {
+                    SongStatus::parse(s.trim())
+                        .map(|st| st.as_str().to_string())
+                        .ok_or_else(|| {
+                            AppError::bad_request("invalid_status", "unknown song status")
+                        })
+                })
+                .collect::<AppResult<Vec<_>>>()?,
+        ),
+        None => None,
+    };
+
+    let filter = "s.user_id = $1 AND ($2::text IS NULL OR s.title ILIKE $2) \
+        AND ($3::text[] IS NULL OR s.status = ANY($3))";
+    let (dir, cmp) = if desc { ("DESC", "<") } else { ("ASC", ">") };
+    let after = if cursor.is_some() {
+        format!("AND ({key}, s.id) {cmp} ({}, $5)", cursor_key(sort))
+    } else {
+        String::new()
+    };
+    let sql = format!(
+        "{SONG_VIEW_SELECT} WHERE {filter} {after} ORDER BY {key} {dir}, s.id {dir} LIMIT {}",
+        limit + 1
+    );
+    let mut query = sqlx::query_as::<_, SongView>(&sql)
+        .bind(u.id)
+        .bind(&pattern)
+        .bind(&statuses);
+    if let Some(c) = &cursor {
+        query = query.bind(c.k.clone()).bind(c.id);
+    }
+    let mut rows = query.fetch_all(&st.pool).await?;
+    let total: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM songs s WHERE {filter}"))
+        .bind(u.id)
+        .bind(&pattern)
+        .bind(&statuses)
+        .fetch_one(&st.pool)
+        .await?;
+
+    let next_cursor = if rows.len() as i64 > limit {
+        rows.truncate(limit as usize);
+        rows.last().map(|s| {
+            encode_cursor(&Cursor {
+                k: cursor_field(sort, s),
+                id: s.id,
+            })
+        })
+    } else {
+        None
+    };
     for r in &mut rows {
         st.imports.annotate(r);
     }
-    Ok(Json(rows))
+    Ok(Json(
+        json!({"songs": rows, "next_cursor": next_cursor, "total": total}),
+    ))
 }
 
 #[derive(Deserialize)]
