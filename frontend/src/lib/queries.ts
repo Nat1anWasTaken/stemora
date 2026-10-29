@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { api, isActive, type Model, type Song } from "@/lib/api"
+import { api, isActive, retryModel, type Model, type Song } from "@/lib/api"
 
 export const keys = {
   me: ["me"] as const,
@@ -63,7 +63,7 @@ export function useSongActions() {
   const reimport = useMutation({
     mutationFn: async (s: Song) => {
       const title = s.title === s.source_url ? undefined : s.title
-      const fresh = await api.importSong({ url: s.source_url ?? "", title, model: s.model })
+      const fresh = await api.importSong({ url: s.source_url ?? "", title, model: retryModel(s.model) })
       await api.remove(s.id)
       return fresh
     },

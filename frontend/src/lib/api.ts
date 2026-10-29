@@ -4,14 +4,22 @@ export type StemName = "vocals" | "drums" | "bass" | "other"
 export type Role = "admin" | "user"
 export type User = { id: string; email: string; role: Role }
 export type SongStatus = "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
-export type Model = "htdemucs" | "htdemucs_ft"
+/** Models a new job can use. */
+export type Model = "htdemucs" | "scnet_xl_ihf"
+/** What the "High quality" option runs. */
+export const HQ_MODEL: Model = "scnet_xl_ihf"
+/** htdemucs_ft is retired (it was the high quality model before SCNet) but older songs still carry it. */
+export type SongModel = Model | "htdemucs_ft"
+export const isHighQuality = (m: SongModel) => m !== "htdemucs"
+/** The model to retry a song with: retired models map to what replaced them. */
+export const retryModel = (m: SongModel): Model => (m === "htdemucs_ft" ? HQ_MODEL : m)
 export type Song = {
   id: string
   title: string
   status: SongStatus
   duration_s: number | null
   size_bytes: number
-  model: Model
+  model: SongModel
   progress: number
   stage: string | null
   error: string | null
