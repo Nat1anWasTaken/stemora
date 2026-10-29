@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { LocateFixed, Minimize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { buildBars, buildCells, lastAtOrBefore, splitChord, transposeChord } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
-import { usePosition } from "@/player/ui/use-position"
+import { BarBeats, useBeats } from "@/player/ui/beats"
 import { cn } from "@/lib/utils"
-
-const COLS: Record<number, string> = { 1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5", 6: "grid-cols-6", 7: "grid-cols-7" }
 
 /**
  * Expanded chord chart: one row per bar, one cell per beat, following the playhead.
@@ -14,16 +11,10 @@ const COLS: Record<number, string> = { 1: "grid-cols-1", 2: "grid-cols-2", 3: "g
  */
 export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
   const analysis = usePlayer((s) => s.analysis)
-  const duration = usePlayer((s) => s.duration)
   const playing = usePlayer((s) => s.playing)
   const loop = usePlayer((s) => s.loop)
-  const semitones = usePlayer((s) => s.semitones)
   const { seek, setLoop, clearLoop } = usePlayer.getState()
-  const cells = useMemo(() => (analysis ? buildCells(analysis) : []), [analysis])
-  const bars = useMemo(() => buildBars(cells, duration), [cells, duration])
-  const times = useMemo(() => cells.map((c) => c.time), [cells])
-  const pos = usePosition()
-  const active = lastAtOrBefore(times, pos + 0.02)
+  const { cells, bars, active } = useBeats(analysis)
   const activeBar = active >= 0 ? cells[active].bar : null
   const activeTime = active >= 0 ? cells[active].time : null
   const [follow, setFollow] = useState(true)
@@ -85,35 +76,7 @@ export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
                 >
                   {b.bar === 0 ? "Pickup" : b.bar}
                 </button>
-                <div className={cn("grid gap-0.5 rounded-2xl", COLS[analysis.beatsPerBar] ?? "grid-cols-4", looped && "ring-2 ring-primary")}>
-                  {b.cells.map((c) => {
-                    const on = c.time === activeTime
-                    const chord = c.chord && c.chord !== "N" ? splitChord(transposeChord(c.chord, semitones)) : null
-                    return (
-                      <button
-                        key={c.time}
-                        type="button"
-                        aria-current={on}
-                        aria-label={`Bar ${c.bar} beat ${c.beat}${c.chord ? `, ${c.chord === "N" ? "no chord" : transposeChord(c.chord, semitones)}` : ""}`}
-                        onClick={() => seek(c.time)}
-                        className={cn(
-                          "pressable flex min-h-16 items-center justify-center px-1 text-lg font-semibold first:rounded-l-2xl last:rounded-r-2xl",
-                          c.beat === 1 && "border-l-4 border-l-border",
-                          on ? "bg-foreground text-background" : "bg-secondary/60 hover:bg-secondary",
-                          !on && c.held && "text-muted-foreground",
-                        )}
-                      >
-                        {chord && (
-                          <span className="whitespace-nowrap">
-                            {chord.root}
-                            <sup className="text-xs font-medium">{chord.suffix}</sup>
-                          </span>
-                        )}
-                        {c.chord === "N" && <span className={cn("text-sm font-medium", !on && "text-muted-foreground")}>N.C.</span>}
-                      </button>
-                    )
-                  })}
-                </div>
+                <BarBeats bar={b} activeTime={activeTime} beatsPerBar={analysis.beatsPerBar} looped={looped} onSeek={seek} />
               </li>
             )
           })}
