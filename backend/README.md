@@ -21,7 +21,8 @@ The interface is defined in [`../docs/contract.md`](../docs/contract.md).
 | `MAX_UPLOAD_MB` | `200` | Per-file cap (MiB), also enforced after upload via HEAD |
 | `MAX_DURATION_S` | `900` | Passed to the worker |
 | `USER_QUOTA_MB` | `5000` | Per-user: sum of original sizes + stem sizes |
-| `MAX_CONCURRENT_JOBS` | `2` | Queued+running jobs per user (429 beyond) |
+| `MAX_CONCURRENT_JOBS` | `2` | Songs per user importing or being separated at once; more wait in the user's queue (status `pending`) and start oldest first as slots free up |
+| `MAX_QUEUED_PER_USER` | `50` | Songs a user may have waiting in the queue (429 `queue_full` beyond) |
 | `MAX_CONCURRENT_IMPORTS` | `2` | Link imports (yt-dlp downloads) running at once across all users; more wait their turn (stage `waiting`). Link previews have their own limit of 4 at once |
 | `IMPORT_TIMEOUT_S` | `600` | A link import that takes longer fails |
 | `YTDLP_PATH` | `yt-dlp` | yt-dlp executable (the Docker image ships one, with ffmpeg and deno) |
@@ -82,7 +83,7 @@ Add `http://localhost:5173` (or your dev origin) to `AllowedOrigins` for local d
 
 `POST /api/songs/import` downloads the audio with yt-dlp **on this server** (so it uses this host's IP),
 uploads it to R2 as the song's original and then queues the normal Modal job. The download runs as an
-in-process task: songs left `importing` by a restart are marked failed at startup. Sites change often;
+in-process task: songs left `importing` by a restart go back to the queue at startup and download again. Sites change often;
 when imports from a site start failing, rebuild the image with a newer yt-dlp
 (`docker compose build --build-arg YTDLP_VERSION=<version> backend`). YouTube may ask datacenter IPs to
 sign in ("confirm you're not a bot"); that surfaces as a failed song with that message. Host checks

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router"
-import { ArrowDownUp, LayoutGrid, List, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
+import { ArrowDownUp, LayoutGrid, List, ListOrdered, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
 import { SongItem, type LibraryView } from "@/components/app/song-item"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -10,6 +10,7 @@ import type { SongSort } from "@/lib/api"
 import { useInView } from "@/hooks/use-in-view"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { useLibrary } from "@/lib/queries"
+import { useQueue } from "@/lib/queue"
 import { cn } from "@/lib/utils"
 
 const SORTS: { value: SongSort; label: string }[] = [
@@ -72,7 +73,8 @@ export function LibraryPage() {
   const [lastQ, setLastQ] = useState(q)
   if (q !== lastQ) {
     setLastQ(q)
-    setText(q)
+    // Keep what is being typed (a trailing space, say) when it already matches.
+    if (text.trim() !== q) setText(q)
   }
   useEffect(() => {
     if (text.trim() === q) return
@@ -80,6 +82,7 @@ export function LibraryPage() {
     return () => clearTimeout(t)
   }, [text, q, setQ])
 
+  const { count: inQueue } = useQueue()
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = useLibrary({ q, sort })
   const songs = data?.pages.flatMap((p) => p.songs) ?? []
   const total = data?.pages[0]?.total ?? 0
@@ -109,7 +112,12 @@ export function LibraryPage() {
           <h1 className="text-3xl font-semibold md:text-4xl">Library</h1>
           <p className="text-muted-foreground" aria-live="polite">{subtitle}</p>
         </div>
-        <Button size="lg" className="hidden md:inline-flex" render={<Link to="/upload" />}><Plus />Upload song</Button>
+        <div className="flex gap-2">
+          {inQueue > 0 && (
+            <Button size="lg" variant="secondary" render={<Link to="/queue" />}><ListOrdered />{inQueue} in queue</Button>
+          )}
+          <Button size="lg" className="hidden md:inline-flex" render={<Link to="/upload" />}><Plus />Upload song</Button>
+        </div>
       </header>
 
       {!empty && (

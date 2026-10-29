@@ -6,7 +6,7 @@ import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
 import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { HQ_MODEL, isActive, isFailedImport, isHighQuality, progressValue, retryModel, type Song } from "@/lib/api"
+import { HQ_MODEL, isActive, isCancellable, isFailedImport, isHighQuality, isLinkImport, progressValue, retryModel, type Song } from "@/lib/api"
 import { formatBytes, formatClock, hostOf, relativeTime } from "@/lib/format"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useSongActions } from "@/lib/queries"
@@ -17,19 +17,21 @@ export type LibraryView = "grid" | "list"
 /** A library song as a grid card or a compact list row, with its menu, swipe-to-delete and dialogs. */
 export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
   const nav = useNavigate()
-  const { remove, rename, reprocess, reimport, cancelImport } = useSongActions()
+  const { remove, rename, reprocess, reimport, cancel } = useSongActions()
   const [confirm, setConfirm] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const ready = song.status === "ready"
   const working = isActive(song)
   const failedImport = isFailedImport(song)
   const importing = song.status === "importing"
+  const pending = song.status === "pending"
+  const cancelLabel = importing || isLinkImport(song) ? "Cancel import" : "Remove from queue"
   const row = useRef<HTMLDivElement>(null)
   const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
   const list = view === "list"
 
   const entries: MenuEntry[] = [
-    ...(importing ? [{ key: "cancel", label: "Cancel import", icon: <Ban />, onSelect: () => cancelImport.mutate(song) } as MenuEntry] : []),
+    ...(isCancellable(song) ? [{ key: "cancel", label: cancelLabel, icon: <Ban />, onSelect: () => cancel.mutate(song) } as MenuEntry] : []),
     ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     ...((song.status === "failed" && !failedImport) || ready
@@ -46,7 +48,7 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
   ) : (
     <span className={cn("truncate font-heading font-semibold", list ? "text-sm md:text-base" : "text-base")}>{song.title}</span>
   )
-  const duration = song.duration_s !== null && (ready || importing) ? formatClock(song.duration_s) : null
+  const duration = song.duration_s !== null && (ready || importing || pending) ? formatClock(song.duration_s) : null
   const menu = (
     <div className="relative z-10">
       <ActionMenu title={song.title} entries={entries} trigger={<Button variant="ghost" size={list ? "icon" : "icon-lg"} aria-label={`Actions for ${song.title}`}><MoreHorizontal /></Button>} />
@@ -54,13 +56,22 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
   )
 
   let details: ReactNode = null
-  if (working) {
+  if (pending) {
+    details = (
+      <div className="flex items-center justify-between gap-3">
+        <ProcessingLine song={song} />
+        <Button size="sm" variant="ghost" className="relative z-10" disabled={cancel.isPending} onClick={() => cancel.mutate(song)}>
+          Cancel
+        </Button>
+      </div>
+    )
+  } else if (working) {
     details = (
       <Progress value={progressValue(song)} aria-label={importing ? "Import progress" : "Processing progress"}>
         <div className="flex w-full items-center justify-between gap-3">
           <ProcessingLine song={song} />
           {importing && (
-            <Button size="sm" variant="ghost" className="relative z-10" disabled={cancelImport.isPending} onClick={() => cancelImport.mutate(song)}>
+            <Button size="sm" variant="ghost" className="relative z-10" disabled={cancel.isPending} onClick={() => cancel.mutate(song)}>
               Cancel
             </Button>
           )}
@@ -110,7 +121,7 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
               <div className="flex items-center gap-2 overflow-hidden text-xs whitespace-nowrap text-muted-foreground">
                 <StatusBadge song={song} />
                 {ready && isHighQuality(song.model) && <span className="hidden md:inline">High quality</span>}
-                {importing && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
+                {(importing || pending) && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
                 <span className="truncate md:hidden">{[duration, relativeTime(song.created_at)].filter(Boolean).join(" · ")}</span>
               </div>
             </div>
@@ -132,7 +143,7 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
                 {ready && isHighQuality(song.model) && <span className="truncate">High quality</span>}
               </div>
               <div className="flex items-center gap-2 overflow-hidden text-xs whitespace-nowrap text-muted-foreground">
-                {importing && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
+                {(importing || pending) && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
                 <span className="shrink-0">{relativeTime(song.created_at)}</span>
               </div>
             </div>

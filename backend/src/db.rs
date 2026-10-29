@@ -27,16 +27,20 @@ pub struct SongView {
     pub error: Option<String>,
     pub source_url: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 1-based place in the user's queue while `pending`.
+    pub queue_position: Option<i64>,
     /// Link imports only, while downloading (filled in by [`crate::import::ImportTracker`]).
     #[sqlx(skip)]
     pub download: Option<crate::fetch::DownloadProgress>,
 }
 
 pub const SONG_VIEW_SELECT: &str = "SELECT s.id, s.title, s.status, s.duration_s, s.size_bytes, s.model, \
-    CASE WHEN s.status = 'ready' THEN 100 ELSE COALESCE(j.progress, 0) END AS progress, \
+    CASE WHEN s.status = 'ready' THEN 100 WHEN s.status = 'pending' THEN 0 ELSE COALESCE(j.progress, 0) END AS progress, \
     CASE WHEN s.status = 'importing' THEN 'waiting' \
-        WHEN s.status IN ('ready', 'failed', 'uploading') THEN NULL ELSE j.stage END AS stage, \
-    s.error, s.source_url, s.created_at \
+        WHEN s.status IN ('ready', 'failed', 'uploading', 'pending') THEN NULL ELSE j.stage END AS stage, \
+    s.error, s.source_url, s.created_at, \
+    CASE WHEN s.status = 'pending' THEN (SELECT count(*) FROM songs p WHERE p.user_id = s.user_id \
+        AND p.status = 'pending' AND (p.queued_at, p.id) <= (s.queued_at, s.id)) END AS queue_position \
     FROM songs s LEFT JOIN LATERAL ( \
         SELECT progress, stage FROM jobs WHERE song_id = s.id ORDER BY created_at DESC LIMIT 1 \
     ) j ON true";
@@ -109,15 +113,19 @@ pub async fn used_bytes(pool: &PgPool, user_id: Uuid) -> Result<i64, sqlx::Error
     Ok(songs + stems)
 }
 
-/// Queued/running jobs plus link imports still downloading.
-pub async fn active_jobs(pool: &PgPool, user_id: Uuid) -> Result<i64, sqlx::Error> {
+/// Queued/running jobs plus link imports still downloading: what counts against
+/// `MAX_CONCURRENT_JOBS`. `pending` songs wait in the queue and do not count.
+pub async fn active_jobs<'e>(
+    ex: impl sqlx::PgExecutor<'e>,
+    user_id: Uuid,
+) -> Result<i64, sqlx::Error> {
     let (n,): (i64,) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM jobs j JOIN songs s ON s.id = j.song_id \
                  WHERE s.user_id = $1 AND j.status IN ('queued', 'running')) \
               + (SELECT count(*) FROM songs WHERE user_id = $1 AND status = 'importing')",
     )
     .bind(user_id)
-    .fetch_one(pool)
+    .fetch_one(ex)
     .await?;
     Ok(n)
 }

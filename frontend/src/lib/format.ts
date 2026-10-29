@@ -67,6 +67,24 @@ export function downloadSummary(d: { downloaded_bytes: number; total_bytes: numb
   return parts.join(" · ")
 }
 
+/** 1 -> "1st", 2 -> "2nd", 11 -> "11th", 23 -> "23rd" */
+export function ordinal(n: number): string {
+  const tens = n % 100
+  const suffix = tens >= 11 && tens <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"
+  return `${n}${suffix}`
+}
+
+/** "Next in line" / "3rd in line" for a pending song. */
+export function queuePlace(position: number | null): string {
+  if (position === null) return "Waiting in line"
+  return position === 1 ? "Next in line" : `${ordinal(position)} in line`
+}
+
+/** The links in pasted text: one per whitespace-separated token, without duplicates. */
+export function splitLinks(text: string): string[] {
+  return [...new Set(text.split(/\s+/).filter(Boolean))]
+}
+
 /** "youtube.com" from a link, without "www." */
 export function hostOf(url: string): string {
   try {

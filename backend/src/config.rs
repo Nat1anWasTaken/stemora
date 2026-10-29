@@ -31,6 +31,8 @@ pub struct Config {
     pub max_duration_s: u32,
     pub user_quota_mb: u64,
     pub max_concurrent_jobs: i64,
+    /// Songs a user may have waiting (`pending`) in their queue.
+    pub max_queued_per_user: i64,
     pub cookie_secure: bool,
     /// yt-dlp executable used to import songs from links.
     pub ytdlp_path: String,
@@ -92,6 +94,13 @@ impl Config {
                 "must be >= 1".into(),
             ));
         }
+        let max_queued_per_user: i64 = num(opt("MAX_QUEUED_PER_USER"), "MAX_QUEUED_PER_USER", 50)?;
+        if max_queued_per_user < 1 {
+            return Err(ConfigError::Invalid(
+                "MAX_QUEUED_PER_USER",
+                "must be >= 1".into(),
+            ));
+        }
         let max_concurrent_imports: usize =
             num(opt("MAX_CONCURRENT_IMPORTS"), "MAX_CONCURRENT_IMPORTS", 2)?;
         if max_concurrent_imports < 1 {
@@ -116,6 +125,7 @@ impl Config {
             max_duration_s: num(opt("MAX_DURATION_S"), "MAX_DURATION_S", 900)?,
             user_quota_mb: num(opt("USER_QUOTA_MB"), "USER_QUOTA_MB", 5000)?,
             max_concurrent_jobs,
+            max_queued_per_user,
             cookie_secure,
             ytdlp_path: opt("YTDLP_PATH").unwrap_or_else(|| "yt-dlp".into()),
             max_concurrent_imports,
@@ -192,6 +202,7 @@ mod tests {
         assert_eq!(c.max_duration_s, 900);
         assert_eq!(c.user_quota_mb, 5000);
         assert_eq!(c.max_concurrent_jobs, 2);
+        assert_eq!(c.max_queued_per_user, 50);
         assert_eq!(c.public_base_url, "https://stemora.example.com");
         assert!(c.cookie_secure);
         assert!(c.modal_endpoint_url.is_empty());
@@ -223,6 +234,7 @@ mod tests {
         assert!(lookup(&[("PUBLIC_BASE_URL", "ftp://x")], &[]).is_err());
         assert!(lookup(&[("MAX_CONCURRENT_JOBS", "0")], &[]).is_err());
         assert!(lookup(&[("MAX_CONCURRENT_IMPORTS", "0")], &[]).is_err());
+        assert!(lookup(&[("MAX_QUEUED_PER_USER", "0")], &[]).is_err());
     }
 
     #[test]

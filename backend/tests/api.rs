@@ -185,6 +185,22 @@ impl TestApp {
         u
     }
 
+    /// Create a song and put its file in (fake) storage, without completing it.
+    async fn uploaded_song(&self, cookie: &str) -> String {
+        let id = self.song(cookie, MIB).await;
+        let uid = self.song_user_id(&id).await;
+        self.storage.put(
+            &storage::original_key(uid, Uuid::parse_str(&id).unwrap(), "mp3"),
+            MIB,
+        );
+        id
+    }
+
+    async fn status_of(&self, cookie: &str, id: &str) -> String {
+        let r = self.get(&format!("/api/songs/{id}"), cookie).await;
+        r.body["song"]["status"].as_str().unwrap().to_string()
+    }
+
     /// Create + put + complete. Returns (song_id, job_id, attempt-1 token).
     async fn queued_song(&self, cookie: &str) -> (String, String, String) {
         let id = self.song(cookie, MIB).await;
@@ -210,12 +226,17 @@ impl TestApp {
     async fn import(&self, cookie: &str, body: Value) -> Value {
         let r = self.post("/api/songs/import", cookie, body).await;
         assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
-        assert_eq!(r.body["status"], "importing");
-        assert!(
-            ["waiting", "probing"].contains(&r.body["stage"].as_str().unwrap()),
-            "{:?}",
-            r.body
-        );
+        // The fake fetcher is instant, so the import may already be over by the time we look.
+        if r.body["status"] == "importing" {
+            assert!(
+                ["waiting", "probing", "downloading", "storing"]
+                    .contains(&r.body["stage"].as_str().unwrap()),
+                "{:?}",
+                r.body
+            );
+        } else {
+            assert!(["queued", "failed"].contains(&r.body["status"].as_str().unwrap()));
+        }
         let id = r.body["id"].as_str().unwrap().to_string();
         for _ in 0..200 {
             let d = self.get(&format!("/api/songs/{id}"), cookie).await;
@@ -890,6 +911,34 @@ async fn songs_list_search_sort_paginate() {
         (r.status, r.body["code"].as_str()),
         (StatusCode::BAD_REQUEST, Some("invalid_cursor"))
     );
+    // a cursor whose key does not fit the sort is rejected, not a SQL error
+    let bad = hex::encode(json!({"k": "abc", "id": Uuid::new_v4()}).to_string());
+    for sort in ["newest", "longest"] {
+        let r = app
+            .get(&format!("/api/songs?sort={sort}&cursor={bad}"), &admin)
+            .await;
+        assert_eq!(
+            (r.status, r.body["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("invalid_cursor"))
+        );
+    }
+
+    // status filter
+    sqlx::query("UPDATE songs SET status = 'failed' WHERE title = 'Golf'")
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        list_all(&app, &admin, "status=failed,pending").await,
+        (vec!["Golf".into()], 1)
+    );
+    assert_eq!(list_all(&app, &admin, "status=ready").await.1, 7);
+    let r = app.get("/api/songs?status=ready,nope", &admin).await;
+    assert_eq!(
+        (r.status, r.body["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_status"))
+    );
+
     let r = app.get("/api/songs?limit=1000", &admin).await;
     assert_eq!(r.body["songs"].as_array().unwrap().len(), 8);
 }
@@ -1439,22 +1488,52 @@ async fn reaper_fails_stale_jobs_and_purges_old_uploads() {
 }
 
 #[tokio::test]
-async fn concurrent_job_limit_and_rate_limit() {
+async fn work_over_the_limit_waits_in_the_queue() {
     let app = app!();
     let admin = app.admin().await;
-    app.queued_song(&admin).await;
-    app.queued_song(&admin).await;
-    let id = app.song(&admin, MIB).await;
-    let uid = app.song_user_id(&id).await;
-    app.storage.put(
-        &storage::original_key(uid, Uuid::parse_str(&id).unwrap(), "mp3"),
-        MIB,
-    );
+    let (a, a_job, a_token) = app.queued_song(&admin).await;
+    let (b, b_job, b_token) = app.queued_song(&admin).await;
+    // At MAX_CONCURRENT_JOBS (2): further completes are accepted and wait in line.
+    let c = app.uploaded_song(&admin).await;
     let r = app
-        .post(&format!("/api/songs/{id}/complete"), &admin, json!({}))
+        .post(&format!("/api/songs/{c}/complete"), &admin, json!({}))
         .await;
-    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(r.body["code"], "too_many_jobs");
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["status"], "pending");
+    assert_eq!(r.body["queue_position"], 1);
+    assert_eq!(r.body["stage"], Value::Null);
+    let d = app.uploaded_song(&admin).await;
+    let r = app
+        .post(&format!("/api/songs/{d}/complete"), &admin, json!({}))
+        .await;
+    assert_eq!(r.body["status"], "pending");
+    assert_eq!(r.body["queue_position"], 2);
+    assert_eq!(app.modal.calls.lock().unwrap().len(), 2);
+    let r = app.get(&format!("/api/songs/{a}"), &admin).await;
+    assert_eq!(r.body["song"]["queue_position"], Value::Null);
+
+    // A finished job frees a slot: the oldest waiting song starts.
+    let uid = app.song_user_id(&a).await;
+    let r = app.webhook(&a_job, &a_token, app.done_body(uid, &a)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(app.status_of(&admin, &c).await, "queued");
+    let r = app.get(&format!("/api/songs/{d}"), &admin).await;
+    assert_eq!(r.body["song"]["status"], "pending");
+    assert_eq!(r.body["song"]["queue_position"], 1);
+    assert_eq!(app.modal.calls.lock().unwrap().len(), 3);
+
+    // So does a failed one.
+    let r = app
+        .webhook(
+            &b_job,
+            &b_token,
+            json!({"status":"failed","error":"not audio","retryable":false}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(app.status_of(&admin, &b).await, "failed");
+    assert_eq!(app.status_of(&admin, &d).await, "queued");
+    assert_eq!(app.modal.calls.lock().unwrap().len(), 4);
 
     // rate limit: 30 per 10 minutes shared by create + complete (several were used above)
     let mut last = StatusCode::OK;
@@ -1468,6 +1547,171 @@ async fn concurrent_job_limit_and_rate_limit() {
         }
     }
     assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn waiting_songs_can_be_cancelled_or_deleted() {
+    let app = app!();
+    let admin = app.admin().await;
+    let (a, _, _) = app.queued_song(&admin).await;
+    app.queued_song(&admin).await;
+    let mut waiting = Vec::new();
+    for _ in 0..3 {
+        let id = app.uploaded_song(&admin).await;
+        app.post(&format!("/api/songs/{id}/complete"), &admin, json!({}))
+            .await;
+        waiting.push(id);
+    }
+
+    let r = app
+        .post(
+            &format!("/api/songs/{}/cancel", waiting[0]),
+            &admin,
+            json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["status"], "failed");
+    assert_eq!(r.body["error"], "Cancelled before processing started.");
+    let r = app.get(&format!("/api/songs/{}", waiting[1]), &admin).await;
+    assert_eq!(r.body["song"]["queue_position"], 1);
+    // Nothing started: cancelling a waiting song frees no slot.
+    assert_eq!(app.modal.calls.lock().unwrap().len(), 2);
+
+    // Running work is not cancellable this way.
+    let r = app
+        .post(&format!("/api/songs/{a}/cancel"), &admin, json!({}))
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.body["code"], "not_cancellable");
+
+    // Deleting a song that holds a slot starts the next one in line.
+    let r = app
+        .req(
+            Method::DELETE,
+            &format!("/api/songs/{a}"),
+            Some(&admin),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(app.status_of(&admin, &waiting[1]).await, "queued");
+    let r = app.get(&format!("/api/songs/{}", waiting[2]), &admin).await;
+    assert_eq!(r.body["song"]["queue_position"], 1);
+
+    // A cancelled song can be processed again later; it rejoins the back of the queue.
+    let r = app
+        .post(
+            &format!("/api/songs/{}/reprocess", waiting[0]),
+            &admin,
+            json!({"model":"htdemucs"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["status"], "pending");
+    assert_eq!(r.body["queue_position"], 2);
+}
+
+#[tokio::test]
+async fn reprocess_waits_for_a_slot() {
+    let Some(app) = setup_with(|c| c.max_concurrent_jobs = 1).await else {
+        return;
+    };
+    let admin = app.admin().await;
+    let (a, a_job, a_token) = app.queued_song(&admin).await;
+    let uid = app.song_user_id(&a).await;
+    app.webhook(&a_job, &a_token, app.done_body(uid, &a)).await;
+    let (b, b_job, b_token) = app.queued_song(&admin).await;
+
+    let r = app
+        .post(
+            &format!("/api/songs/{a}/reprocess"),
+            &admin,
+            json!({"model":"scnet_xl_ihf"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["status"], "pending");
+    assert_eq!(r.body["progress"], 0);
+    assert_eq!(r.body["queue_position"], 1);
+
+    app.webhook(&b_job, &b_token, app.done_body(uid, &b)).await;
+    assert_eq!(app.status_of(&admin, &a).await, "queued");
+    let calls = app.modal.calls.lock().unwrap();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2].model, "scnet_xl_ihf");
+}
+
+#[tokio::test]
+async fn a_failed_import_starts_the_next_link() {
+    let Some(app) = setup_with(|c| c.max_concurrent_jobs = 1).await else {
+        return;
+    };
+    let admin = app.admin().await;
+    *app.fetcher.info.lock().unwrap() = Err(FetchError("This video is private.".into()));
+    let permits = app
+        .state
+        .import_slots
+        .clone()
+        .acquire_many_owned(2)
+        .await
+        .unwrap();
+    let link = json!({"url":"https://example.com/a","model":"htdemucs"});
+    let first = app.post("/api/songs/import", &admin, link.clone()).await;
+    assert_eq!(first.body["status"], "importing");
+    let second = app.post("/api/songs/import", &admin, link).await;
+    assert_eq!(second.body["status"], "pending");
+    let second = second.body["id"].as_str().unwrap().to_string();
+
+    drop(permits);
+    for _ in 0..200 {
+        if app.status_of(&admin, &second).await == "failed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let r = app.get(&format!("/api/songs/{second}"), &admin).await;
+    assert_eq!(r.body["song"]["status"], "failed");
+    assert_eq!(r.body["song"]["error"], "This video is private.");
+}
+
+#[tokio::test]
+async fn queue_has_a_size_limit() {
+    let Some(app) = setup_with(|c| {
+        c.max_concurrent_jobs = 1;
+        c.max_queued_per_user = 1;
+    })
+    .await
+    else {
+        return;
+    };
+    let admin = app.admin().await;
+    app.queued_song(&admin).await;
+    let id = app.uploaded_song(&admin).await;
+    let r = app
+        .post(&format!("/api/songs/{id}/complete"), &admin, json!({}))
+        .await;
+    assert_eq!(r.body["status"], "pending");
+
+    let r = app
+        .post("/api/songs", &admin, json!({"title":"t","filename":"a.mp3","content_type":"audio/mpeg","size":1,"model":"htdemucs"}))
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(r.body["code"], "queue_full");
+    let r = app
+        .post(
+            "/api/songs/import",
+            &admin,
+            json!({"url":"https://example.com/a","model":"htdemucs"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(r.body["code"], "queue_full");
+
+    // Each user has their own queue.
+    let other = app.user(&admin, "other@example.com").await;
+    app.queued_song(&other).await;
 }
 
 #[tokio::test]
@@ -1629,7 +1873,7 @@ async fn import_reports_progress_and_can_be_cancelled() {
         .post(&format!("/api/songs/{id}/cancel"), &admin, json!({}))
         .await;
     assert_eq!(r.status, StatusCode::CONFLICT);
-    assert_eq!(r.body["code"], "not_importing");
+    assert_eq!(r.body["code"], "not_cancellable");
 
     // Deleting an import stops it too.
     gate.forget_permits(10);
@@ -1751,7 +1995,7 @@ async fn import_validation_and_limits() {
         .await;
     assert_eq!(r.body["code"], "invalid_model");
 
-    // Imports still downloading count toward the concurrent-job limit.
+    // Imports still downloading count toward the concurrent-job limit; more links wait in line.
     *app.fetcher.info.lock().unwrap() = Err(FetchError("x".into()));
     let link = json!({"url":"https://example.com/a","model":"htdemucs"});
     let _permits = app
@@ -1764,22 +2008,20 @@ async fn import_validation_and_limits() {
     for _ in 0..2 {
         let r = app.post("/api/songs/import", &admin, link.clone()).await;
         assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.body["status"], "importing");
+        assert_eq!(r.body["stage"], "waiting");
     }
     let r = app.post("/api/songs/import", &admin, link.clone()).await;
-    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(r.body["code"], "too_many_jobs");
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["status"], "pending");
+    assert_eq!(r.body["queue_position"], 1);
+    let third = r.body["id"].as_str().unwrap().to_string();
 
-    // A restart leaves them orphaned; startup marks them failed.
-    assert_eq!(
-        jobs::fail_orphaned_imports(&app.state.pool).await.unwrap(),
-        2
-    );
+    // A restart leaves the imports orphaned; startup puts them back ahead of the third link.
+    assert_eq!(jobs::requeue_orphaned_imports(&app.state).await.unwrap(), 2);
     let list = app.get("/api/songs", &admin).await;
-    assert!(
-        list.body["songs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|s| s["status"] == "failed")
-    );
+    let songs = list.body["songs"].as_array().unwrap();
+    assert!(songs.iter().all(|s| s["status"] == "pending"), "{songs:?}");
+    let r = app.get(&format!("/api/songs/{third}"), &admin).await;
+    assert_eq!(r.body["song"]["queue_position"], 3);
 }

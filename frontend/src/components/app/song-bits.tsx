@@ -1,7 +1,7 @@
-import { AlertTriangle, CheckCircle2, Clock, Link2, Loader2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Clock, Hourglass, Link2, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { isHighQuality, type Song } from "@/lib/api"
-import { downloadSummary, importStageLabel, stageLabel } from "@/lib/format"
+import { downloadSummary, importStageLabel, queuePlace, stageLabel } from "@/lib/format"
 
 const ARTWORK = {
   default: { box: "size-14 gap-1 rounded-2xl p-3", bar: "w-1.5", heights: ["h-4", "h-5", "h-6", "h-7", "h-8"] },
@@ -24,6 +24,8 @@ export function SongArtwork({ id, dim, size = "default" }: { id: string; dim?: b
 
 export function StatusBadge({ song }: { song: Pick<Song, "status" | "stage" | "progress" | "download"> }) {
   switch (song.status) {
+    case "pending":
+      return <Badge variant="secondary"><Hourglass data-icon="inline-start" />Waiting</Badge>
     case "ready":
       return <Badge variant="success"><CheckCircle2 data-icon="inline-start" />Ready</Badge>
     case "failed":
@@ -39,7 +41,14 @@ export function StatusBadge({ song }: { song: Pick<Song, "status" | "stage" | "p
   }
 }
 
-export function ProcessingLine({ song }: { song: Pick<Song, "status" | "stage" | "progress" | "model" | "download"> }) {
+export function ProcessingLine({ song }: { song: Pick<Song, "status" | "stage" | "progress" | "model" | "download" | "queue_position"> }) {
+  if (song.status === "pending") {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {queuePlace(song.queue_position)} · starts when a slot frees up{isHighQuality(song.model) ? " (high quality)" : ""}
+      </span>
+    )
+  }
   if (song.status === "importing") {
     return (
       <span className="flex min-w-0 flex-wrap gap-x-2 text-xs text-muted-foreground">
@@ -50,7 +59,7 @@ export function ProcessingLine({ song }: { song: Pick<Song, "status" | "stage" |
   }
   return (
     <span className="text-xs text-muted-foreground">
-      {song.status === "queued" ? "Waiting for a worker" : stageLabel(song.stage)}
+      {song.status === "uploading" ? "Uploading" : song.status === "queued" ? "Waiting for a worker" : stageLabel(song.stage)}
       {isHighQuality(song.model) ? " (high quality)" : ""}
     </span>
   )

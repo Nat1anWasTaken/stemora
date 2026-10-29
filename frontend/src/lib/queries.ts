@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { api, isActive, retryModel, type Model, type Song, type SongSort } from "@/lib/api"
+import { api, isActive, isLinkImport, retryModel, type Model, type Song, type SongPage, type SongSort, type SongStatus } from "@/lib/api"
 
 export const keys = {
   me: ["me"] as const,
@@ -25,15 +25,37 @@ export const useLibrary = ({ q, sort }: { q: string; sort: SongSort }) =>
     refetchInterval: (query) => (query.state.data?.pages.some((p) => p.songs.some(isActive)) ? 2000 : false),
   })
 
-/** Follows a few songs by id (polling each every 2s while it is still being worked on). */
+/** Follows a few songs by id, polling each every 2s while it is still being worked on (deleted ones drop out). */
 export const useSongsById = (ids: string[]) =>
   useQueries({
     queries: ids.map((id) => ({
       queryKey: keys.song(id),
       queryFn: () => api.song(id),
-      refetchInterval: (q: { state: { data?: { song: Song } } }) => (q.state.data && !isActive(q.state.data.song) ? false : 2000),
+      retry: false,
+      refetchInterval: (q: { state: { data?: { song: Song }; error: Error | null } }) =>
+        q.state.error || (q.state.data && !isActive(q.state.data.song)) ? false : 2000,
     })),
     combine: (results) => results.flatMap((r) => (r.data ? [r.data.song] : [])),
+  })
+
+/** What the queue shows: everything in flight, plus failed songs. */
+const IN_FLIGHT: SongStatus[] = ["pending", "uploading", "importing", "queued", "processing", "failed"]
+
+/** Every in-flight or failed song (all pages). Polls every 2s while any is still being worked on. */
+export const useInFlightSongs = () =>
+  useQuery({
+    queryKey: [...keys.songs, "in-flight"],
+    queryFn: async () => {
+      const all: Song[] = []
+      let cursor: string | null = null
+      do {
+        const page: SongPage = await api.songs({ status: IN_FLIGHT, limit: 100, cursor })
+        all.push(...page.songs)
+        cursor = page.next_cursor
+      } while (cursor)
+      return all
+    },
+    refetchInterval: (q) => (q.state.data?.some(isActive) ? 2000 : false),
   })
 
 /** Polls every 2s until the song is ready or failed. */
@@ -70,7 +92,7 @@ export function useSongActions() {
   })
   const reprocess = useMutation({
     mutationFn: (v: { id: string; model: Model }) => api.reprocess(v.id, v.model),
-    onSuccess: (_d, v) => { toast.success("Processing started"); refresh(v.id) },
+    onSuccess: (song, v) => { toast.success(song.status === "pending" ? "Added to the queue" : "Processing started"); refresh(v.id) },
     onError: (e) => toast.error(message(e)),
   })
   // Import the same link again, then drop the failed song.
@@ -81,13 +103,14 @@ export function useSongActions() {
       await api.remove(s.id)
       return fresh
     },
-    onSuccess: (_d, s) => { toast.success("Import started"); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
+    onSuccess: (fresh, s) => { toast.success(fresh.status === "pending" ? "Added to the queue" : "Import started"); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
     onError: (e) => { toast.error(message(e)); refresh() },
   })
-  const cancelImport = useMutation({
-    mutationFn: (s: Song) => api.cancelImport(s.id),
-    onSuccess: (_d, s) => { toast.success("Import cancelled"); refresh(s.id) },
+  // Takes a song out of the queue, or stops an import that is downloading.
+  const cancel = useMutation({
+    mutationFn: (s: Song) => api.cancel(s.id),
+    onSuccess: (_d, s) => { toast.success(s.status === "importing" || isLinkImport(s) ? "Import cancelled" : "Removed from the queue"); refresh(s.id) },
     onError: (e, s) => { toast.error(message(e)); refresh(s.id) },
   })
-  return { remove, rename, reprocess, reimport, cancelImport }
+  return { remove, rename, reprocess, reimport, cancel }
 }

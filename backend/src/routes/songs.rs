@@ -27,7 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/songs/{id}/upload/parts", post(part_urls))
         .route("/songs/{id}/complete", post(complete))
         .route("/songs/{id}/reprocess", post(reprocess))
-        .route("/songs/{id}/cancel", post(cancel_import))
+        .route("/songs/{id}/cancel", post(cancel))
         .route("/songs/{id}/stems/{name}/download", get(download))
 }
 
@@ -40,6 +40,22 @@ fn check_rate(st: &AppState, user: Uuid) -> AppResult<()> {
             "too many uploads, please slow down",
         ))
     }
+}
+
+/// Refuse new work once the user's queue holds `MAX_QUEUED_PER_USER` waiting songs.
+async fn check_queue_room(st: &AppState, user: Uuid) -> AppResult<()> {
+    let (waiting,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM songs WHERE user_id = $1 AND status = 'pending'")
+            .bind(user)
+            .fetch_one(&st.pool)
+            .await?;
+    if waiting >= st.config.max_queued_per_user {
+        return Err(AppError::too_many(
+            "queue_full",
+            format!("your queue already holds {waiting} songs; wait for some to finish"),
+        ));
+    }
+    Ok(())
 }
 
 /// A song as the API shows it, with the live state of a running link import.
@@ -55,6 +71,8 @@ struct ListParams {
     sort: Option<String>,
     limit: Option<i64>,
     cursor: Option<String>,
+    /// Comma-separated song statuses to include (all when absent).
+    status: Option<String>,
 }
 
 /// Library sort orders: (SQL key expression, descending).
@@ -73,9 +91,9 @@ fn sort_key(sort: &str) -> Option<(&'static str, bool)> {
 /// The same key expression applied to the cursor's raw value (bound as text).
 fn cursor_key(sort: &str) -> &'static str {
     match sort {
-        "newest" | "oldest" => "$3::text::timestamptz",
-        "title" | "title_desc" => "lower($3::text)",
-        _ => "COALESCE($3::text::float8, -1)",
+        "newest" | "oldest" => "$4::text::timestamptz",
+        "title" | "title_desc" => "lower($4::text)",
+        _ => "COALESCE($4::text::float8, -1)",
     }
 }
 
@@ -91,6 +109,21 @@ fn cursor_field(sort: &str, s: &SongView) -> Option<String> {
         "newest" | "oldest" => Some(s.created_at.to_rfc3339()),
         "title" | "title_desc" => Some(s.title.clone()),
         _ => s.duration_s.map(|d| d.to_string()),
+    }
+}
+
+/// Whether the cursor's key fits the sort, so it never reaches a failing SQL cast.
+fn cursor_matches_sort(sort: &str, c: &Cursor) -> bool {
+    match sort {
+        "newest" | "oldest" => {
+            c.k.as_deref()
+                .is_some_and(|k| chrono::DateTime::parse_from_rfc3339(k).is_ok())
+        }
+        "title" | "title_desc" => c.k.is_some(),
+        _ => {
+            c.k.as_deref()
+                .is_none_or(|k| k.parse::<f64>().is_ok_and(f64::is_finite))
+        }
     }
 }
 
@@ -131,6 +164,7 @@ async fn list(
     let cursor = match p.cursor.as_deref().filter(|c| !c.is_empty()) {
         Some(c) => Some(
             decode_cursor(c)
+                .filter(|c| cursor_matches_sort(sort, c))
                 .ok_or_else(|| AppError::bad_request("invalid_cursor", "invalid cursor"))?,
         ),
         None => None,
@@ -141,10 +175,26 @@ async fn list(
             .filter(|q| !q.is_empty())
             .map(like_pattern);
 
-    let filter = "s.user_id = $1 AND ($2::text IS NULL OR s.title ILIKE $2)";
+    let statuses = match p.status.as_deref().filter(|s| !s.is_empty()) {
+        Some(list) => Some(
+            list.split(',')
+                .map(|s| {
+                    SongStatus::parse(s.trim())
+                        .map(|st| st.as_str().to_string())
+                        .ok_or_else(|| {
+                            AppError::bad_request("invalid_status", "unknown song status")
+                        })
+                })
+                .collect::<AppResult<Vec<_>>>()?,
+        ),
+        None => None,
+    };
+
+    let filter = "s.user_id = $1 AND ($2::text IS NULL OR s.title ILIKE $2) \
+        AND ($3::text[] IS NULL OR s.status = ANY($3))";
     let (dir, cmp) = if desc { ("DESC", "<") } else { ("ASC", ">") };
     let after = if cursor.is_some() {
-        format!("AND ({key}, s.id) {cmp} ({}, $4)", cursor_key(sort))
+        format!("AND ({key}, s.id) {cmp} ({}, $5)", cursor_key(sort))
     } else {
         String::new()
     };
@@ -154,7 +204,8 @@ async fn list(
     );
     let mut query = sqlx::query_as::<_, SongView>(&sql)
         .bind(u.id)
-        .bind(&pattern);
+        .bind(&pattern)
+        .bind(&statuses);
     if let Some(c) = &cursor {
         query = query.bind(c.k.clone()).bind(c.id);
     }
@@ -162,6 +213,7 @@ async fn list(
     let total: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM songs s WHERE {filter}"))
         .bind(u.id)
         .bind(&pattern)
+        .bind(&statuses)
         .fetch_one(&st.pool)
         .await?;
 
@@ -201,6 +253,7 @@ async fn create(
     check_rate(&st, u.id)?;
     upload::validate_model(&r.model)?;
     let (ext, content_type) = upload::validate_audio(&r.filename, &r.content_type)?;
+    check_queue_room(&st, u.id).await?;
     if r.size <= 0 {
         return Err(AppError::bad_request(
             "invalid_size",
@@ -297,7 +350,8 @@ struct ImportReq {
     model: String,
 }
 
-/// Start importing a song from a link; the download runs in the background.
+/// Queue a link import; the pump starts the download in the background once the user has a
+/// free slot.
 async fn import_link(
     State(st): State<AppState>,
     AuthUser(u): AuthUser,
@@ -312,12 +366,7 @@ async fn import_link(
             "storage quota exceeded",
         ));
     }
-    if db::active_jobs(&st.pool, u.id).await? >= st.config.max_concurrent_jobs {
-        return Err(AppError::too_many(
-            "too_many_jobs",
-            "too many songs are processing; wait for one to finish",
-        ));
-    }
+    check_queue_room(&st, u.id).await?;
     // Until the download reports a title, the link is the placeholder title.
     let title: String = {
         let t = r.title.trim();
@@ -328,8 +377,8 @@ async fn import_link(
     .collect();
     let song_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO songs (id, user_id, title, filename, content_type, size_bytes, status, model, original_key, source_url) \
-         VALUES ($1, $2, $3, '', 'application/octet-stream', 0, 'importing', $4, '', $5)",
+        "INSERT INTO songs (id, user_id, title, filename, content_type, size_bytes, status, model, original_key, source_url, queued_at) \
+         VALUES ($1, $2, $3, '', 'application/octet-stream', 0, 'pending', $4, '', $5, now())",
     )
     .bind(song_id)
     .bind(u.id)
@@ -338,7 +387,7 @@ async fn import_link(
     .bind(&url)
     .execute(&st.pool)
     .await?;
-    import::spawn(st.clone(), song_id);
+    jobs::pump(&st, u.id).await?;
     Ok(Json(live_view(&st, song_id).await?))
 }
 
@@ -366,19 +415,43 @@ async fn preview_link(
         .map_err(|e| AppError::new(StatusCode::UNPROCESSABLE_ENTITY, "link_unavailable", e.0))
 }
 
-/// Stop a link import that is still downloading; the song is marked failed.
-async fn cancel_import(
+/// Take a song out of the queue before it starts, or stop a link import that is still
+/// downloading; the song is marked failed.
+async fn cancel(
     State(st): State<AppState>,
     AuthUser(u): AuthUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<SongView>> {
     let song = owned_song(&st.pool, u.id, id).await?;
-    if song.status != SongStatus::Importing.as_str() || !import::cancel(&st, id).await {
+    let cancelled = match SongStatus::parse(&song.status) {
+        Some(SongStatus::Pending) => {
+            let error = if song.source_url.is_some() && song.original_key.is_empty() {
+                "The import was cancelled."
+            } else {
+                "Cancelled before processing started."
+            };
+            sqlx::query(
+                "UPDATE songs SET status = 'failed', error = $2, updated_at = now() \
+                 WHERE id = $1 AND status = 'pending'",
+            )
+            .bind(id)
+            .bind(error)
+            .execute(&st.pool)
+            .await?
+            .rows_affected()
+                > 0
+        }
+        Some(SongStatus::Importing) => import::cancel(&st, id).await,
+        _ => false,
+    };
+    if !cancelled {
         return Err(AppError::conflict(
-            "not_importing",
-            "the song is no longer importing",
+            "not_cancellable",
+            "the song is no longer waiting or importing",
         ));
     }
+    // A cancelled import frees a slot for the next song in line.
+    jobs::pump(&st, u.id).await?;
     Ok(Json(live_view(&st, id).await?))
 }
 
@@ -451,12 +524,6 @@ async fn complete(
         return Ok(Json(song_view(&st.pool, id).await?));
     }
     check_rate(&st, u.id)?;
-    if db::active_jobs(&st.pool, u.id).await? >= st.config.max_concurrent_jobs {
-        return Err(AppError::too_many(
-            "too_many_jobs",
-            "too many songs are processing; wait for one to finish",
-        ));
-    }
 
     if let Some(upload_id) = &song.upload_id {
         let mut parts: Vec<(u16, String)> = req
@@ -530,7 +597,14 @@ async fn complete(
         return Err(AppError::new(status, code, msg));
     }
 
-    jobs::enqueue_song(&st, id, SongStatus::Uploading).await?;
+    sqlx::query(
+        "UPDATE songs SET status = 'pending', upload_id = NULL, queued_at = now(), updated_at = now() \
+         WHERE id = $1 AND status = 'uploading'",
+    )
+    .bind(id)
+    .execute(&st.pool)
+    .await?;
+    jobs::pump(&st, u.id).await?;
     Ok(Json(song_view(&st.pool, id).await?))
 }
 
@@ -548,19 +622,14 @@ async fn reprocess(
     upload::validate_model(&r.model)?;
     let song = owned_song(&st.pool, u.id, id).await?;
     let status = SongStatus::parse(&song.status);
-    if !status.is_some_and(|s| s.can_transition_to(SongStatus::Queued)) {
+    if !status.is_some_and(|s| s.can_transition_to(SongStatus::Pending)) {
         return Err(AppError::conflict(
             "invalid_state",
             "song cannot be reprocessed right now",
         ));
     }
     check_rate(&st, u.id)?;
-    if db::active_jobs(&st.pool, u.id).await? >= st.config.max_concurrent_jobs {
-        return Err(AppError::too_many(
-            "too_many_jobs",
-            "too many songs are processing; wait for one to finish",
-        ));
-    }
+    check_queue_room(&st, u.id).await?;
     // A failed link import never stored an original (empty key).
     if song.original_key.is_empty()
         || st
@@ -590,8 +659,8 @@ async fn reprocess(
         .map_err(AppError::bad_gateway)?;
     let mut tx = st.pool.begin().await?;
     let claimed = sqlx::query(
-        "UPDATE songs SET status = 'queued', model = $2, error = NULL, duration_s = NULL, updated_at = now() \
-         WHERE id = $1 AND status IN ('ready', 'failed')",
+        "UPDATE songs SET status = 'pending', model = $2, error = NULL, duration_s = NULL, \
+         queued_at = now(), updated_at = now() WHERE id = $1 AND status IN ('ready', 'failed')",
     )
     .bind(id)
     .bind(&r.model)
@@ -607,9 +676,8 @@ async fn reprocess(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    let job_id = jobs::insert_job(&mut tx, id, &r.model).await?;
     tx.commit().await?;
-    jobs::dispatch(&st, Some(job_id)).await?;
+    jobs::pump(&st, u.id).await?;
     Ok(Json(song_view(&st.pool, id).await?))
 }
 
@@ -698,6 +766,8 @@ async fn remove(
         .bind(u.id)
         .execute(&st.pool)
         .await?;
+    // Deleting an importing or processing song frees a slot.
+    jobs::pump_logged(&st, u.id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

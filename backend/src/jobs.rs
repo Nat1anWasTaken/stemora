@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::auth::webhook_token;
 use crate::modal::SpawnRequest;
-use crate::storage;
+use crate::{db, storage};
 
 pub const MAX_ATTEMPTS: i32 = 3;
 pub const HEARTBEAT_TIMEOUT_SECS: i32 = 300;
@@ -17,6 +17,8 @@ pub const HEARTBEAT_TIMEOUT_SECS: i32 = 300;
 pub const START_TIMEOUT_SECS: i32 = 1800;
 pub const UPLOAD_TTL_HOURS: i32 = 24;
 pub const REAPER_INTERVAL: Duration = Duration::from_secs(15);
+/// First key of the per-user advisory lock taken by [`pump`].
+const QUEUE_LOCK_CLASS: i32 = 0x5155;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
@@ -63,6 +65,8 @@ impl JobStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SongStatus {
+    /// Accepted, waiting in the user's queue for a free slot (see [`pump`]).
+    Pending,
     Importing,
     Uploading,
     Queued,
@@ -74,6 +78,7 @@ pub enum SongStatus {
 impl SongStatus {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Pending => "pending",
             Self::Importing => "importing",
             Self::Uploading => "uploading",
             Self::Queued => "queued",
@@ -84,6 +89,7 @@ impl SongStatus {
     }
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
+            "pending" => Self::Pending,
             "importing" => Self::Importing,
             "uploading" => Self::Uploading,
             "queued" => Self::Queued,
@@ -97,9 +103,13 @@ impl SongStatus {
         use SongStatus::*;
         matches!(
             (self, next),
-            (Importing, Queued)
+            // started by the queue: a link without an original yet is downloaded first
+            (Pending, Importing)
+                | (Pending, Queued)
+                | (Pending, Failed)
+                | (Importing, Queued)
                 | (Importing, Failed)
-                | (Uploading, Queued)
+                | (Uploading, Pending)
                 | (Uploading, Failed)
                 | (Queued, Processing)
                 | (Queued, Failed)
@@ -107,8 +117,8 @@ impl SongStatus {
                 | (Processing, Ready)
                 | (Processing, Failed)
                 // reprocess
-                | (Ready, Queued)
-                | (Failed, Queued)
+                | (Ready, Pending)
+                | (Failed, Pending)
         )
     }
 }
@@ -190,7 +200,8 @@ pub async fn insert_job(
     Ok(id)
 }
 
-/// Move a song whose original is now in R2 from `from` (uploading/importing) to `queued`,
+/// Move a song whose original is now in R2 from `from` (an import that just stored its
+/// download, keeping its slot) to `queued`,
 /// create its job and spawn it. Returns false if the song was no longer in `from`.
 pub async fn enqueue_song(
     state: &AppState,
@@ -217,15 +228,102 @@ pub async fn enqueue_song(
 }
 
 /// Imports run as in-process tasks, so any song still `importing` when the server starts was
-/// interrupted by a restart.
-pub async fn fail_orphaned_imports(pool: &PgPool) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query(
-        "UPDATE songs SET status = 'failed', error = 'The import was interrupted. Please try again.', \
-         updated_at = now() WHERE status = 'importing'",
+/// interrupted by a restart. Put them back at their place in the queue (dropping anything they
+/// stored) so they start over; [`pump_all`] then picks them up.
+pub async fn requeue_orphaned_imports(state: &AppState) -> Result<u64, sqlx::Error> {
+    let rows: Vec<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT id, user_id FROM songs WHERE status = 'importing'")
+            .fetch_all(&state.pool)
+            .await?;
+    for (id, user_id) in &rows {
+        if let Err(e) = state
+            .storage
+            .delete_prefix(&storage::song_prefix(*user_id, *id))
+            .await
+        {
+            tracing::warn!(song_id = %id, error = %e, "could not clean up interrupted import");
+        }
+        sqlx::query(
+            "UPDATE songs SET status = 'pending', original_key = '', size_bytes = 0, \
+             queued_at = COALESCE(queued_at, created_at), updated_at = now() \
+             WHERE id = $1 AND status = 'importing'",
+        )
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(rows.len() as u64)
+}
+
+/// Start the oldest `pending` songs of a user while they have free slots
+/// (`MAX_CONCURRENT_JOBS` minus [`db::active_jobs`]): a link that has no original yet starts
+/// importing, anything else becomes a queued job. Call it whenever work is added to the queue
+/// or a slot may have freed up; the reaper also runs it for everyone as a safety net.
+pub async fn pump(state: &AppState, user_id: Uuid) -> Result<(), sqlx::Error> {
+    let mut tx = state.pool.begin().await?;
+    // Only one pump per user at a time, so two of them cannot both fill the same free slot.
+    sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+        .bind(QUEUE_LOCK_CLASS)
+        .bind(user_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    let free = state.config.max_concurrent_jobs - db::active_jobs(&mut *tx, user_id).await?;
+    if free <= 0 {
+        return tx.commit().await;
+    }
+    let next: Vec<(Uuid, String, bool)> = sqlx::query_as(
+        "SELECT id, model, source_url IS NOT NULL AND original_key = '' FROM songs \
+         WHERE user_id = $1 AND status = 'pending' ORDER BY queued_at, id LIMIT $2 FOR UPDATE",
     )
-    .execute(pool)
-    .await?
-    .rows_affected())
+    .bind(user_id)
+    .bind(free)
+    .fetch_all(&mut *tx)
+    .await?;
+    let (mut imports, mut jobs) = (Vec::new(), Vec::new());
+    for (song_id, model, import) in next {
+        if import {
+            sqlx::query("UPDATE songs SET status = 'importing', updated_at = now() WHERE id = $1")
+                .bind(song_id)
+                .execute(&mut *tx)
+                .await?;
+            imports.push(song_id);
+        } else {
+            sqlx::query(
+                "UPDATE songs SET status = 'queued', upload_id = NULL, error = NULL, updated_at = now() WHERE id = $1",
+            )
+            .bind(song_id)
+            .execute(&mut *tx)
+            .await?;
+            jobs.push(insert_job(&mut tx, song_id, &model).await?);
+        }
+    }
+    tx.commit().await?;
+    for song_id in imports {
+        crate::import::spawn(state.clone(), song_id);
+    }
+    for job_id in jobs {
+        dispatch(state, Some(job_id)).await?;
+    }
+    Ok(())
+}
+
+/// [`pump`] for every user with something waiting.
+pub async fn pump_all(state: &AppState) -> Result<(), sqlx::Error> {
+    let users: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT DISTINCT user_id FROM songs WHERE status = 'pending'")
+            .fetch_all(&state.pool)
+            .await?;
+    for (user_id,) in users {
+        pump(state, user_id).await?;
+    }
+    Ok(())
+}
+
+/// Like [`pump`], but logs instead of failing: for callers that have already done their work.
+pub async fn pump_logged(state: &AppState, user_id: Uuid) {
+    if let Err(e) = pump(state, user_id).await {
+        tracing::error!(%user_id, error = %e, "could not start queued songs");
+    }
 }
 
 /// Record a failure for the job's current attempt. The caller must hold the row lock
@@ -423,6 +521,10 @@ pub async fn reaper_tick(state: &AppState) {
     if let Err(e) = fail_stale(state).await {
         tracing::error!(error = %e, "reaper: stale job check failed");
     }
+    // Slots freed by jobs that failed above (or by anything a direct pump missed).
+    if let Err(e) = pump_all(state).await {
+        tracing::error!(error = %e, "reaper: queue pump failed");
+    }
     // Stale jobs that were just re-queued with backoff are picked up by a later tick.
     match purge_stale_uploads(state).await {
         Ok(n) if n > 0 => tracing::info!(purged = n, "purged stale uploads"),
@@ -485,17 +587,26 @@ mod tests {
     #[test]
     fn song_transitions() {
         use SongStatus::*;
-        assert!(Uploading.can_transition_to(Queued));
+        assert!(Uploading.can_transition_to(Pending));
+        assert!(!Uploading.can_transition_to(Queued));
+        assert!(Pending.can_transition_to(Importing));
+        assert!(Pending.can_transition_to(Queued));
+        assert!(Pending.can_transition_to(Failed));
+        assert!(!Pending.can_transition_to(Processing));
         assert!(Importing.can_transition_to(Queued));
         assert!(Importing.can_transition_to(Failed));
         assert!(!Importing.can_transition_to(Processing));
         assert!(Queued.can_transition_to(Processing));
         assert!(Processing.can_transition_to(Ready));
-        assert!(Ready.can_transition_to(Queued));
+        assert!(Ready.can_transition_to(Pending));
+        assert!(Failed.can_transition_to(Pending));
+        assert!(!Ready.can_transition_to(Queued));
         assert!(!Ready.can_transition_to(Processing));
         assert!(!Uploading.can_transition_to(Ready));
         assert!(!Failed.can_transition_to(Ready));
-        for s in [Importing, Uploading, Queued, Processing, Ready, Failed] {
+        for s in [
+            Pending, Importing, Uploading, Queued, Processing, Ready, Failed,
+        ] {
             assert_eq!(SongStatus::parse(s.as_str()), Some(s));
         }
     }

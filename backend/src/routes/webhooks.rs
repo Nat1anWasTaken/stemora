@@ -162,5 +162,9 @@ async fn job_update(
         }
     }
     tx.commit().await?;
+    if u.status != "running" {
+        // A finished or failed job may have freed one of the user's slots.
+        jobs::pump_logged(&st, song_user).await;
+    }
     Ok(Json(json!({"ok": true})))
 }
