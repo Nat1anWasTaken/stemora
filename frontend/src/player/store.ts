@@ -29,7 +29,7 @@ type PlayerState = {
   speed: number
   /** Key change in semitones. */
   semitones: number
-  /** Whether the SoundTouch worklet loaded (null while loading); without it speed changes also shift the pitch and the key cannot change. */
+  /** Whether the Signalsmith Stretch worklet can run (null while loading); without it speed changes also shift the pitch and the key cannot change. */
   canShift: boolean | null
   peaks: Peaks | null
   analysis: Analysis | null
@@ -100,6 +100,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, canShift: null })
       applyMetronome()
       void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
+      e.onShiftUnavailable = () => engine === e && set({ canShift: false })
       e.onEnded = () => {
         stopKeepAlive()
         set({ playing: false })
