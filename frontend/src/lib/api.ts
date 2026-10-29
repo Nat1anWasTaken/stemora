@@ -3,7 +3,8 @@
 export type StemName = "vocals" | "drums" | "bass" | "other"
 export type Role = "admin" | "user"
 export type User = { id: string; email: string; role: Role }
-export type SongStatus = "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
+/** `pending`: waiting in the user's queue (server side) until one of their slots frees up. */
+export type SongStatus = "pending" | "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
 /** Models a new job can use. */
 export type Model = "htdemucs" | "scnet_xl_ihf"
 /** What the "High quality" option runs. */
@@ -28,6 +29,8 @@ export type Song = {
   created_at: string
   /** Live download state while a link import is downloading. */
   download: Download | null
+  /** 1-based place in the user's queue while `pending`. */
+  queue_position: number | null
 }
 export type Download = {
   downloaded_bytes: number
@@ -122,7 +125,8 @@ export const api = {
     request<{ song: Song; upload: Upload }>("/songs", { method: "POST", body: b }),
   importSong: (b: { url: string; title?: string; model: Model }) => request<Song>("/songs/import", { method: "POST", body: b }),
   previewLink: (url: string) => request<LinkPreview>("/songs/import/preview", { method: "POST", body: { url } }),
-  cancelImport: (id: string) => request<Song>(`/songs/${id}/cancel`, { method: "POST" }),
+  /** Take a pending song out of the queue, or stop an import that is still downloading. */
+  cancel: (id: string) => request<Song>(`/songs/${id}/cancel`, { method: "POST" }),
   partUrls: (id: string, part_numbers: number[]) =>
     request<{ urls: { part_number: number; url: string }[] }>(`/songs/${id}/upload/parts`, { method: "POST", body: { part_numbers } }),
   complete: (id: string, parts?: { part_number: number; etag: string }[]) =>
@@ -137,7 +141,13 @@ export const stemDownloadUrl = (songId: string, name: StemName, format: "m4a" | 
   `/api/songs/${songId}/stems/${name}/download?format=${format}`
 
 export const isActive = (s: Pick<Song, "status">) =>
-  s.status === "queued" || s.status === "processing" || s.status === "uploading" || s.status === "importing"
+  s.status === "pending" || s.status === "queued" || s.status === "processing" || s.status === "uploading" || s.status === "importing"
+
+/** Waiting in the queue or still downloading: `api.cancel` can stop it. */
+export const isCancellable = (s: Pick<Song, "status">) => s.status === "pending" || s.status === "importing"
+
+/** A link that has not been downloaded yet (no original stored). */
+export const isLinkImport = (s: Pick<Song, "source_url" | "size_bytes">) => s.source_url !== null && s.size_bytes === 0
 
 /** Determinate progress (0-100) when known, else null for an indeterminate bar. */
 export const progressValue = (s: Pick<Song, "status" | "stage" | "progress" | "download">): number | null => {
@@ -148,4 +158,4 @@ export const progressValue = (s: Pick<Song, "status" | "stage" | "progress" | "d
 
 /** A failed link import never stored an original, so it can only be imported again. */
 export const isFailedImport = (s: Pick<Song, "status" | "source_url" | "size_bytes">) =>
-  s.status === "failed" && s.source_url !== null && s.size_bytes === 0
+  s.status === "failed" && isLinkImport(s)

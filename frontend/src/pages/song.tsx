@@ -4,7 +4,7 @@ import { ProcessingLine, SongArtwork } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useThemeColor } from "@/hooks/use-theme-color"
-import { isFailedImport, progressValue, retryModel } from "@/lib/api"
+import { isCancellable, isFailedImport, isLinkImport, progressValue, retryModel } from "@/lib/api"
 import { formatClock, hostOf } from "@/lib/format"
 import { useSong, useSongActions } from "@/lib/queries"
 import { Player } from "@/player/ui/player"
@@ -13,7 +13,7 @@ export function SongPage() {
   const { id = "" } = useParams()
   const nav = useNavigate()
   const { data, error, isLoading } = useSong(id)
-  const { reprocess, reimport, cancelImport } = useSongActions()
+  const { reprocess, reimport, cancel } = useSongActions()
   useThemeColor("--sheet-top")
 
   if (isLoading) return <div className="grid min-h-app place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
@@ -54,6 +54,8 @@ export function SongPage() {
               <Button size="lg" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: retryModel(song.model) })}><RefreshCw />Retry processing</Button>
             )}
           </>
+        ) : song.status === "pending" ? (
+          <ProcessingLine song={song} />
         ) : (
           <Progress value={progressValue(song)} className="w-full" aria-label={importing ? "Import progress" : "Processing progress"}>
             <div className="flex w-full items-center justify-between gap-3 text-sm">
@@ -62,8 +64,10 @@ export function SongPage() {
             </div>
           </Progress>
         )}
-        {importing && (
-          <Button variant="secondary" disabled={cancelImport.isPending} onClick={() => cancelImport.mutate(song)}><Ban />Cancel import</Button>
+        {isCancellable(song) && (
+          <Button variant="secondary" disabled={cancel.isPending} onClick={() => cancel.mutate(song)}>
+            <Ban />{importing || isLinkImport(song) ? "Cancel import" : "Remove from queue"}
+          </Button>
         )}
         {song.status !== "failed" && <p className="text-sm text-muted-foreground">This page updates on its own. You can leave and come back.</p>}
       </div>

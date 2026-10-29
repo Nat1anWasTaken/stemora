@@ -12,7 +12,7 @@ interface MockUser { id: string; email: string; password: string; role: Role }
 interface MockSong {
   id: string
   title: string
-  status: "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
+  status: "pending" | "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
   duration_s: number | null
   size_bytes: number
   model: "htdemucs" | "htdemucs_ft" | "scnet_xl_ihf"
@@ -22,6 +22,8 @@ interface MockSong {
   source_url: string | null
   created_at: string
   download: { downloaded_bytes: number; total_bytes: number | null; speed_bps: number | null; eta_s: number | null } | null
+  /** when the song joined the queue (ms), while pending */
+  queuedAt?: number
   /** link import started at this time (ms) */
   importStart?: number
   /** link import ends with this error instead */
@@ -37,6 +39,8 @@ const STEMS = ["vocals", "drums", "bass", "other"] as const
 const MIB = 1024 * 1024
 const mockModel = (m: unknown): MockSong["model"] => (m === "scnet_xl_ihf" ? m : "htdemucs")
 const STAGES = ["downloading", "validating", "separating", "encoding", "uploading"]
+/** MAX_CONCURRENT_JOBS: songs importing/queued/processing at once; more wait as `pending`. */
+const MAX_ACTIVE = 2
 
 export function mockApi(): Plugin {
   const users: MockUser[] = []
@@ -76,6 +80,7 @@ export function mockApi(): Plugin {
     if (t < 10) { s.stage = "storing"; s.progress = 100; return }
     s.importStart = undefined
     s.size_bytes = IMPORT_SIZE
+    s.status = "queued"
     s.simStart = Date.now()
   }
 
@@ -91,11 +96,28 @@ export function mockApi(): Plugin {
       s.stage = STAGES[Math.min(STAGES.length - 1, Math.floor(((t - 2) / 14) * STAGES.length))]
     } else { s.status = "ready"; s.progress = 100; s.stage = "done"; s.duration_s = 20; s.simStart = undefined }
   }
+  // Mirrors the backend's queue: start the oldest pending songs while there are free slots.
+  const waiting = () => songs.filter((s) => s.status === "pending").sort((a, b) => (a.queuedAt ?? 0) - (b.queuedAt ?? 0))
+  function pump() {
+    songs.forEach(tick)
+    let free = MAX_ACTIVE - songs.filter((s) => s.status === "importing" || s.status === "queued" || s.status === "processing").length
+    for (const s of waiting()) {
+      if (free-- <= 0) break
+      s.queuedAt = undefined
+      if (s.source_url && s.size_bytes === 0) { s.status = "importing"; s.stage = "waiting"; s.importStart = Date.now() }
+      else { s.status = "queued"; s.simStart = Date.now() }
+    }
+  }
+  const enqueue = (s: MockSong) => {
+    s.status = "pending"; s.stage = null; s.progress = 0; s.error = null; s.simStart = undefined; s.queuedAt = Date.now()
+    pump()
+  }
   const publicSong = (s: MockSong) => {
     tick(s)
-    const { simStart: _a, fixedFail: _b, multipart: _c, importStart: _d, importFail: _e, ...rest } = s
-    void _a; void _b; void _c; void _d; void _e
-    return rest
+    const { simStart: _a, fixedFail: _b, multipart: _c, importStart: _d, importFail: _e, queuedAt: _f, ...rest } = s
+    void _a; void _b; void _c; void _d; void _e; void _f
+    const position = waiting().indexOf(s)
+    return { ...rest, queue_position: position < 0 ? null : position + 1 }
   }
 
   const json = (res: ServerResponse, status: number, body?: unknown) => {
@@ -202,6 +224,7 @@ export function mockApi(): Plugin {
           if (path === "/api/me/usage") return json(res, 200, { used_bytes: songs.reduce((a, s) => a + s.size_bytes, 0), quota_bytes: 5000 * MIB })
 
           // ---- songs
+          if (path.startsWith("/api/songs")) pump()
           if (path === "/api/songs" && method === "GET") return json(res, 200, [...songs].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(publicSong))
           if (path === "/api/songs" && method === "POST") {
             const b = await readBody(req)
@@ -229,8 +252,9 @@ export function mockApi(): Plugin {
             const link = String(b.url ?? "").trim()
             if (!/^https?:\/\/[^/\s]+\.[^/\s]+/.test(link)) return err(res, 400, "invalid_url", "not a valid link")
             const title = String(b.title ?? "").trim() || link.slice(0, 200)
-            const s: MockSong = { id: randomUUID(), title, status: "importing", duration_s: null, size_bytes: 0, model: mockModel(b.model), progress: 0, stage: "waiting", error: null, source_url: link, download: null, created_at: iso(Date.now()), importStart: Date.now(), importFail: link.includes("fail") ? "The link is private, removed or unavailable." : undefined }
+            const s: MockSong = { id: randomUUID(), title, status: "pending", duration_s: null, size_bytes: 0, model: mockModel(b.model), progress: 0, stage: null, error: null, source_url: link, download: null, created_at: iso(Date.now()), importFail: link.includes("fail") ? "The link is private, removed or unavailable." : undefined }
             songs.push(s)
+            enqueue(s)
             return json(res, 200, publicSong(s))
           }
           const m = /^\/api\/songs\/([\w-]+)(?:\/(.+))?$/.exec(path)
@@ -245,25 +269,29 @@ export function mockApi(): Plugin {
                 : { song: p, stems: [], peaks_url: null, analysis_url: null })
             }
             if (!sub && method === "PATCH") { const b = await readBody(req); s.title = String(b.title); return json(res, 200, publicSong(s)) }
-            if (!sub && method === "DELETE") { songs.splice(songs.indexOf(s), 1); return json(res, 204) }
+            if (!sub && method === "DELETE") { songs.splice(songs.indexOf(s), 1); pump(); return json(res, 204) }
             if (sub === "upload/parts" && method === "POST") {
               const b = await readBody(req)
               return json(res, 200, { urls: (b.part_numbers as number[]).map((n) => ({ part_number: n, url: `/mock-upload/${s.id}/part/${n}` })) })
             }
             if (sub === "cancel" && method === "POST") {
               tick(s)
-              if (s.status !== "importing") return err(res, 409, "not_importing", "the song is no longer importing")
-              s.status = "failed"; s.stage = null; s.download = null; s.importStart = undefined; s.error = "The import was cancelled."
+              if (s.status !== "importing" && s.status !== "pending") return err(res, 409, "not_cancellable", "the song is no longer waiting or importing")
+              const link = s.source_url !== null && s.size_bytes === 0
+              s.status = "failed"; s.stage = null; s.download = null; s.importStart = undefined; s.queuedAt = undefined
+              s.error = link ? "The import was cancelled." : "Cancelled before processing started."
+              pump()
               return json(res, 200, publicSong(s))
             }
             if (sub === "complete" && method === "POST") {
-              if (s.status === "uploading") { s.status = "queued"; s.simStart = Date.now() }
+              if (s.status === "uploading") enqueue(s)
               return json(res, 200, publicSong(s))
             }
             if (sub === "reprocess" && method === "POST") {
               const b = await readBody(req)
               s.model = mockModel(b.model)
-              s.status = "queued"; s.error = null; s.fixedFail = false; s.progress = 0; s.simStart = Date.now()
+              s.fixedFail = false
+              enqueue(s)
               return json(res, 200, publicSong(s))
             }
             const dl = /^stems\/(\w+)\/download$/.exec(sub ?? "")

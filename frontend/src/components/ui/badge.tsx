@@ -20,6 +20,8 @@ const badgeVariants = cva(
         success: "bg-success/15 text-success",
         warning: "bg-warning/15 text-warning",
         soft: "bg-primary/15 text-primary",
+        /** Small number pill, e.g. a nav item's count. */
+        count: "h-4.5 min-w-4.5 bg-primary px-1 text-primary-foreground tabular-nums",
         link: "text-primary underline-offset-4 hover:underline",
       },
     },

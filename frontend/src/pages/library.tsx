@@ -1,32 +1,35 @@
 import { useRef, useState } from "react"
 import { Link, useNavigate } from "react-router"
-import { Ban, Music2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCw, Sparkles, Trash2 } from "lucide-react"
+import { Ban, ListOrdered, Music2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, RotateCw, Sparkles, Trash2 } from "lucide-react"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
 import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import { HQ_MODEL, isActive, isFailedImport, isHighQuality, progressValue, retryModel, type Song } from "@/lib/api"
+import { HQ_MODEL, isActive, isCancellable, isFailedImport, isHighQuality, isLinkImport, progressValue, retryModel, type Song } from "@/lib/api"
 import { formatBytes, formatClock, hostOf, relativeTime } from "@/lib/format"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useSongActions, useSongs } from "@/lib/queries"
+import { useQueue } from "@/lib/queue"
 
 function SongCard({ song }: { song: Song }) {
   const nav = useNavigate()
-  const { remove, rename, reprocess, reimport, cancelImport } = useSongActions()
+  const { remove, rename, reprocess, reimport, cancel } = useSongActions()
   const [confirm, setConfirm] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const ready = song.status === "ready"
   const working = isActive(song)
   const failedImport = isFailedImport(song)
   const importing = song.status === "importing"
+  const pending = song.status === "pending"
+  const cancelLabel = importing || isLinkImport(song) ? "Cancel import" : "Remove from queue"
   const row = useRef<HTMLDivElement>(null)
   const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
 
   const entries: MenuEntry[] = [
-    ...(importing ? [{ key: "cancel", label: "Cancel import", icon: <Ban />, onSelect: () => cancelImport.mutate(song) } as MenuEntry] : []),
+    ...(isCancellable(song) ? [{ key: "cancel", label: cancelLabel, icon: <Ban />, onSelect: () => cancel.mutate(song) } as MenuEntry] : []),
     ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     ...((song.status === "failed" && !failedImport) || ready
@@ -66,8 +69,8 @@ function SongCard({ song }: { song: Song }) {
             <StatusBadge song={song} />
             {ready && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
             {ready && isHighQuality(song.model) && <span>High quality</span>}
-            {importing && song.source_url && <span className="max-w-40 truncate">{hostOf(song.source_url)}</span>}
-            {importing && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
+            {(importing || pending) && song.source_url && <span className="max-w-40 truncate">{hostOf(song.source_url)}</span>}
+            {(importing || pending) && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
             <span>{relativeTime(song.created_at)}</span>
           </div>
         </div>
@@ -76,12 +79,20 @@ function SongCard({ song }: { song: Song }) {
         </div>
       </div>
 
-      {working && (
+      {pending && (
+        <div className="flex items-center justify-between gap-3">
+          <ProcessingLine song={song} />
+          <Button size="sm" variant="ghost" className="relative z-10" disabled={cancel.isPending} onClick={() => cancel.mutate(song)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+      {working && !pending && (
         <Progress value={progressValue(song)} aria-label={importing ? "Import progress" : "Processing progress"}>
           <div className="flex w-full items-center justify-between gap-3">
             <ProcessingLine song={song} />
             {importing && (
-              <Button size="sm" variant="ghost" className="relative z-10" disabled={cancelImport.isPending} onClick={() => cancelImport.mutate(song)}>
+              <Button size="sm" variant="ghost" className="relative z-10" disabled={cancel.isPending} onClick={() => cancel.mutate(song)}>
                 Cancel
               </Button>
             )}
@@ -121,6 +132,7 @@ function SongCard({ song }: { song: Song }) {
 
 export function LibraryPage() {
   const { data: songs, isLoading, error, refetch } = useSongs()
+  const { count: inQueue } = useQueue()
   const pull = useRef<HTMLDivElement>(null)
   usePullToRefresh(pull, refetch)
   return (
@@ -135,7 +147,12 @@ export function LibraryPage() {
           <h1 className="text-3xl font-semibold md:text-4xl">Library</h1>
           <p className="text-muted-foreground">{songs ? `${songs.length} ${songs.length === 1 ? "song" : "songs"}` : "Your separated songs"}</p>
         </div>
-        <Button size="lg" className="hidden md:inline-flex" render={<Link to="/upload" />}><Plus />Upload song</Button>
+        <div className="flex gap-2">
+          {inQueue > 0 && (
+            <Button size="lg" variant="secondary" render={<Link to="/queue" />}><ListOrdered />{inQueue} in queue</Button>
+          )}
+          <Button size="lg" className="hidden md:inline-flex" render={<Link to="/upload" />}><Plus />Upload song</Button>
+        </div>
       </header>
 
       {error && <p role="alert" className="text-destructive">{error.message}</p>}

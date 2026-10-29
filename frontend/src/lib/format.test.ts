@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { downloadSummary, formatBytes, formatClock, formatRemaining, hostOf, importStageLabel, relativeTime, stageLabel, titleFromFilename } from "@/lib/format"
+import { downloadSummary, formatBytes, formatClock, formatRemaining, hostOf, importStageLabel, ordinal, queuePlace, relativeTime, splitLinks, stageLabel, titleFromFilename } from "@/lib/format"
 
 describe("format", () => {
   it("formats clocks", () => {
@@ -7,6 +7,16 @@ describe("format", () => {
     expect(formatClock(65.9)).toBe("1:05")
     expect(formatClock(3723)).toBe("1:02:03")
     expect(formatClock(NaN)).toBe("0:00")
+  })
+  it("formats queue places", () => {
+    expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101, 111].map(ordinal)).toEqual(["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st", "111th"])
+    expect(queuePlace(1)).toBe("Next in line")
+    expect(queuePlace(3)).toBe("3rd in line")
+    expect(queuePlace(null)).toBe("Waiting in line")
+  })
+  it("splits pasted links", () => {
+    expect(splitLinks("  https://a.com/1\nhttps://b.com/2 https://a.com/1\t\n")).toEqual(["https://a.com/1", "https://b.com/2"])
+    expect(splitLinks("   ")).toEqual([])
   })
   it("formats remaining", () => {
     expect(formatRemaining(10, 20)).toBe("-0:10")
