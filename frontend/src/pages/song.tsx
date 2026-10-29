@@ -4,7 +4,7 @@ import { ProcessingLine, SongArtwork } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useThemeColor } from "@/hooks/use-theme-color"
-import { isFailedImport, progressValue } from "@/lib/api"
+import { isFailedImport, progressValue, retryModel } from "@/lib/api"
 import { formatClock, hostOf } from "@/lib/format"
 import { useSong, useSongActions } from "@/lib/queries"
 import { Player } from "@/player/ui/player"
@@ -51,7 +51,7 @@ export function SongPage() {
             {isFailedImport(song) ? (
               <Button size="lg" disabled={reimport.isPending} onClick={() => reimport.mutate(song, { onSuccess: (fresh) => nav(`/songs/${fresh.id}`, { replace: true }) })}><RefreshCw />Retry import</Button>
             ) : (
-              <Button size="lg" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: song.model })}><RefreshCw />Retry processing</Button>
+              <Button size="lg" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: retryModel(song.model) })}><RefreshCw />Retry processing</Button>
             )}
           </>
         ) : (

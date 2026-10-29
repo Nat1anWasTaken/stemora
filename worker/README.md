@@ -1,9 +1,9 @@
 # Stemora worker (Modal)
 
-Demucs stem separation on Modal. Interface: `../docs/contract.md`.
+Stem separation on Modal with Demucs (`htdemucs`) or SCNet (`scnet_xl_ihf`, the "High quality" option). Interface: `../docs/contract.md`.
 
 - `app.py` Modal app `stemora`: image, GPU function `separate`, `spawn` web endpoint, `local_test` entrypoint
-- `runner.py` job orchestration; `pipeline.py` probe/decode/separate/encode/peaks/upload; `webhook.py` payloads, retries, heartbeat; `schema.py` request validation
+- `runner.py` job orchestration; `pipeline.py` probe/decode/separate/encode/peaks/upload; `scnet/` vendored SCNet network + checkpoint registry (MIT, from ZFTurbo/Music-Source-Separation-Training); `webhook.py` payloads, retries, heartbeat; `schema.py` request validation
 
 ## Setup
 ```sh
@@ -36,7 +36,7 @@ The deploy keeps the same `spawn` URL, so `MODAL_ENDPOINT_URL` in Dokploy does n
 
 ## Test
 ```sh
-uv run modal run app.py::local_test --song-path ./sample.mp3 [--model htdemucs_ft] [--out-dir ./out]
+uv run modal run app.py::local_test --song-path ./sample.mp3 [--model scnet_xl_ihf] [--out-dir ./out]
 ```
 Runs separate+encode+peaks on a file without R2/webhook, prints timings, writes stems locally.
 
@@ -47,8 +47,9 @@ curl -X POST $URL -H "Authorization: Bearer $SECRET" -H 'content-type: applicati
 (401 bad secret, 422 invalid body, 200 `{"call_id":...}`.)
 
 ## Notes
-- Progress 5..90 while separating (from Demucs' chunk loop); heartbeat webhook every 15s from start to finish.
+- Progress 5..90 while separating (from Demucs' chunk loop, or per SCNet batch of 4 x 11 s chunks); heartbeat webhook every 15s from start to finish.
 - Stops early when the backend says the job is gone (410) or superseded (`cancel: true`); on 410 it also deletes the objects it already uploaded.
 - peaks.json: each stem normalised so its loudest bucket = 1.0 (silent stem = all 0).
 - Stems are scaled by one common gain only if any would clip (ceiling 0.99); FLAC is 24-bit.
-- Weights are baked into the image (`TORCH_HOME=/opt/torch`).
+- Weights are baked into the image (Demucs in `TORCH_HOME=/opt/torch`, SCNet in `/opt/scnet`, sha256-checked at build).
+- 4 min song on an L4, separation only: htdemucs 14 s, scnet_xl_ihf 43 s; encoding adds ~27 s to each. (The retired htdemucs_ft took 33 s.)

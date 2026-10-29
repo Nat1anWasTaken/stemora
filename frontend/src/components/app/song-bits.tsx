@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Clock, Link2, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import type { Song } from "@/lib/api"
+import { isHighQuality, type Song } from "@/lib/api"
 import { downloadSummary, importStageLabel, stageLabel } from "@/lib/format"
 
 const HEIGHTS = ["h-4", "h-5", "h-6", "h-7", "h-8"] as const
@@ -47,7 +47,7 @@ export function ProcessingLine({ song }: { song: Pick<Song, "status" | "stage" |
   return (
     <span className="text-xs text-muted-foreground">
       {song.status === "queued" ? "Waiting for a worker" : stageLabel(song.stage)}
-      {song.model === "htdemucs_ft" ? " (high quality)" : ""}
+      {isHighQuality(song.model) ? " (high quality)" : ""}
     </span>
   )
 }

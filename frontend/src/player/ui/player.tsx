@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useIsDesktop } from "@/hooks/use-media"
 import { useThemeColor } from "@/hooks/use-theme-color"
-import { stemDownloadUrl, type SongDetail } from "@/lib/api"
+import { HQ_MODEL, isHighQuality, stemDownloadUrl, type SongDetail } from "@/lib/api"
 import { formatClock } from "@/lib/format"
 import { useSongActions } from "@/lib/queries"
 import { STEM_NAMES } from "@/player/mixer"
@@ -107,7 +107,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   const entries: MenuEntry[] = [
     { key: "dl-m4a", label: "Download all stems (M4A)", icon: <Download />, onSelect: () => downloadAll("m4a") },
     { key: "dl-flac", label: "Download all stems (FLAC)", icon: <Download />, onSelect: () => downloadAll("flac") },
-    ...(song.model !== "htdemucs_ft" ? [{ key: "hq", label: "Reprocess in high quality", icon: <Sparkles />, onSelect: () => setReproc(true) } as MenuEntry] : []),
+    ...(song.model !== HQ_MODEL ? [{ key: "hq", label: "Reprocess in high quality", icon: <Sparkles />, onSelect: () => setReproc(true) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     { key: "sep", separator: true },
     { key: "delete", label: "Delete song", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(true) },
@@ -147,7 +147,7 @@ export function Player({ detail }: { detail: SongDetail }) {
           <Button variant="secondary" size="icon-lg" aria-label="Back to library" onClick={close}><ChevronDown className="md:rotate-90" /></Button>
           <div className="flex min-w-0 flex-1 flex-col px-1">
             <h1 className="truncate text-lg leading-tight font-semibold">{song.title}</h1>
-            <p className="truncate text-sm text-muted-foreground">{song.duration_s ? formatClock(song.duration_s) : "Stems"}{song.model === "htdemucs_ft" ? " · High quality" : ""}</p>
+            <p className="truncate text-sm text-muted-foreground">{song.duration_s ? formatClock(song.duration_s) : "Stems"}{isHighQuality(song.model) ? " · High quality" : ""}</p>
           </div>
           <ActionMenu title={song.title} entries={entries} trigger={<Button variant="secondary" size="icon-lg" aria-label="More options"><MoreHorizontal /></Button>} />
         </header>
@@ -239,9 +239,9 @@ export function Player({ detail }: { detail: SongDetail }) {
         open={reproc}
         onOpenChange={setReproc}
         title="Reprocess in high quality?"
-        description={`The fine-tuned model is about 4x slower and costlier. Your current stems for "${song.title}" are replaced when it finishes.`}
+        description={`The high quality model (SCNet XL) is about 3x slower and costlier. Your current stems for "${song.title}" are replaced when it finishes.`}
         confirmLabel="Reprocess"
-        onConfirm={() => reprocess.mutate({ id: song.id, model: "htdemucs_ft" }, { onSuccess: () => nav("/", { replace: true }) })}
+        onConfirm={() => reprocess.mutate({ id: song.id, model: HQ_MODEL }, { onSuccess: () => nav("/", { replace: true }) })}
       />
     </div>
   )

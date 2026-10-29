@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
-import { api, progressValue, type LinkPreview, type Model, type Song } from "@/lib/api"
+import { api, HQ_MODEL, progressValue, type LinkPreview, type Model, type Song } from "@/lib/api"
 import { formatBytes, formatClock, titleFromFilename } from "@/lib/format"
 import { keys, useSongActions, useSongs } from "@/lib/queries"
 import { UploadController } from "@/lib/upload"
@@ -235,7 +235,7 @@ export function UploadPage() {
 
   const pending = items.filter((i) => !i.ctrl)
   const startAll = () => {
-    const model: Model = hq ? "htdemucs_ft" : "htdemucs"
+    const model: Model = hq ? HQ_MODEL : "htdemucs"
     const started = items.map((it) => {
       if (it.ctrl) return it
       const ctrl = new UploadController(it.file, it.title.trim() || titleFromFilename(it.file.name), model)
@@ -276,7 +276,7 @@ export function UploadPage() {
       {rejected.length > 0 && <p role="alert" className="text-sm text-destructive">Skipped (not audio): {rejected.join(", ")}</p>}
 
       <LinkImport
-        model={hq ? "htdemucs_ft" : "htdemucs"}
+        model={hq ? HQ_MODEL : "htdemucs"}
         onImported={() => {
           setAnyDone(true)
           void qc.invalidateQueries({ queryKey: keys.songs })
@@ -300,7 +300,7 @@ export function UploadPage() {
       <div className="flex items-start justify-between gap-4 rounded-2xl border border-border bg-surface p-4">
         <div className="flex flex-col gap-1">
           <Label htmlFor="hq">High quality</Label>
-          <p className="text-sm text-muted-foreground">Uses the fine-tuned model (htdemucs_ft). Cleaner stems, but roughly 4x slower and costlier to process.</p>
+          <p className="text-sm text-muted-foreground">Uses SCNet XL. Cleaner stems, especially vocals, but about 3x slower and costlier to separate.</p>
         </div>
         <Switch id="hq" checked={hq} onCheckedChange={setHq} />
       </div>

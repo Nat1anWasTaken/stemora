@@ -1,4 +1,4 @@
-"""Stemora Modal app: GPU Demucs separation + lightweight spawn/cancel endpoints."""
+"""Stemora Modal app: GPU stem separation (Demucs / SCNet) + lightweight spawn/cancel endpoints."""
 import os
 
 import modal
@@ -7,13 +7,27 @@ from fastapi import HTTPException, Header
 app = modal.App("stemora")
 
 TORCH_HOME = "/opt/torch"
-MODELS = ("htdemucs", "htdemucs_ft")
+DEMUCS_MODELS = ("htdemucs",)
 
 
 def _download_weights():
     from demucs.pretrained import get_model
-    for m in MODELS:
+    for m in DEMUCS_MODELS:
         get_model(m)
+
+
+def _download_scnet_weights():
+    import hashlib
+    import os
+    import urllib.request
+    from scnet.checkpoints import CHECKPOINTS
+    for name, spec in CHECKPOINTS.items():
+        os.makedirs(os.path.dirname(spec["path"]), exist_ok=True)
+        urllib.request.urlretrieve(spec["url"], spec["path"])
+        with open(spec["path"], "rb") as f:
+            digest = hashlib.file_digest(f, "sha256").hexdigest()
+        if digest != spec["sha256"]:
+            raise RuntimeError(f"{name}: checkpoint sha256 {digest} != {spec['sha256']}")
 
 
 BTC_COMMIT = "2682317be668032e6e4b269ded36adaa2ad57df0"
@@ -45,6 +59,8 @@ image = (
     .run_function(_download_weights)
     .run_function(_download_beat_model)
     .run_function(_download_btc_weights)
+    .add_local_python_source("scnet", copy=True)
+    .run_function(_download_scnet_weights)
     .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "btc")
 )
 
@@ -60,7 +76,7 @@ secrets = [modal.Secret.from_name("stemora-r2"), modal.Secret.from_name("stemora
 
 @app.function(image=image, gpu=GPU, cpu=None if GPU else 8, retries=0, timeout=1200, secrets=secrets, memory=16384)
 def separate(job: dict):
-    """Full production pipeline: R2 -> Demucs -> R2 -> webhook."""
+    """Full production pipeline: R2 -> separation -> R2 -> webhook."""
     import runner
     return runner.run_job(job)
 
@@ -117,7 +133,7 @@ def cancel(body: dict, authorization: str | None = Header(default=None)):
 
 @app.local_entrypoint()
 def local_test(song_path: str, model: str = "htdemucs", out_dir: str = "./out"):
-    """modal run app.py::local_test --song-path ./sample.mp3 [--model htdemucs_ft]"""
+    """modal run app.py::local_test --song-path ./sample.mp3 [--model scnet_xl_ihf]"""
     import os
     import time
     t0 = time.time()

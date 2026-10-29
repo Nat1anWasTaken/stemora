@@ -7,7 +7,7 @@ import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import { isActive, isFailedImport, progressValue, type Song } from "@/lib/api"
+import { HQ_MODEL, isActive, isFailedImport, isHighQuality, progressValue, retryModel, type Song } from "@/lib/api"
 import { formatBytes, formatClock, hostOf, relativeTime } from "@/lib/format"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
@@ -30,7 +30,7 @@ function SongCard({ song }: { song: Song }) {
     ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     ...((song.status === "failed" && !failedImport) || ready
-      ? [{ key: "hq", label: song.model === "htdemucs_ft" ? "Reprocess" : "Reprocess in high quality", icon: <Sparkles />, onSelect: () => reprocess.mutate({ id: song.id, model: "htdemucs_ft" }) } as MenuEntry]
+      ? [{ key: "hq", label: song.model === HQ_MODEL ? "Reprocess" : "Reprocess in high quality", icon: <Sparkles />, onSelect: () => reprocess.mutate({ id: song.id, model: HQ_MODEL }) } as MenuEntry]
       : []),
     { key: "sep", separator: true },
     { key: "delete", label: "Delete", icon: <Trash2 />, destructive: true, onSelect: () => setConfirm(true) },
@@ -65,7 +65,7 @@ function SongCard({ song }: { song: Song }) {
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <StatusBadge song={song} />
             {ready && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
-            {ready && song.model === "htdemucs_ft" && <span>High quality</span>}
+            {ready && isHighQuality(song.model) && <span>High quality</span>}
             {importing && song.source_url && <span className="max-w-40 truncate">{hostOf(song.source_url)}</span>}
             {importing && song.duration_s !== null && <span>{formatClock(song.duration_s)}</span>}
             <span>{relativeTime(song.created_at)}</span>
@@ -97,7 +97,7 @@ function SongCard({ song }: { song: Song }) {
                 <RefreshCw />Retry import
               </Button>
             ) : (
-              <Button size="sm" variant="secondary" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: song.model })}>
+              <Button size="sm" variant="secondary" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: retryModel(song.model) })}>
                 <RefreshCw />Retry
               </Button>
             )}

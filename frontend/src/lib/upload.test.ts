@@ -83,7 +83,7 @@ describe("UploadController single", () => {
     vi.spyOn(api, "createSong").mockResolvedValue({ song: { id: "s" } as never, upload: { mode: "single", url: "http://r2/x", headers: { "Content-Type": "audio/mpeg" } } })
     const complete = vi.spyOn(api, "complete").mockResolvedValue({} as never)
     const put = vi.fn<PutFn>(async (_u, b, _h, p) => { p(b.size); return { etag: null } })
-    const c = new UploadController(new File([new Uint8Array(100)], "a.mp3"), "A", "htdemucs_ft", put, 1, 0)
+    const c = new UploadController(new File([new Uint8Array(100)], "a.mp3"), "A", "scnet_xl_ihf", put, 1, 0)
     await c.start()
     expect(put.mock.calls[0][2]).toEqual({ "Content-Type": "audio/mpeg" })
     expect(complete).toHaveBeenCalledWith("s")

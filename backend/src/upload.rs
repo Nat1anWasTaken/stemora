@@ -18,7 +18,8 @@ const EXTRA_CONTENT_TYPES: &[&str] = &[
     "video/x-ms-asf",
 ];
 
-pub const MODELS: &[&str] = &["htdemucs", "htdemucs_ft"];
+/// Models new jobs may use. Older songs can still carry `htdemucs_ft` (see migration 0003).
+pub const MODELS: &[&str] = &["htdemucs", "scnet_xl_ihf"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum UploadPlan {
@@ -81,7 +82,7 @@ pub fn validate_model(model: &str) -> AppResult<()> {
     } else {
         Err(AppError::bad_request(
             "invalid_model",
-            "model must be htdemucs or htdemucs_ft",
+            "model must be htdemucs or scnet_xl_ihf",
         ))
     }
 }
@@ -132,7 +133,8 @@ mod tests {
     #[test]
     fn models() {
         assert!(validate_model("htdemucs").is_ok());
-        assert!(validate_model("htdemucs_ft").is_ok());
+        assert!(validate_model("scnet_xl_ihf").is_ok());
+        assert!(validate_model("htdemucs_ft").is_err());
         assert!(validate_model("mdx").is_err());
     }
 }

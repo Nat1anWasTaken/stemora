@@ -515,7 +515,7 @@ async fn songs_full_flow() {
     let bob = app.user(&admin, "bob@example.com").await;
 
     let r = app
-        .post("/api/songs", &bob, json!({"title":"My Song","filename":"track.MP3","content_type":"audio/mpeg","size":MIB,"model":"htdemucs_ft"}))
+        .post("/api/songs", &bob, json!({"title":"My Song","filename":"track.MP3","content_type":"audio/mpeg","size":MIB,"model":"scnet_xl_ihf"}))
         .await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
     assert_eq!(r.body["upload"]["mode"], "single");
@@ -573,7 +573,7 @@ async fn songs_full_flow() {
     // Modal was called with the contract payload
     let call = app.modal.calls.lock().unwrap()[0].clone();
     assert_eq!(call.attempt, 1);
-    assert_eq!(call.model, "htdemucs_ft");
+    assert_eq!(call.model, "scnet_xl_ihf");
     assert_eq!(call.user_id, uid);
     assert_eq!(call.song_id, sid);
     assert_eq!(call.max_duration_s, 900);
@@ -693,6 +693,7 @@ async fn songs_full_flow() {
             .has(&storage::stem_key(uid, sid, "vocals", "m4a"))
     );
     assert_eq!(app.modal.calls.lock().unwrap().len(), 2);
+    assert_eq!(app.modal.calls.lock().unwrap()[1].model, "htdemucs");
     let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM stems WHERE song_id = $1")
         .bind(sid)
         .fetch_one(&app.state.pool)
@@ -1333,7 +1334,7 @@ async fn import_from_link_queues_a_job() {
     let song = app
         .import(
             &admin,
-            json!({"url":"https://www.youtube.com/watch?v=abc","model":"htdemucs_ft"}),
+            json!({"url":"https://www.youtube.com/watch?v=abc","model":"scnet_xl_ihf"}),
         )
         .await;
     assert_eq!(song["status"], "queued", "{song:?}");
@@ -1354,7 +1355,7 @@ async fn import_from_link_queues_a_job() {
     let calls = app.modal.calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].original_key, key);
-    assert_eq!(calls[0].model, "htdemucs_ft");
+    assert_eq!(calls[0].model, "scnet_xl_ihf");
 
     // A title the user typed is kept.
     let song = app
