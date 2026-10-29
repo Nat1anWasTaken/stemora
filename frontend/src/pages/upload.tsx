@@ -10,11 +10,11 @@ import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import { api, HQ_MODEL, progressValue, type LinkPreview, type Model, type Song } from "@/lib/api"
 import { formatBytes, formatClock, titleFromFilename } from "@/lib/format"
-import { keys, useSongActions, useSongs } from "@/lib/queries"
+import { keys, useSongActions, useSongsById } from "@/lib/queries"
 import { UploadController } from "@/lib/upload"
 import { cn } from "@/lib/utils"
 
-/** A link import started on this page, followed live from the songs list. */
+/** A link import started on this page, followed live. */
 function ImportRow({ song }: { song: Song }) {
   const { cancelImport } = useSongActions()
   const importing = song.status === "importing"
@@ -47,8 +47,7 @@ function LinkImport({ model, onImported }: { model: Model; onImported: () => voi
   const [preview, setPreview] = useState<{ url: string; info: LinkPreview } | null>(null)
   const [title, setTitle] = useState("")
   const [started, setStarted] = useState<string[]>([])
-  const { data: songs } = useSongs()
-  const startedSongs = started.flatMap((id) => songs?.filter((s) => s.id === id) ?? [])
+  const startedSongs = useSongsById(started)
 
   const link = url.trim()
   const current = preview?.url === link ? preview.info : null

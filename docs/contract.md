@@ -68,7 +68,9 @@ Auth:
 - `GET /api/invites/{token}` -> `{valid:boolean}` (public); `POST /api/auth/accept-invite` `{token,email,password}` -> User
 - `POST /api/admin/invites` (admin) -> `{token, url, expires_at}` (url = PUBLIC_BASE_URL + "/invite/" + token); `GET /api/admin/invites` (admin) -> list
 Songs (auth required, scoped to the session user; other users' ids return 404):
-- `GET /api/songs` -> Song[] (newest first)
+- `GET /api/songs?q=&sort=&limit=&cursor=` -> `{songs: Song[], next_cursor: string | null, total: number}`. One page of the library.
+  `q`: case-insensitive substring of the title (trimmed; `%`, `_`, `\` match literally). `sort`: `newest` (default), `oldest`, `title` (A-Z), `title_desc`, `longest`, `shortest` (songs without a duration sort as shortest); ties break on id. `limit`: default 30, clamped to 1..100.
+  `next_cursor` is opaque; pass it back with the same `q`/`sort` for the next page, `null` on the last page (keyset pagination, so songs added or deleted meanwhile never repeat or skip others). `total` counts every song matching `q`. Rejects: unknown `sort` (400 `invalid_sort`), malformed `cursor` (400 `invalid_cursor`).
 - `POST /api/songs` `{title, filename, content_type, size, model}` -> `{song: Song, upload: Upload}`
   where `Upload = {mode:"single", url:string, headers:Record<string,string>} | {mode:"multipart", upload_id:string, part_size:number, part_count:number}`.
   Single PUT when size <= 50 MiB, else multipart with 16 MiB parts. Rejects: size > MAX_UPLOAD_MB (413), non-audio content type/extension (415), quota exceeded (403 `quota_exceeded`), rate limit (429).

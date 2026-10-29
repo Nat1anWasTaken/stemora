@@ -561,7 +561,10 @@ async fn songs_full_flow() {
         .status,
         StatusCode::NOT_FOUND
     );
-    assert_eq!(app.get("/api/songs", &admin).await.body, json!([]));
+    assert_eq!(
+        app.get("/api/songs", &admin).await.body,
+        json!({"songs": [], "next_cursor": null, "total": 0})
+    );
 
     app.storage
         .put(&storage::original_key(uid, sid, "mp3"), MIB);
@@ -619,7 +622,12 @@ async fn songs_full_flow() {
     assert_eq!(s.body["stems"][0]["name"], "vocals");
     assert_eq!(s.body["stems"][0]["size_bytes"], 1000);
     assert!(s.body["peaks_url"].as_str().unwrap().contains("peaks.json"));
-    assert!(s.body["analysis_url"].as_str().unwrap().contains("analysis.json"));
+    assert!(
+        s.body["analysis_url"]
+            .as_str()
+            .unwrap()
+            .contains("analysis.json")
+    );
 
     // usage = original + stems
     let u = app.get("/api/me/usage", &bob).await;
@@ -714,9 +722,7 @@ async fn songs_full_flow() {
 
     // list shows it, delete removes everything
     assert_eq!(
-        app.get("/api/songs", &bob)
-            .await
-            .body
+        app.get("/api/songs", &bob).await.body["songs"]
             .as_array()
             .unwrap()
             .len(),
@@ -749,6 +755,143 @@ async fn songs_full_flow() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+}
+
+/// Follows `next_cursor` through every page and returns the titles in order.
+async fn list_all(app: &TestApp, cookie: &str, query: &str) -> (Vec<String>, i64) {
+    let mut titles = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        let r = app
+            .get(
+                &format!("/api/songs?limit=3&{query}&cursor={cursor}"),
+                cookie,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+        let songs = r.body["songs"].as_array().unwrap();
+        assert!(songs.len() <= 3);
+        titles.extend(
+            songs
+                .iter()
+                .map(|s| s["title"].as_str().unwrap().to_string()),
+        );
+        match r.body["next_cursor"].as_str() {
+            Some(c) => cursor = c.to_string(),
+            None => return (titles, r.body["total"].as_i64().unwrap()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn songs_list_search_sort_paginate() {
+    let Some(app) = setup().await else { return };
+    let admin = app.admin().await;
+    let bob = app.user(&admin, "bob@example.com").await;
+    let uid = app.song_user_id(&app.song(&admin, MIB).await).await;
+    sqlx::query("DELETE FROM songs")
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+    app.song(&bob, MIB).await; // someone else's song never shows up
+
+    // (title, duration, minutes ago); "Echo" twice to exercise the id tiebreak.
+    let rows: [(&str, Option<f64>, i32); 8] = [
+        ("alpha", Some(200.0), 8),
+        ("Bravo", Some(100.0), 7),
+        ("charlie 100%", None, 6),
+        ("Delta_x", Some(300.5), 5),
+        ("Echo", Some(50.0), 4),
+        ("Echo", Some(50.0), 4),
+        ("foxtrot", Some(150.0), 2),
+        ("Golf", None, 1),
+    ];
+    for (title, dur, ago) in rows {
+        sqlx::query(
+            "INSERT INTO songs (id, user_id, title, filename, content_type, size_bytes, status, duration_s, model, original_key, created_at) \
+             VALUES ($1, $2, $3, 'a.mp3', 'audio/mpeg', 1, 'ready', $4, 'htdemucs', 'k', now() - make_interval(mins => $5))",
+        )
+        .bind(Uuid::new_v4())
+        .bind(uid)
+        .bind(title)
+        .bind(dur)
+        .bind(ago)
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+    }
+
+    let (newest, total) = list_all(&app, &admin, "").await;
+    assert_eq!(total, 8);
+    assert_eq!(
+        newest,
+        [
+            "Golf",
+            "foxtrot",
+            "Echo",
+            "Echo",
+            "Delta_x",
+            "charlie 100%",
+            "Bravo",
+            "alpha"
+        ]
+    );
+    let (oldest, _) = list_all(&app, &admin, "sort=oldest").await;
+    assert_eq!(oldest, newest.iter().rev().cloned().collect::<Vec<_>>());
+    let (title, _) = list_all(&app, &admin, "sort=title").await;
+    assert_eq!(
+        title,
+        [
+            "alpha",
+            "Bravo",
+            "charlie 100%",
+            "Delta_x",
+            "Echo",
+            "Echo",
+            "foxtrot",
+            "Golf"
+        ]
+    );
+    let (title_desc, _) = list_all(&app, &admin, "sort=title_desc").await;
+    assert_eq!(title_desc, title.iter().rev().cloned().collect::<Vec<_>>());
+    let (longest, _) = list_all(&app, &admin, "sort=longest").await;
+    assert_eq!(
+        &longest[..6],
+        ["Delta_x", "alpha", "foxtrot", "Bravo", "Echo", "Echo"]
+    );
+    let (shortest, _) = list_all(&app, &admin, "sort=shortest").await;
+    assert_eq!(
+        &shortest[2..],
+        ["Echo", "Echo", "Bravo", "foxtrot", "alpha", "Delta_x"]
+    );
+
+    // search: case-insensitive substring, wildcards match literally
+    assert_eq!(
+        list_all(&app, &admin, "q=%20ECHO%20").await,
+        (vec!["Echo".into(), "Echo".into()], 2)
+    );
+    assert_eq!(
+        list_all(&app, &admin, "q=0%25").await,
+        (vec!["charlie 100%".into()], 1)
+    );
+    assert_eq!(
+        list_all(&app, &admin, "q=_").await,
+        (vec!["Delta_x".into()], 1)
+    );
+    assert_eq!(list_all(&app, &admin, "q=zzz").await, (vec![], 0));
+
+    let r = app.get("/api/songs?sort=random", &admin).await;
+    assert_eq!(
+        (r.status, r.body["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_sort"))
+    );
+    let r = app.get("/api/songs?cursor=nothex", &admin).await;
+    assert_eq!(
+        (r.status, r.body["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_cursor"))
+    );
+    let r = app.get("/api/songs?limit=1000", &admin).await;
+    assert_eq!(r.body["songs"].as_array().unwrap().len(), 8);
 }
 
 #[tokio::test]
@@ -1466,7 +1609,7 @@ async fn import_reports_progress_and_can_be_cancelled() {
     assert_eq!(song["download"]["total_bytes"], 4 * MIB);
     assert_eq!(song["download"]["eta_s"], 3);
     let list = app.get("/api/songs", &admin).await;
-    assert_eq!(list.body[0]["download"]["total_bytes"], 4 * MIB);
+    assert_eq!(list.body["songs"][0]["download"]["total_bytes"], 4 * MIB);
 
     let r = app
         .post(&format!("/api/songs/{id}/cancel"), &admin, json!({}))
@@ -1535,9 +1678,7 @@ async fn link_preview() {
     );
     // Nothing is imported.
     assert!(
-        app.get("/api/songs", &admin)
-            .await
-            .body
+        app.get("/api/songs", &admin).await.body["songs"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -1635,7 +1776,7 @@ async fn import_validation_and_limits() {
     );
     let list = app.get("/api/songs", &admin).await;
     assert!(
-        list.body
+        list.body["songs"]
             .as_array()
             .unwrap()
             .iter()

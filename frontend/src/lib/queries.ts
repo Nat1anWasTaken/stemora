@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { api, isActive, retryModel, type Model, type Song } from "@/lib/api"
+import { api, isActive, retryModel, type Model, type Song, type SongSort } from "@/lib/api"
 
 export const keys = {
   me: ["me"] as const,
@@ -14,12 +14,26 @@ export const keys = {
 export const useMe = () => useQuery({ queryKey: keys.me, queryFn: api.me, staleTime: 60_000, retry: false })
 export const useUsage = () => useQuery({ queryKey: keys.usage, queryFn: api.usage, refetchInterval: 30_000 })
 
-/** Polls every 2s while any song is still being processed. */
-export const useSongs = () =>
-  useQuery({
-    queryKey: keys.songs,
-    queryFn: api.songs,
-    refetchInterval: (q) => (q.state.data?.some(isActive) ? 2000 : false),
+/** The library, a page at a time. Polls every 2s while any loaded song is still being processed. */
+export const useLibrary = ({ q, sort }: { q: string; sort: SongSort }) =>
+  useInfiniteQuery({
+    queryKey: [...keys.songs, { q, sort }],
+    queryFn: ({ pageParam }) => api.songs({ q, sort, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (p) => p.next_cursor,
+    placeholderData: keepPreviousData,
+    refetchInterval: (query) => (query.state.data?.pages.some((p) => p.songs.some(isActive)) ? 2000 : false),
+  })
+
+/** Follows a few songs by id (polling each every 2s while it is still being worked on). */
+export const useSongsById = (ids: string[]) =>
+  useQueries({
+    queries: ids.map((id) => ({
+      queryKey: keys.song(id),
+      queryFn: () => api.song(id),
+      refetchInterval: (q: { state: { data?: { song: Song } } }) => (q.state.data && !isActive(q.state.data.song) ? false : 2000),
+    })),
+    combine: (results) => results.flatMap((r) => (r.data ? [r.data.song] : [])),
   })
 
 /** Polls every 2s until the song is ready or failed. */
