@@ -52,3 +52,28 @@ export function applyUpdate() {
   navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload(), { once: true })
   return apply?.() ?? Promise.resolve()
 }
+
+/**
+ * After the app crashed: switch to a newer version if one is waiting or can be found now, and
+ * reload into it. A crash right after a deploy is usually an old cached build talking to the new
+ * API, and the Reload toast can't show once the app is down. Resolves false when there is none.
+ */
+export async function updateAfterCrash(): Promise<boolean> {
+  if (!updatesSupported()) return false
+  const reg = registration ?? (await navigator.serviceWorker.getRegistration().catch(() => undefined))
+  if (!reg) return false
+  if (!reg.waiting) {
+    try {
+      await reg.update()
+      await settled(reg)
+    } catch {
+      return false
+    }
+  }
+  const waiting = reg.waiting
+  if (!waiting) return false
+  navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload(), { once: true })
+  // The generated worker skips waiting on this message (vite-plugin-pwa, registerType "prompt").
+  waiting.postMessage({ type: "SKIP_WAITING" })
+  return true
+}
