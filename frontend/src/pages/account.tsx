@@ -1,13 +1,14 @@
 import { useState, type ComponentProps, type FormEvent, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Download, Loader2, LogOut, Share } from "lucide-react"
+import { Download, Loader2, LogOut, RefreshCw, RotateCw, Share } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { api } from "@/lib/api"
 import { promptInstall, useInstallState } from "@/lib/install"
+import { applyUpdate, checkForUpdate, updatesSupported } from "@/lib/pwa-update"
 import { keys, useMe } from "@/lib/queries"
 
 function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) {
@@ -119,6 +120,33 @@ function InstallSection() {
   )
 }
 
+function UpdateSection() {
+  const [available, setAvailable] = useState(false)
+  const check = useMutation({
+    mutationFn: checkForUpdate,
+    onSuccess: (result) => {
+      if (result === "available") setAvailable(true)
+      else if (result === "latest") toast.success("You're on the latest version")
+      else toast("Updates are only available in the built app")
+    },
+    onError: () => toast.error("Couldn't check for updates", { description: "Check your connection and try again." }),
+  })
+  if (!updatesSupported()) return null
+  const built = new Date(__BUILD_TIME__).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+  return (
+    <Section title="App version" description={`This version was built ${built}.`}>
+      {available ? (
+        <Button size="lg" className="self-start" onClick={() => void applyUpdate()}><RotateCw />Reload to update</Button>
+      ) : (
+        <Button variant="secondary" size="lg" className="self-start" onClick={() => check.mutate()} disabled={check.isPending}>
+          {check.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          Check for updates
+        </Button>
+      )}
+    </Section>
+  )
+}
+
 export function AccountPage() {
   const me = useMe()
   const qc = useQueryClient()
@@ -142,6 +170,7 @@ export function AccountPage() {
       <EmailForm current={me.data.email} />
       <PasswordForm />
       <InstallSection />
+      <UpdateSection />
     </div>
   )
 }
