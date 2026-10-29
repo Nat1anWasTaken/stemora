@@ -98,7 +98,7 @@ struct Tracked {
 }
 
 /// Live state of the imports running in this process (they are in-process tasks, so it does not
-/// need to outlive it: songs still `importing` at startup are marked failed).
+/// need to outlive it: songs still `importing` at startup go back to the queue).
 #[derive(Default)]
 pub struct ImportTracker(Mutex<HashMap<Uuid, Tracked>>);
 
@@ -252,8 +252,14 @@ pub fn spawn(state: AppState, song_id: Uuid) {
             }
         };
         state.imports.remove(song_id);
-        if let Err(e) = outcome {
-            fail(&state, song_id, &e.0).await;
+        if let Err(e) = outcome
+            && let Some(user_id) = fail(&state, song_id, &e.0).await
+        {
+            // The import no longer holds one of the user's slots. Boxed as a `dyn Send` future:
+            // the pump spawns imports, so naming its future type here would be a cycle.
+            let next: std::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>> =
+                Box::pin(jobs::pump_logged(&state, user_id));
+            next.await;
         }
     });
 }
@@ -261,12 +267,14 @@ pub fn spawn(state: AppState, song_id: Uuid) {
 /// Stop an import and mark the song failed. Returns false if it was no longer importing.
 pub async fn cancel(state: &AppState, song_id: Uuid) -> bool {
     state.imports.abort(song_id);
-    fail(state, song_id, "The import was cancelled.").await
+    fail(state, song_id, "The import was cancelled.")
+        .await
+        .is_some()
 }
 
-/// Mark an importing song failed and remove anything it stored. Returns false if it was no
-/// longer importing.
-async fn fail(state: &AppState, song_id: Uuid, message: &str) -> bool {
+/// Mark an importing song failed and remove anything it stored. Returns its owner, or None if
+/// it was no longer importing.
+async fn fail(state: &AppState, song_id: Uuid, message: &str) -> Option<Uuid> {
     tracing::warn!(%song_id, error = %message, "import failed");
     let row: Result<Option<(Uuid,)>, _> = sqlx::query_as(
         "UPDATE songs SET status = 'failed', error = $2, updated_at = now() \
@@ -286,12 +294,12 @@ async fn fail(state: &AppState, song_id: Uuid, message: &str) -> bool {
             {
                 tracing::warn!(%song_id, error = %e, "could not clean up failed import");
             }
-            true
+            Some(user_id)
         }
-        Ok(None) => false,
+        Ok(None) => None,
         Err(e) => {
             tracing::error!(%song_id, error = %e, "could not record import failure");
-            false
+            None
         }
     }
 }

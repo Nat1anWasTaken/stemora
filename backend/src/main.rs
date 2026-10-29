@@ -34,14 +34,6 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("connecting to database")?;
     db::migrate(&pool).await.context("running migrations")?;
-    let orphaned = jobs::fail_orphaned_imports(&pool).await?;
-    if orphaned > 0 {
-        tracing::warn!(
-            orphaned,
-            "marked imports interrupted by the last shutdown as failed"
-        );
-    }
-
     let storage = Arc::new(R2Storage::new(&config)?);
     let modal = Arc::new(ModalClient::new(
         config.modal_endpoint_url.clone(),
@@ -49,6 +41,15 @@ async fn main() -> anyhow::Result<()> {
     ));
     let bind = config.bind_addr.clone();
     let state = AppState::new(pool, config, storage, modal);
+    let orphaned = jobs::requeue_orphaned_imports(&state).await?;
+    if orphaned > 0 {
+        tracing::warn!(
+            orphaned,
+            "requeued imports interrupted by the last shutdown"
+        );
+    }
+    // Start whatever is waiting in the queue (also the imports just requeued).
+    jobs::pump_all(&state).await?;
 
     let reaper = tokio::spawn(jobs::reaper_loop(state.clone()));
     let listener = tokio::net::TcpListener::bind(&bind)
