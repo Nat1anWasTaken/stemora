@@ -19,13 +19,13 @@ Modal app `stemora`, a web endpoint (`@modal.fastapi_endpoint(method="POST")`) n
 Request: `POST {MODAL_ENDPOINT_URL}` with `Authorization: Bearer {MODAL_SHARED_SECRET}` and JSON:
 ```json
 {"job_id":"uuid","attempt":1,"user_id":"uuid","song_id":"uuid","original_key":"users/.../original.mp3",
- "model":"htdemucs"|"htdemucs_ft","callback_url":"https://host/api/webhooks/jobs/{job_id}",
+ "model":"htdemucs"|"scnet_xl_ihf","callback_url":"https://host/api/webhooks/jobs/{job_id}",
  "callback_token":"hex","max_duration_s":900}
 ```
 Response (immediately, 200): `{"call_id":"fc-..."}`. 401 on bad secret. The endpoint does `fn.spawn(...)` for the GPU function and returns.
 A second web endpoint named `cancel` (same app, same bearer auth, URL = the `spawn` URL with `-spawn.modal.run` replaced by `-cancel.modal.run`): `POST {"call_id":"fc-..."}` -> 200 `{"ok":true}` (also when the call already finished), 401 bad secret, 422 malformed id. Cancels the call whether it is still queued or running.
 Modal secrets: `stemora-r2` (`R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`), `stemora-auth` (`MODAL_SHARED_SECRET`).
-GPU function: GPU types `L4`, `A10G`, `T4` in order of preference (Modal uses the first with free capacity), `retries=0`, scale-to-zero (no min_containers), timeout 20 min, weights for both models baked into the image.
+GPU function: GPU types `L4`, `A10G`, `T4` in order of preference (Modal uses the first with free capacity), `retries=0`, scale-to-zero (no min_containers), timeout 20 min, weights for every model baked into the image.
 
 ## Webhook (worker -> backend)
 `POST {callback_url}` with `Authorization: Bearer {callback_token}`, JSON:
@@ -38,7 +38,7 @@ GPU function: GPU types `L4`, `A10G`, `T4` in order of preference (Modal uses th
  "peaks_key":"...","analysis_key":"..."}
 ```
 `duration_s`, `stems`, `peaks_key`, `analysis_key` only on `done` (`analysis_key` omitted if analysis failed). `stage` may also be `analyzing`. `error`/`retryable` only on `failed`. Worker retries each webhook POST up to 3 times with backoff. Running updates double as heartbeats (send at least every ~20s while separating). Validation failures (not audio, too long, no audio stream) are `retryable:false`; infra/transient failures are `retryable:true`.
-Cancellation: the backend answers `410 {"code":"job_gone"}` when the job no longer exists (its song was deleted), and `200 {"ok":true,"ignored":"stale_attempt"|"terminal","cancel":true}` when the attempt was superseded or the job already finished. On either the worker stops at its next check (per Demucs chunk, between stages, before each R2 upload), sends no `failed` update and does not retry the POST. On `410` it also deletes every R2 object it uploaded in this run (only its own keys, never the whole prefix); on `cancel:true` it leaves them, since a newer attempt writes the same keys.
+Cancellation: the backend answers `410 {"code":"job_gone"}` when the job no longer exists (its song was deleted), and `200 {"ok":true,"ignored":"stale_attempt"|"terminal","cancel":true}` when the attempt was superseded or the job already finished. On either the worker stops at its next check (per model chunk or batch, between stages, before each R2 upload), sends no `failed` update and does not retry the POST. On `410` it also deletes every R2 object it uploaded in this run (only its own keys, never the whole prefix); on `cancel:true` it leaves them, since a newer attempt writes the same keys.
 `callback_token` = hex(HMAC-SHA256(WEBHOOK_SIGNING_KEY, "{job_id}:{attempt}")). The backend recomputes and compares in constant time; the worker never sees the signing key.
 
 ## Backend HTTP API (all JSON under `/api`, session cookie `stemora_session`, HttpOnly, SameSite=Lax, Secure when `PUBLIC_BASE_URL` is https)
@@ -49,7 +49,7 @@ Types:
 type User = { id: string; email: string; role: "admin" | "user" }
 type SongStatus = "importing" | "uploading" | "queued" | "processing" | "ready" | "failed"
 type Song = { id: string; title: string; status: SongStatus; duration_s: number | null; size_bytes: number;
-              model: "htdemucs" | "htdemucs_ft"; progress: number; stage: string | null; error: string | null;
+              model: "htdemucs" | "scnet_xl_ihf" | "htdemucs_ft" /* retired: older songs only */; progress: number; stage: string | null; error: string | null;
               source_url: string | null /* link the song was imported from */; created_at: string;
               download: Download | null /* link imports while downloading */ }
 type Download = { downloaded_bytes: number; total_bytes: number | null /* exact, or estimated for HLS/DASH */;
