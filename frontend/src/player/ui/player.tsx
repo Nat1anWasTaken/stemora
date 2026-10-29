@@ -113,23 +113,19 @@ export function Player({ detail }: { detail: SongDetail }) {
     { key: "delete", label: "Delete song", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(true) },
   ]
 
-  const statusPanel = (
-    <>
-      {status === "loading" && (
-        <div className="flex shrink-0 flex-col gap-3 rounded-3xl border border-border bg-surface/70 p-5">
-          <Progress value={Math.round(loadProgress * 100)} aria-label="Loading stems" >
-            <span className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading stems {Math.round(loadProgress * 100)}%</span>
-          </Progress>
-        </div>
-      )}
-      {status === "error" && (
-        <div role="alert" className="flex shrink-0 flex-col gap-3 rounded-3xl border border-destructive/40 bg-destructive/10 p-5">
-          <p className="text-destructive">{error}</p>
-          <Button variant="secondary" onClick={() => void usePlayer.getState().load(detail)}>Try again</Button>
-        </div>
-      )}
-    </>
-  )
+  // Loading/error state, sized like the practice strip it is replaced by so nothing moves once stems are ready.
+  const statusPanel = status === "loading" || status === "idle" ? (
+    <div className="flex h-14 shrink-0 items-center rounded-2xl border border-border bg-surface/70 px-4">
+      <Progress value={Math.round(loadProgress * 100)} aria-label="Loading stems" className="flex-1">
+        <span className="flex items-center gap-2 text-sm text-muted-foreground tabular-nums"><Loader2 className="size-4 animate-spin" />Loading stems {Math.round(loadProgress * 100)}%</span>
+      </Progress>
+    </div>
+  ) : status === "error" ? (
+    <div role="alert" className="flex h-14 shrink-0 items-center gap-3 rounded-2xl border border-destructive/40 bg-destructive/10 px-4">
+      <p className="min-w-0 flex-1 truncate text-sm text-destructive">{error}</p>
+      <Button variant="secondary" size="sm" onClick={() => void usePlayer.getState().load(detail)}>Try again</Button>
+    </div>
+  ) : null
 
   return (
     <div
@@ -155,8 +151,7 @@ export function Player({ detail }: { detail: SongDetail }) {
 
       {desktop ? (
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 pt-4 pb-2">
-          {status === "ready" && <PracticeStrip onExpand={toggleChords} />}
-          {statusPanel}
+          {statusPanel ?? <PracticeStrip onExpand={toggleChords} />}
           {tab === "chords" ? (
             <div className="animate-page flex min-h-0 flex-1 flex-col">
               <ChordGrid onCollapse={() => setTab("practice")} />
@@ -176,8 +171,8 @@ export function Player({ detail }: { detail: SongDetail }) {
           )}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-2 pb-2">
-          {statusPanel}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-2 pb-2">
+          {tab !== "practice" && statusPanel && <div className="absolute inset-x-4 bottom-2 z-10 rounded-2xl glass">{statusPanel}</div>}
           {tab === "mixer" && (
             <section aria-label="Mixer" className="animate-page flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain">
               <ul className="flex flex-1 flex-col justify-evenly gap-1">
@@ -188,7 +183,7 @@ export function Player({ detail }: { detail: SongDetail }) {
           )}
           {tab === "practice" && (
             <section aria-label="Practice" className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              {status === "ready" && <PracticeStrip onExpand={() => setTab("chords")} />}
+              {statusPanel ?? <PracticeStrip onExpand={() => setTab("chords")} />}
               <Waveform />
             </section>
           )}
