@@ -136,13 +136,21 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
               {title}
               <div className="flex items-center gap-2 overflow-hidden text-xs whitespace-nowrap text-muted-foreground">
                 <StatusBadge song={song} />
-                {duration && <span className="tabular-nums">{duration}</span>}
-                {ready && isHighQuality(song.model) && <span className="truncate">High quality</span>}
-                {(importing || pending) && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
-              </div>
-              <div className="flex items-center gap-2 overflow-hidden text-xs whitespace-nowrap text-muted-foreground">
-                {working ? (
+                {working && !pending ? (
                   <ProcessingLine song={song} className="min-w-0 flex-nowrap truncate" />
+                ) : (
+                  <>
+                    {duration && <span className="tabular-nums">{duration}</span>}
+                    {ready && isHighQuality(song.model) && <span className="truncate">High quality</span>}
+                    {pending && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
+                  </>
+                )}
+              </div>
+              <div className="flex h-4 items-center gap-2 overflow-hidden text-xs whitespace-nowrap text-muted-foreground">
+                {pending ? (
+                  <ProcessingLine song={song} className="min-w-0 truncate" />
+                ) : working ? (
+                  <Progress value={progressValue(song)} aria-label={importing ? "Import progress" : "Processing progress"} className="w-full" />
                 ) : failed ? (
                   <span className="truncate text-destructive" title={song.error ?? undefined}>{song.error ?? "Processing failed."}</span>
                 ) : (
@@ -152,11 +160,8 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
             </div>
             {menu}
           </div>
-          {/* Grid cards keep one height in every state so rows stay aligned: status and errors sit in
-              the meta rows, progress hugs the bottom edge, and cancel/retry live in the menu. */}
-          {working && !pending && (
-            <Progress value={progressValue(song)} aria-label={importing ? "Import progress" : "Processing progress"} className="absolute inset-x-6 bottom-1.5" />
-          )}
+          {/* Grid cards keep one height in every state so rows stay aligned: stage, progress and errors
+              take the place of the meta rows, and cancel/retry live in the menu. */}
         </div>
       )}
       <RenameDialog open={renaming} onOpenChange={setRenaming} title={song.title} onRename={(t) => rename.mutate({ id: song.id, title: t })} />
