@@ -30,11 +30,14 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
   const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
   const list = view === "list"
 
+  const failed = song.status === "failed"
+  const retry = failedImport ? () => reimport.mutate(song) : () => reprocess.mutate({ id: song.id, model: retryModel(song.model) })
   const entries: MenuEntry[] = [
+    ...(failed && !list ? [{ key: "retry", label: failedImport ? "Retry import" : "Retry", icon: <RefreshCw />, onSelect: retry } as MenuEntry] : []),
     ...(isCancellable(song) ? [{ key: "cancel", label: cancelLabel, icon: <Ban />, onSelect: () => cancel.mutate(song) } as MenuEntry] : []),
     ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
-    ...((song.status === "failed" && !failedImport) || ready
+    ...((failed && !failedImport) || ready
       ? [{ key: "hq", label: song.model === HQ_MODEL ? "Reprocess" : "Reprocess in high quality", icon: <Sparkles />, onSelect: () => reprocess.mutate({ id: song.id, model: HQ_MODEL }) } as MenuEntry]
       : []),
     { key: "sep", separator: true },
@@ -78,20 +81,14 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
         </div>
       </Progress>
     )
-  } else if (song.status === "failed") {
+  } else if (failed) {
     details = (
       <div className="relative z-10 flex flex-col gap-2">
         <p className="text-sm text-destructive">{song.error ?? "Processing failed."}</p>
         <div className="flex gap-2">
-          {failedImport ? (
-            <Button size="sm" variant="secondary" disabled={reimport.isPending} onClick={() => reimport.mutate(song)}>
-              <RefreshCw />Retry import
-            </Button>
-          ) : (
-            <Button size="sm" variant="secondary" disabled={reprocess.isPending} onClick={() => reprocess.mutate({ id: song.id, model: retryModel(song.model) })}>
-              <RefreshCw />Retry
-            </Button>
-          )}
+          <Button size="sm" variant="secondary" disabled={reimport.isPending || reprocess.isPending} onClick={retry}>
+            <RefreshCw />{failedImport ? "Retry import" : "Retry"}
+          </Button>
         </div>
       </div>
     )
@@ -141,15 +138,25 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
                 <StatusBadge song={song} />
                 {duration && <span className="tabular-nums">{duration}</span>}
                 {ready && isHighQuality(song.model) && <span className="truncate">High quality</span>}
+                {(importing || pending) && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
               </div>
               <div className="flex items-center gap-2 overflow-hidden text-xs whitespace-nowrap text-muted-foreground">
-                {(importing || pending) && song.source_url && <span className="truncate">{hostOf(song.source_url)}</span>}
-                <span className="shrink-0">{relativeTime(song.created_at)}</span>
+                {working ? (
+                  <ProcessingLine song={song} className="min-w-0 flex-nowrap truncate" />
+                ) : failed ? (
+                  <span className="truncate text-destructive" title={song.error ?? undefined}>{song.error ?? "Processing failed."}</span>
+                ) : (
+                  <span className="shrink-0">{relativeTime(song.created_at)}</span>
+                )}
               </div>
             </div>
             {menu}
           </div>
-          {details}
+          {/* Grid cards keep one height in every state so rows stay aligned: status and errors sit in
+              the meta rows, progress hugs the bottom edge, and cancel/retry live in the menu. */}
+          {working && !pending && (
+            <Progress value={progressValue(song)} aria-label={importing ? "Import progress" : "Processing progress"} className="absolute inset-x-6 bottom-1.5" />
+          )}
         </div>
       )}
       <RenameDialog open={renaming} onOpenChange={setRenaming} title={song.title} onRename={(t) => rename.mutate({ id: song.id, title: t })} />

@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Clock, Hourglass, Link2, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { isHighQuality, type Song } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { downloadSummary, importStageLabel, queuePlace, stageLabel } from "@/lib/format"
 
 const ARTWORK = {
@@ -41,24 +42,24 @@ export function StatusBadge({ song }: { song: Pick<Song, "status" | "stage" | "p
   }
 }
 
-export function ProcessingLine({ song }: { song: Pick<Song, "status" | "stage" | "progress" | "model" | "download" | "queue_position"> }) {
+export function ProcessingLine({ song, className }: { song: Pick<Song, "status" | "stage" | "progress" | "model" | "download" | "queue_position">; className?: string }) {
   if (song.status === "pending") {
     return (
-      <span className="text-xs text-muted-foreground">
+      <span className={cn("text-xs text-muted-foreground", className)}>
         {queuePlace(song.queue_position)} · starts when a slot frees up{isHighQuality(song.model) ? " (high quality)" : ""}
       </span>
     )
   }
   if (song.status === "importing") {
     return (
-      <span className="flex min-w-0 flex-wrap gap-x-2 text-xs text-muted-foreground">
+      <span className={cn("flex min-w-0 flex-wrap gap-x-2 text-xs text-muted-foreground", className)}>
         <span>{importStageLabel(song.stage)}</span>
         {song.stage === "downloading" && song.download && <span className="tabular-nums">{downloadSummary(song.download)}</span>}
       </span>
     )
   }
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className={cn("text-xs text-muted-foreground", className)}>
       {song.status === "uploading" ? "Uploading" : song.status === "queued" ? "Waiting for a worker" : stageLabel(song.stage)}
       {isHighQuality(song.model) ? " (high quality)" : ""}
     </span>
