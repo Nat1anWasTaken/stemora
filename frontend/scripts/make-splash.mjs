@@ -25,7 +25,7 @@ for (const [w, h, dpr] of devices) {
   const name = `splash-${pw}x${ph}.png`
   execFileSync("convert", [
     "-size", `${pw}x${ph}`, `xc:${BG}`,
-    ...bar(108, 206, 150, "#f2849a"), ...bar(176, 120, 272, "#f4b645"), ...bar(244, 176, 200, "#b98af0"), ...bar(312, 150, 236, "#52c9d6"),
+    ...bar(128, 206, 150, "#f2849a"), ...bar(196, 120, 272, "#f4b645"), ...bar(264, 176, 200, "#b98af0"), ...bar(332, 150, 236, "#52c9d6"),
     "-strip", "-define", "png:compression-level=9", join(out, name),
   ])
   links.push(`<link rel="apple-touch-startup-image" media="(device-width: ${w}px) and (device-height: ${h}px) and (-webkit-device-pixel-ratio: ${dpr}) and (orientation: portrait)" href="/splash/${name}" />`)
