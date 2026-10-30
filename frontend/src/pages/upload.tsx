@@ -99,7 +99,7 @@ export function UploadPage() {
   const nav = useNavigate()
   const { count: inQueue } = useQueue()
   const [items, setItems] = useState<Item[]>([])
-  const [hq, setHq] = useState(false)
+  const [hq, setHq] = useState(true)
   const [dragging, setDragging] = useState(false)
   const [rejected, setRejected] = useState<string[]>([])
   const input = useRef<HTMLInputElement>(null)
