@@ -1,13 +1,21 @@
-import type { DrumKind } from "@/player/analysis"
+import { DRUM_KINDS, type DrumKind } from "@/player/analysis"
 import type { QBar, QBeat } from "@/player/drums/quantize"
 
-/** GP7 percussion articulation ids (as alphaTab numbers them). The model's merged classes get the most common line. */
-const ARTICULATIONS: Record<DrumKind, number> = { kick: 36, snare: 38, hihat: 42, tom: 47, cymbal: 49 }
 /**
- * Two voices, as drum charts are written: hands (cymbals, toms, snare) with stems up, feet (kick) with stems down.
- * The stem directions and the kick voice's rests are set on the loaded score (see `styleDrumScore`).
+ * GP7 percussion articulation ids (as alphaTab 1.9 numbers them), which fix each kind's staff position and note head:
+ * cymbals above the staff (crash and splash on the ledger line, china above it, ride on the top line), hi-hats x heads
+ * above (open with a circle) and pedal below, toms high to low, snare (side stick as an x), kick in the bottom space.
  */
-export const VOICES: DrumKind[][] = [["cymbal", "hihat", "tom", "snare"], ["kick"]]
+export const ARTICULATIONS: Record<DrumKind, number> = {
+  crash: 49, china: 52, splash: 55, ride: 51, hihat: 42, hihat_open: 46, tambourine: 54, cowbell: 56,
+  tom_high: 50, tom_mid: 48, snare: 38, sidestick: 37, tom_floor: 41, kick: 36, hihat_pedal: 44,
+}
+const FEET: DrumKind[] = ["kick", "hihat_pedal"]
+/**
+ * Two voices, as drum charts are written: hands (cymbals, toms, snare) with stems up, feet (kick, hi-hat pedal) with
+ * stems down. The stem directions and the feet voice's rests are set on the loaded score (see `styleDrumScore`).
+ */
+export const VOICES: DrumKind[][] = [DRUM_KINDS.filter((k) => !FEET.includes(k)), FEET]
 
 export type FlatSyncPoint = { barIndex: number; barPosition: number; barOccurence: number; millisecondOffset: number }
 

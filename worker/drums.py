@@ -1,60 +1,92 @@
-"""Drum transcription: the `drums` field of `analysis.json` (see docs/contract.md).
+"""Drum transcription: the `drums` and `drum_velocities` fields of `analysis.json` (see docs/contract.md).
 
-Hits come from ADTOF (Zehren et al., CC BY-NC-SA 4.0) through its PyTorch port
-(xavriley/ADTOF-pytorch), run on the separated drums stem. They are stored as raw onset
-times; the player quantises them to the beat grid at the precision the viewer picks.
+Hits come from ADT_STR (Melucci et al., CC BY-SA 4.0; re-implemented in `adt_str/`), run on the
+separated drums stem in non-overlapping 2.56 s windows. Its 26 classes are folded into the kinds a
+drum chart writes differently; percussion a kit chart has no line for is dropped. Hits are stored as
+raw onset times; the player quantises them to the beat grid at the precision the viewer picks.
 Heavy imports are lazy; `format_hits` needs only numpy.
 """
 import numpy as np
 
-FPS = 100
-# ADTOF output channel order (General MIDI pitches) -> contract names.
-CLASSES = {35: "kick", 38: "snare", 47: "tom", 42: "hihat", 49: "cymbal"}
-KINDS = ("kick", "snare", "hihat", "tom", "cymbal")
+KINDS = ("kick", "snare", "sidestick", "hihat", "hihat_open", "hihat_pedal", "tom_high", "tom_mid", "tom_floor",
+         "crash", "ride", "china", "splash", "tambourine", "cowbell")
+# ADT_STR class ids (upstream utils/mapping_utils.py `GM_reduced_name_convention`; not GM pitches) -> kinds.
+# Unlisted ids (53 vibraslap, 54 congas & timbales, 55 shaker, 56 whistle, 57 guiro, 58 claves, 59 cuica,
+# 60 triangle, anything else) are dropped.
+CLASS_TO_KIND = {
+    35: "kick", 36: "kick",  # acoustic bass drum, bass drum 1
+    37: "sidestick",
+    38: "snare", 39: "snare", 40: "snare",  # acoustic snare, hand clap, electric snare
+    41: "tom_floor", 42: "hihat", 43: "hihat_pedal", 44: "hihat_open", 45: "tom_mid", 46: "crash",
+    47: "tom_high", 48: "ride", 49: "china", 50: "tambourine", 51: "splash", 52: "cowbell",
+}
+SR_IN = 44100
+BATCH = 32          # windows decoded together
+MERGE_S = 0.03      # same-kind hits closer than this are one hit (also mends doubles at window edges)
 MIN_HITS = 8        # fewer hits than this in a song = no drums (silent or near-silent stem)
+
+_model = None
 
 
 def load_model(device: str):
-    """ADTOF Frame_RNN with the packaged weights. Fails loudly if any weight is missing
-    (the port's own loader only prints and leaves those layers randomly initialised)."""
+    global _model
+    if _model is None:
+        from adt_str import WEIGHTS
+        from adt_str.model import load
+        _model = load(WEIGHTS, device)
+    return _model.to(device)
+
+
+def windows(audio: np.ndarray, size: int) -> np.ndarray:
+    """Non-overlapping windows of `size` samples, the last one zero-padded: [n, size]."""
+    n = max(1, -(-len(audio) // size))
+    return np.pad(audio, (0, n * size - len(audio))).reshape(n, size)
+
+
+def detect_hits(drums_mono_44k: np.ndarray, device: str | None = None) -> list[tuple[float, int, int]]:
+    """ADT_STR on a mono float32 drums signal at 44.1k -> [(onset s, class id, velocity)]."""
     import torch
-    from adtof_pytorch import calculate_n_bins, create_frame_rnn_model, get_default_weights_path
-
-    model = create_frame_rnn_model(calculate_n_bins())
-    ckpt = torch.load(get_default_weights_path(), map_location="cpu")
-    missing, _ = model.load_state_dict(ckpt.get("model_weights", ckpt), strict=False)
-    if missing:
-        raise RuntimeError(f"ADTOF weights incomplete, missing: {missing}")
-    return model.to(device).eval()
-
-
-def detect_hits(drums_mono_44k: np.ndarray, device: str | None = None) -> dict[str, np.ndarray]:
-    """ADTOF on a mono float32 drums signal at 44.1k. Returns onset times (s) per kind."""
-    import torch
-    from adtof_pytorch import FRAME_RNN_THRESHOLDS, LABELS_5, PeakPicker
-    from adtof_pytorch.audio import create_adtof_processor
+    import torchaudio.functional as AF
+    from adt_str import CHUNK, CHUNK_S, SR, tokens
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    proc = create_adtof_processor(fps=FPS)
-    audio = np.ascontiguousarray(drums_mono_44k, dtype=np.float32)
-    spec = proc.apply_filterbank(proc.compute_stft(audio)).T  # [frames, bins]
-    x = torch.from_numpy(np.ascontiguousarray(spec[None, :, :, None])).to(device)
-    with torch.no_grad():
-        pred = load_model(device)(x).cpu().numpy()  # [1, frames, 5]
-    peaks = PeakPicker(thresholds=FRAME_RNN_THRESHOLDS, fps=FPS).pick(pred, labels=LABELS_5)[0]
-    return {CLASSES[p]: np.asarray(ts, dtype=float) for p, ts in peaks.items()}
+    model = load_model(device)
+    # torchaudio's default resampler, as upstream inference uses: the model's output shifts with the resampler.
+    audio = AF.resample(torch.from_numpy(np.ascontiguousarray(drums_mono_44k, dtype=np.float32)), SR_IN, SR).numpy()
+    wins = windows(audio, CHUNK)
+    hits, cut = [], 0
+    for b in range(0, len(wins), BATCH):
+        out = model.sample(torch.from_numpy(wins[b:b + BATCH]).to(device)).cpu().numpy()
+        for k, row in enumerate(out):
+            cut += tokens.truncated(row)
+            hits += [((b + k) * CHUNK_S + t, c, v) for t, c, v in tokens.parse(row)]
+    if cut:
+        print(f"drums: {cut} of {len(wins)} windows hit the {len(out[0])}-token cap; hits there may be missing")
+    return hits
 
 
-def format_hits(hits: dict[str, np.ndarray], duration: float) -> dict[str, list[float]] | None:
-    """The `drums` field: per kind, sorted onset times (s, ms precision) inside the song; None when the stem
-    has (almost) no drums."""
-    out = {}
+def format_hits(hits, duration: float) -> tuple[dict[str, list[float]], dict[str, list[int]]] | None:
+    """(`drums`, `drum_velocities`): per kind, sorted onset times (s, ms precision) inside the song and their
+    velocities (1..127); same-kind hits within MERGE_S keep the louder one. None when the stem has (almost) no drums."""
+    per: dict[str, list[tuple[float, int]]] = {}
+    for t, c, v in hits:
+        kind = CLASS_TO_KIND.get(int(c))
+        if kind and 0 <= t < duration:
+            per.setdefault(kind, []).append((round(float(t), 3), int(np.clip(v, 1, 127))))
+    drums, vels = {}, {}
     for kind in KINDS:
-        ts = np.asarray(hits.get(kind, ()), dtype=float)
-        ts = ts[(ts >= 0) & (ts < duration)]
-        out[kind] = sorted({round(float(t), 3) for t in ts})
-    return out if sum(len(v) for v in out.values()) >= MIN_HITS else None
+        kept: list[tuple[float, int]] = []
+        for t, v in sorted(per.get(kind, ())):
+            if kept and t - kept[-1][0] < MERGE_S:
+                if v > kept[-1][1]:
+                    kept[-1] = (kept[-1][0], v)
+                continue
+            kept.append((t, v))
+        if kept:
+            drums[kind] = [t for t, _ in kept]
+            vels[kind] = [v for _, v in kept]
+    return (drums, vels) if sum(len(v) for v in drums.values()) >= MIN_HITS else None
 
 
-def transcribe(drums_mono_44k: np.ndarray, duration: float, device: str | None = None) -> dict | None:
+def transcribe(drums_mono_44k: np.ndarray, duration: float, device: str | None = None):
     return format_hits(detect_hits(drums_mono_44k, device), duration)
