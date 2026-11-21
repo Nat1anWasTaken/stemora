@@ -27,17 +27,15 @@ function ClickTab({ index }: { index: number }) {
 
 /**
  * The speed dial. The song has one playback speed, so it is a single multiplier for every section; it reads in BPM
- * of the section under the playhead (the navigator's marker), and says so when other sections have other tempos.
+ * of the section under the playhead (the navigator's marker).
  */
 function SpeedTab() {
   const speed = usePlayer((s) => s.speed)
-  const sections = usePlayer((s) => s.markers.length)
   const playhead = usePlayheadTempo().bpm
   const { setSpeed } = usePlayer.getState()
   const baseBpm = playhead ? Math.round(playhead) : null
   const { min, max } = tempoRange(baseBpm)
   const value = tempoValue(speed, baseBpm)
-  const percent = Math.round(speed * 100)
   return (
     <>
       <p className="text-center text-sm text-muted-foreground">{baseBpm ? tempoMarking(value) : "Speed"}</p>
@@ -51,10 +49,6 @@ function SpeedTab() {
         display={baseBpm ? value : `${value}%`}
         valueText={baseBpm ? `${value} BPM` : `${value} percent`}
       />
-      <p className="text-center text-xs text-muted-foreground">
-        {baseBpm ? `${percent} % of ${baseBpm} BPM` : "Percent of the original speed"}
-        {sections > 1 && " · every section plays at this speed"}
-      </p>
       <ShiftUnavailable />
     </>
   )
