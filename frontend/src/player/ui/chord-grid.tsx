@@ -18,8 +18,10 @@ export function ChordGrid() {
   const { seek, setLoop, clearLoop } = usePlayer.getState()
   const { cells, bars, active } = useBeats()
   const partAt = useMemo(() => sectionsByBar(sections ?? [], bars), [sections, bars])
-  const activeBar = active >= 0 ? cells[active].bar : null
-  const activeTime = active >= 0 ? cells[active].time : null
+  // The grid can shrink (a tempo map undo) a frame before `active` catches up, so check it against the current cells.
+  const current = active >= 0 && active < cells.length ? cells[active] : null
+  const activeBar = current?.bar ?? null
+  const activeTime = current?.time ?? null
   const [follow, setFollow] = useState(true)
   const scroller = useRef<HTMLDivElement>(null)
 
