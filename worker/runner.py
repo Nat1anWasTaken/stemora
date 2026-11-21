@@ -11,7 +11,7 @@ from webhook import GONE, Cancelled, Reporter
 
 
 def _separate_and_encode(wav, model, work: Path, rep=None, timings=None, device=None):
-    """separate -> normalise -> encode -> peaks. Returns (peaks, {name: (m4a, flac)})."""
+    """separate -> normalise -> encode -> peaks. Returns (peaks, {name: (m4a, flac)}, drums mono)."""
     timings = timings if timings is not None else {}
     t = time.time()
 
@@ -35,17 +35,17 @@ def _separate_and_encode(wav, model, work: Path, rep=None, timings=None, device=
             rep.set_progress(90 + 4 * (i + 1) / 4)
     peaks = P.compute_peaks(stems)
     timings["encode"] = time.time() - t
-    return peaks, files
+    return peaks, files, stems["drums"].mean(0)
 
 
-def _analyse(rep, mono, duration, work: Path):
-    """Beats/bars/chords -> analysis.json in `work`. Best effort: a failure here must not fail the job."""
+def _analyse(rep, mono, duration, work: Path, drums_mono=None):
+    """Beats/bars/chords/drums -> analysis.json in `work`. Best effort: a failure here must not fail the job."""
     import json
     rep.update("analyzing", 94)
     try:
         import analysis
         out = work / "analysis.json"
-        out.write_text(json.dumps(analysis.analyse(mono, duration), separators=(",", ":")))
+        out.write_text(json.dumps(analysis.analyse(mono, duration, drums_mono=drums_mono), separators=(",", ":")))
         return out
     except Exception:  # noqa: BLE001
         traceback.print_exc()
@@ -93,11 +93,11 @@ def run_job(job: dict):
 
         rep.update("separating", 5)
         rep.check()
-        peaks, files = _separate_and_encode(wav, job["model"], work, rep)
+        peaks, files, drums_mono = _separate_and_encode(wav, job["model"], work, rep)
         mono = wav.mean(0)
         del wav
-        analysis_json = _analyse(rep, mono, duration, work)
-        del mono
+        analysis_json = _analyse(rep, mono, duration, work, drums_mono)
+        del mono, drums_mono
 
         # A fresh round-trip right before writing anything to R2.
         rep.update("uploading", 96)
@@ -146,7 +146,7 @@ def run_local(audio: bytes, filename: str, model: str, device=None):
         duration = P.probe(str(src), 7200)
         wav = P.decode(str(src))
         timings = {}
-        peaks, files = _separate_and_encode(wav, model, work, None, timings, device)
+        peaks, files, _ = _separate_and_encode(wav, model, work, None, timings, device)
         timings["total"] = time.time() - t0
         return {"duration_s": duration, "timings": timings, "peaks": peaks,
                 "files": {n: {"m4a": a.read_bytes(), "flac": b.read_bytes()} for n, (a, b) in files.items()}}
@@ -154,7 +154,8 @@ def run_local(audio: bytes, filename: str, model: str, device=None):
         shutil.rmtree(work, ignore_errors=True)
 
 
-def analyse_local(audio: bytes, filename: str, device=None):
+def analyse_local(audio: bytes, filename: str, device=None, drums: bytes | None = None, drums_filename: str = ""):
+    """Analysis of a mix; with `drums` (a separated drums stem, e.g. from local_test) also drum hits."""
     import analysis
     work = Path(tempfile.mkdtemp(prefix="stemora-test-"))
     try:
@@ -162,6 +163,11 @@ def analyse_local(audio: bytes, filename: str, device=None):
         src.write_bytes(audio)
         duration = P.probe(str(src), 7200)
         mono = P.decode(str(src)).mean(0)
-        return analysis.analyse(mono, duration, device)
+        drums_mono = None
+        if drums:
+            dsrc = work / ("drums" + Path(drums_filename).suffix)
+            dsrc.write_bytes(drums)
+            drums_mono = P.decode(str(dsrc)).mean(0)
+        return analysis.analyse(mono, duration, device, drums_mono)
     finally:
         shutil.rmtree(work, ignore_errors=True)

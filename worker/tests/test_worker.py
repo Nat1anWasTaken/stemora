@@ -185,7 +185,7 @@ class FakeRun:
             "delete": lambda c, b, key: self.deleted.append(key),
         }.items():
             monkeypatch.setattr(P, name, fn)
-        monkeypatch.setattr(runner, "_analyse", lambda rep, mono, duration, work: None)
+        monkeypatch.setattr(runner, "_analyse", lambda rep, mono, duration, work, drums_mono=None: None)
 
         def post(url, token, payload):
             self.sent.append(payload)
@@ -285,3 +285,33 @@ def test_estimate_key():
     assert A.estimate_key(prog("N", "N")) is None and A.estimate_key([]) is None
     beats = np.arange(0.5, 8.5, 0.5)
     assert A.build_analysis(beats, beats[::4], prog("C", "F", "G", "C"), 8.0)["key"] == "C"
+
+
+def test_drums_snap_straight_and_triplet():
+    import drums as D
+    beats = np.arange(0.0, 4.0, 0.5)  # 8 beats at 120 BPM
+    hits = {
+        "kick": np.array([0.0, 1.002, 2.0]),
+        "hihat": np.array([0.0, 0.124, 0.251, 0.376]),          # beat 0: 16ths
+        "snare": np.array([1.5, 1.5 + 0.5 / 3, 1.5 + 1.0 / 3]),  # beat 3: triplets
+    }
+    out = D.snap_to_grid(hits, beats)
+    assert out["kick"] == [[0, 0], [2, 0], [4, 0]]
+    assert out["hihat"] == [[0, 0], [0, 3], [0, 6], [0, 9]]
+    assert out["snare"] == [[3, 0], [3, 4], [3, 8]]
+    assert out["tom"] == [] and out["cymbal"] == []
+
+
+def test_drums_snap_rollover_bounds_and_dedupe():
+    import drums as D
+    beats = np.array([1.0, 1.5, 2.0])
+    hits = {
+        "kick": np.array([1.49, 0.995, 0.5, 2.6, 3.0]),  # late-in-beat -> next beat; slightly early first; out of range
+        "snare": np.array([1.5, 1.501]),                 # duplicate after snapping
+        "hihat": np.array([2.49]),                       # rolls past the last beat -> dropped
+    }
+    out = D.snap_to_grid(hits, beats)
+    assert out["kick"] == [[0, 0], [1, 0]]
+    assert out["snare"] == [[1, 0]]
+    assert out["hihat"] == []
+    assert D.snap_to_grid(hits, np.array([1.0])) == {k: [] for k in D.KINDS}

@@ -2,9 +2,11 @@
 
 Beats and downbeats come from the Beat This! model, chords from the BTC transformer
 (large vocabulary: maj/min/7/maj7/min7/dim/sus...), both run on the full mix. Chords are
-then snapped to the beat grid. Heavy imports are lazy; the helpers need only numpy.
+then snapped to the beat grid. Drum hits (`drums.py`, ADTOF) run on the separated drums stem
+when one is given. Heavy imports are lazy; the helpers need only numpy.
 """
 import os
+import traceback
 from collections import Counter
 
 import numpy as np
@@ -187,8 +189,19 @@ def detect_chords(mix_mono_44k: np.ndarray, device: str | None = None) -> list[s
     return [names[i] for i in idx]
 
 
-def analyse(mix_mono: np.ndarray, duration: float, device: str | None = None) -> dict:
+def analyse(mix_mono: np.ndarray, duration: float, device: str | None = None,
+            drums_mono: np.ndarray | None = None) -> dict:
     beats, downbeats = detect_beats(mix_mono, device)
     frames = detect_chords(mix_mono, device)
     starts, labels = chords_to_beats(frames, beats, duration)
-    return build_analysis(beats, downbeats, merge_chords(starts, labels, duration), duration)
+    out = build_analysis(beats, downbeats, merge_chords(starts, labels, duration), duration)
+    if drums_mono is not None:
+        # Separate best-effort step: a drum failure keeps the beats and chords.
+        try:
+            import drums
+            d = drums.transcribe(drums_mono, beats, device)
+            if d:
+                out["drums"] = d
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+    return out
