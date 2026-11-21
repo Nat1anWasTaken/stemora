@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { effectiveGain, STEM_NAMES } from "@/player/mixer"
 import { getBuffers, getPosition, usePlayer } from "@/player/store"
-import { markerIndexAt, moveMarker, snapTime, type TempoMarker } from "@/player/tempo-map"
+import { canDeleteMarker, markerIndexAt, moveMarker, snapTime, type TempoMarker } from "@/player/tempo-map"
 import { waveOf, type Wave } from "@/player/waveform-data"
 import { addMarker, deleteMarker, locateMarker, moveMarkerTo, nudgeMarker } from "@/player/ui/tempo-editor/actions"
 import { DesktopToolbar, MobileToolbar, type EditorControls } from "@/player/ui/tempo-editor/marker-inspector"
@@ -472,7 +472,7 @@ export function TempoEditor({ centered, toolbar }: { centered: boolean; toolbar:
       else if (k === "f" && e.shiftKey) view.current?.fit()
       else if (k === "f") setFollowing((f) => !f)
       else if (k === "t") add()
-      else if ((e.key === "Delete" || e.key === "Backspace") && i > 0) {
+      else if ((e.key === "Delete" || e.key === "Backspace") && canDeleteMarker(st.markers, i)) {
         if (deleteMarker(i)) setPinned(null)
       } else if (e.key === "Enter" && st.markers[i]?.kind === "manual") bpmRef.current?.focus()
       else if (e.key === "Escape") setPinned(null)

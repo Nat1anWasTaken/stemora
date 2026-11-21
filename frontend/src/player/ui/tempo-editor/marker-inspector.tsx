@@ -9,7 +9,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { usePlayer } from "@/player/store"
 import {
-  clampBpm, COMMON_SIGNATURES, DENOMINATORS, formatTimeSignature, MAX_NUM, parseTimeSignature, type TempoMarker, type TimeSignature,
+  canDeleteMarker, clampBpm, COMMON_SIGNATURES, DENOMINATORS, formatTimeSignature, isImplicitStart, markerNumber, MAX_NUM, parseTimeSignature,
+  visibleMarkerCount, type TempoMarker, type TimeSignature,
 } from "@/player/tempo-map"
 import { formatBpm } from "@/player/ui/use-playhead-tempo"
 import { flagLabel } from "@/player/ui/tempo-editor/render"
@@ -179,7 +180,19 @@ export function TimeSignatureField({ value, onCommit, picker = true }: { value: 
   )
 }
 
-function KindSwitch({ marker, index }: { marker: TempoMarker; index: number }) {
+/**
+ * Auto / Manual for a marker. The implicit start (the song's default, no marker yet) gets a plain "Set tempo" instead:
+ * it makes the start manual, and so a marker the user can see.
+ */
+function KindSwitch({ marker, index, large }: { marker: TempoMarker; index: number; large?: boolean }) {
+  const implicit = usePlayer((s) => isImplicitStart(s.markers, index))
+  if (implicit) {
+    return (
+      <Button variant="secondary" size={large ? "default" : "sm"} title="Set a fixed tempo from the start of the song" onClick={() => setKind(index, "manual")}>
+        Set tempo
+      </Button>
+    )
+  }
   return (
     <Tabs value={marker.kind} onValueChange={(v) => setKind(index, v as "auto" | "manual")}>
       <TabsList variant="pill" aria-label="Marker kind">
@@ -215,9 +228,10 @@ export function DesktopToolbar({ c }: { c: EditorControls }) {
   return (
     <Swap className="items-center gap-1">
       <Button variant="ghost" size="icon-sm" aria-label="Previous marker" title={tip("Previous marker", "Shift+B")} onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
-      <span className="min-w-8 text-center text-xs text-muted-foreground tabular-nums">{i + 1}/{markers.length}</span>
+      <MarkerCount markers={markers} index={i} />
       <Button variant="ghost" size="icon-sm" aria-label="Next marker" title={tip("Next marker", "Shift+N")} onClick={() => c.onLocate(1)}><ChevronRight /></Button>
       <ToolbarDivider />
+      {m && isImplicitStart(markers, i) && <span className="px-1 text-xs text-muted-foreground">Detected beats</span>}
       {m && <KindSwitch marker={m} index={i} />}
       {m?.kind === "manual" && (
         <>
@@ -227,7 +241,7 @@ export function DesktopToolbar({ c }: { c: EditorControls }) {
           <Button variant="ghost" size="icon-sm" aria-label="Detected tempo" title="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(i)}><Sparkles /></Button>
         </>
       )}
-      <Button variant="ghost" size="icon-sm" aria-label="Delete marker" title={tip("Delete marker", "Del")} disabled={i === 0} onClick={() => deleteMarker(i)}><Trash2 /></Button>
+      <Button variant="ghost" size="icon-sm" aria-label="Delete marker" title={tip("Delete marker", "Del")} disabled={!canDeleteMarker(markers, i)} onClick={() => deleteMarker(i)}><Trash2 /></Button>
       <div className="ml-auto flex items-center gap-0.5">
         <Button variant="secondary" size="icon-sm" aria-label="Add marker" title={tip("Add marker", "T")} onClick={c.onAdd}><Plus /></Button>
         <ToolbarDivider />
@@ -255,9 +269,9 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
       <Button variant="ghost" size="icon-lg" aria-label="Previous marker" onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
       {m && (
         <MarkerDrawer index={i} marker={m}>
-          <Button variant="chip" className="min-w-0 flex-1" aria-label={`Edit marker ${i + 1}: ${flagLabel(m)}`}>
+          <Button variant="chip" className="min-w-0 flex-1" aria-label={isImplicitStart(markers, i) ? "Set tempo (now following the detected beats)" : `Edit marker ${markerNumber(markers, i)}: ${flagLabel(m)}`}>
             <span className={cn("size-2 shrink-0 rounded-full", m.kind === "manual" ? "bg-primary" : "bg-muted-foreground")} />
-            <span className="truncate">{flagLabel(m)}</span>
+            <span className="truncate">{isImplicitStart(markers, i) ? "Set tempo" : flagLabel(m)}</span>
           </Button>
         </MarkerDrawer>
       )}
@@ -272,15 +286,27 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
 /** Marker editor in a panel (a bottom sheet on phones): kind, BPM (−/+ by 1 and 0.1), meter, nudge, detected tempo, delete. */
 function MarkerDrawer({ index, marker: m, children }: { index: number; marker: TempoMarker; children: React.ReactElement }) {
   const analysis = usePlayer((s) => s.analysis)
+  const implicit = usePlayer((s) => isImplicitStart(s.markers, index))
+  const deletable = usePlayer((s) => canDeleteMarker(s.markers, index))
   const [open, setOpen] = useState(false)
   const nudge = (dir: -1 | 1) => nudgeMarker(index, dir, 0.005)
+  if (implicit) {
+    return (
+      <ResponsivePanel title="Tempo" open={open} onOpenChange={setOpen} trigger={children}>
+        <p className="text-center text-sm text-muted-foreground">
+          The beats come from the song itself. Set a fixed tempo to choose the BPM and time signature yourself, or add a marker where the tempo changes.
+        </p>
+        <div className="flex justify-center"><KindSwitch marker={m} index={index} large /></div>
+      </ResponsivePanel>
+    )
+  }
   return (
     <ResponsivePanel
       title={markerClock(m.time)}
       open={open}
       onOpenChange={setOpen}
       trigger={children}
-      action={<Button variant="destructive" size="icon-lg" aria-label="Delete marker" disabled={index === 0} onClick={() => {
+      action={<Button variant="destructive" size="icon-lg" aria-label="Delete marker" disabled={!deletable} onClick={() => {
         if (deleteMarker(index)) setOpen(false)
       }}><Trash2 /></Button>}
     >
@@ -307,6 +333,13 @@ function MarkerDrawer({ index, marker: m, children }: { index: number; marker: T
       </Row>
     </ResponsivePanel>
   )
+}
+
+/** "2/5" for the marker being edited; "–/5" while the playhead is before the first marker the user placed; nothing without markers. */
+function MarkerCount({ markers, index }: { markers: TempoMarker[]; index: number }) {
+  const n = markerNumber(markers, index)
+  if (!visibleMarkerCount(markers)) return null
+  return <span className="min-w-8 text-center text-xs text-muted-foreground tabular-nums">{n ? n : "–"}/{visibleMarkerCount(markers)}</span>
 }
 
 /** Where a marker sits, to the millisecond: "1:04.250". */

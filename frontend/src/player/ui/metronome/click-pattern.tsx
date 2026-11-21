@@ -2,9 +2,10 @@ import { Minus, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   addSubdivision, cycleLevel, MAX_SUBDIVISIONS, patternFor, removeSubdivision, setLevel, storedPattern, type ClickLevel, type ClickPattern,
-  type ManualMarker,
+  isImplicitStart, type ManualMarker,
 } from "@/player/tempo-map"
 import { replaceMarker, setKind } from "@/player/ui/tempo-editor/actions"
+import { usePlayer } from "@/player/store"
 import { usePlayingClick } from "@/player/ui/metronome/use-playhead-marker"
 
 /** Most beat columns on one line; wider bars wrap onto balanced lines (9 → 5 + 4) so phones need no scrolling. */
@@ -68,10 +69,11 @@ export function ClickPatternGrid({ marker, index }: { marker: ManualMarker; inde
 
 /** In place of the grid for an auto marker: it clicks on the detected beats; making it manual gives it a pattern. */
 export function AutoClickNote({ index }: { index: number }) {
+  const implicit = usePlayer((s) => isImplicitStart(s.markers, index))
   return (
     <div className="flex flex-col items-center gap-3 py-4 text-center">
       <p className="text-sm text-muted-foreground">This section follows the detected beats: the click sounds on every beat, accented on downbeats.</p>
-      <Button variant="outline" size="sm" onClick={() => setKind(index, "manual")}>Make manual to set a pattern</Button>
+      <Button variant="outline" size="sm" onClick={() => setKind(index, "manual")}>{implicit ? "Set a fixed tempo to pick a pattern" : "Make manual to set a pattern"}</Button>
     </div>
   )
 }
