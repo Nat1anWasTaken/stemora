@@ -1,7 +1,9 @@
 import { lastAtOrBefore } from "@/player/analysis"
+import type { GridClick } from "@/player/tempo-map"
 
 /** One metronome click at a song position (seconds). */
-export type Click = { time: number; accent: boolean }
+export type Click = GridClick
+export type ClickVolume = Click["level"]
 
 /**
  * The clicks heard while the song plays from raw position `from` to `to` (seconds past `offset` at `speed`, before any
@@ -14,8 +16,8 @@ export function clicksBetween(
   from: number,
   to: number,
   play: { offset: number; startedAt: number; speed: number; loop: { a: number; b: number } | null },
-): { when: number; accent: boolean }[] {
-  const out: { when: number; accent: boolean }[] = []
+): { when: number; level: ClickVolume }[] {
+  const out: { when: number; level: ClickVolume }[] = []
   const { offset, startedAt, speed, loop } = play
   const looping = !!loop && loop.b > loop.a
   const span = looping ? loop.b - loop.a : 0
@@ -33,7 +35,7 @@ export function clicksBetween(
     const end = pos + len
     for (let i = Math.max(0, lastAtOrBefore(times, pos - 1e-9) + 1); i < clicks.length && times[i] < end; i++) {
       if (times[i] < pos) continue
-      out.push({ when: startedAt + (raw + (times[i] - pos) - offset) / speed, accent: clicks[i].accent })
+      out.push({ when: startedAt + (raw + (times[i] - pos) - offset) / speed, level: clicks[i].level })
     }
     raw += len
   }

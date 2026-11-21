@@ -16,7 +16,8 @@
  */
 import type { StretchNode } from "signalsmith-stretch"
 import type { StemName } from "@/lib/api"
-import { clicksBetween, type Click } from "@/player/clicks"
+import { clickSound, DEFAULT_CLICK_SOUND, type ClickSound } from "@/player/click-sounds"
+import { clicksBetween, type Click, type ClickVolume } from "@/player/clicks"
 import { defaultMixer, effectiveGain, loopedPosition, clampLoop, type LoopRegion, type MixerState } from "@/player/mixer"
 
 export type StemSource = { name: StemName; url: string }
@@ -54,7 +55,10 @@ export class StemEngine {
   private metroTimer: ReturnType<typeof setInterval> | null = null
   /** Context time up to which clicks are scheduled, and the clicks still to sound (so a seek can silence them). */
   private metroUntil = 0
-  private scheduled: { osc: OscillatorNode; when: number }[] = []
+  private scheduled: { osc: AudioScheduledSourceNode; when: number }[] = []
+  private sound: ClickSound = clickSound(DEFAULT_CLICK_SOUND)
+  private soundReady: Promise<void> | null = null
+  private soundDone: () => boolean = () => false
   private metroGain: GainNode | null = null
   duration = 0
   onEnded: (() => void) | null = null
@@ -298,6 +302,37 @@ export class StemEngine {
     else this.stopMetronome()
   }
 
+  /** The metronome sound (an id from CLICK_SOUNDS); clicks already scheduled are played again with it. */
+  setClickSound(id: string) {
+    const sound = clickSound(id)
+    if (sound === this.sound) return
+    this.sound = sound
+    this.soundReady = sound.load ? null : Promise.resolve()
+    this.rescheduleClicks()
+  }
+  /**
+   * Whether the sound can play now. A sound with files starts decoding them the first time it is needed (the context
+   * exists by then); its clicks are scheduled once they are in, and one that fails falls back to the default sound.
+   */
+  private soundLoaded(): boolean {
+    const sound = this.sound
+    if (!sound.load) return true
+    if (!this.soundReady && this.ctx) {
+      let done = false
+      this.soundReady = sound.load(this.ctx).then(
+        () => {
+          done = true
+          if (this.sound === sound) this.rescheduleClicks()
+        },
+        () => {
+          if (this.sound === sound) this.setClickSound(DEFAULT_CLICK_SOUND)
+        },
+      )
+      this.soundDone = () => done
+    }
+    return this.soundDone()
+  }
+
   /** The beats to click on (song seconds, sorted); takes effect at once, also mid-playback. */
   setClicks(clicks: Click[]) {
     this.clicks = clicks
@@ -395,7 +430,7 @@ export class StemEngine {
   /** Puts the clicks heard between `metroUntil` and a little ahead of now on the audio clock. */
   private pumpClicks() {
     const ctx = this.ctx
-    if (!ctx || !this.playing || !this.metroOn) return
+    if (!ctx || !this.playing || !this.metroOn || !this.soundLoaded()) return
     const until = ctx.currentTime + CLICK_AHEAD
     if (until <= this.metroUntil) return
     const from = Math.max(this.metroUntil, this.startedAt)
@@ -403,7 +438,7 @@ export class StemEngine {
     const due = clicksBetween(this.clicks, this.clickTimes, raw(from), raw(until), { offset: this.offset, startedAt: this.startedAt, speed: this.speed, loop: this.activeLoop })
     this.metroUntil = until
     this.scheduled = this.scheduled.filter((s) => s.when > ctx.currentTime - 0.1)
-    for (const c of due) this.click(c.when, c.accent)
+    for (const c of due) this.click(c.when, c.level)
   }
   /** Silences clicks already scheduled past now and schedules again from the current timing. */
   private rescheduleClicks() {
@@ -437,17 +472,8 @@ export class StemEngine {
     }
     this.scheduled = []
   }
-  private click(when: number, accent: boolean) {
-    const ctx = this.ctx!
-    const osc = ctx.createOscillator()
-    const env = ctx.createGain()
-    osc.frequency.value = accent ? 1600 : 1000
-    env.gain.setValueAtTime(0.0001, when)
-    env.gain.exponentialRampToValueAtTime(1, when + 0.002)
-    env.gain.exponentialRampToValueAtTime(0.0001, when + 0.05)
-    osc.connect(env).connect(this.metroGain!)
-    osc.start(when)
-    osc.stop(when + 0.06)
+  private click(when: number, level: ClickVolume) {
+    const osc = this.sound.play(this.ctx!, when, level, this.metroGain!)
     this.scheduled.push({ osc, when })
   }
 

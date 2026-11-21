@@ -4,8 +4,9 @@ import { parseAnalysis } from "@/player/analysis"
 import { toAlphaTex } from "@/player/drums/alphatex"
 import { quantize } from "@/player/drums/quantize"
 import {
-  buildGrid, defaultMarkers, detectedTempo, gridClicks, insertMarker, isLocked, moveMarker, normalizeMarkers, parseTimeSignature,
-  removeMarker, snapTime, tempoAt, updateMarker, type ManualMarker, type TempoMarker,
+  addSubdivision, buildGrid, cycleLevel, defaultMarkers, defaultPattern, detectedTempo, insertMarker, isLocked, markerClicks, MAX_SUBDIVISIONS,
+  moveMarker, normalizeMarkers, parseMarker, parseTimeSignature, patternFor, removeMarker, removeSubdivision, setLevel, snapTime, storedPattern,
+  tempoAt, updateMarker, type ManualMarker, type TempoMarker,
 } from "@/player/tempo-map"
 
 const manual = (time: number, bpm: number, num = 4, den = 4): ManualMarker => ({ time, kind: "manual", bpm, num, den })
@@ -82,7 +83,7 @@ describe("buildGrid", () => {
     const g = buildGrid(defaultMarkers(), analysis, 20)
     expect(g.beats.length).toBe(detected.length)
     expect(g.bars[0]).toMatchObject({ bar: 1, start: 0.3, count: 4, den: 4, auto: true })
-    expect(gridClicks(g).slice(0, 5).map((c) => c.accent)).toEqual([true, false, false, false, true])
+    expect(markerClicks(g, defaultMarkers()).slice(0, 5).map((c) => c.level)).toEqual(["accent", "normal", "normal", "normal", "accent"])
   })
 
   it("lays manual grids, starts a bar at every marker and drops detected beats right next to a marker", () => {
@@ -146,4 +147,52 @@ describe("drum notation on a tempo map", () => {
       }
     })
   }
+})
+
+describe("click patterns", () => {
+  it("keeps a valid pattern on a marker and drops a broken one", () => {
+    const clicks = [["accent", "muted"], ["normal"]]
+    expect(parseMarker({ ...manual(0, 120, 2), clicks })).toEqual({ ...manual(0, 120, 2), clicks })
+    expect(parseMarker({ ...manual(0, 120, 2), clicks: [["loud"]] })).toEqual(manual(0, 120, 2))
+    expect(parseMarker({ ...manual(0, 120, 2), clicks: [[]] })).toEqual(manual(0, 120, 2))
+    expect(normalizeMarkers([{ ...manual(0, 120, 2), clicks }])[0]).toMatchObject({ clicks })
+  })
+
+  it("fits the pattern to the meter", () => {
+    expect(patternFor(manual(0, 120, 3))).toEqual(defaultPattern(3))
+    const m = { ...manual(0, 120, 3), clicks: [["muted"], ["accent", "normal"]] as ManualMarker["clicks"] }
+    expect(patternFor(m)).toEqual([["muted"], ["accent", "normal"], ["normal"]])
+    expect(patternFor({ ...m, num: 1 })).toEqual([["muted"]])
+  })
+
+  it("adds and removes subdivisions per beat or on every beat, within limits", () => {
+    const p = defaultPattern(2)
+    expect(addSubdivision(p, 1)).toEqual([["accent"], ["normal", "normal"]])
+    expect(addSubdivision(p, "all")).toEqual([["accent", "normal"], ["normal", "normal"]])
+    expect(removeSubdivision(addSubdivision(p, 1), "all")).toEqual(p)
+    expect(removeSubdivision(p, 0)).toEqual(p)
+    let full = p
+    for (let i = 0; i < 20; i++) full = addSubdivision(full, 0)
+    expect(full[0].length).toBe(MAX_SUBDIVISIONS)
+  })
+
+  it("cycles levels and stores only patterns that differ from the default", () => {
+    expect([cycleLevel("accent"), cycleLevel("normal"), cycleLevel("muted")]).toEqual(["normal", "muted", "accent"])
+    expect(setLevel(defaultPattern(2), 1, 0, "muted")).toEqual([["accent"], ["muted"]])
+    expect(storedPattern(defaultPattern(4))).toBeUndefined()
+    expect(storedPattern([["normal"]])).toEqual([["normal"]])
+  })
+
+  it("clicks the pattern of a manual marker: subdivisions inside the beat, no muted clicks, cut at the next marker", () => {
+    // 2/4 at 60 BPM from 0 s, then auto at 3 s; beat 1 split in three (middle muted), beat 2 in two.
+    const m: ManualMarker = { ...manual(0, 60, 2), clicks: [["accent", "muted", "normal"], ["normal", "accent"]] }
+    const markers = [m, auto(3)]
+    const g = buildGrid(markers, analysis, 6)
+    const c = markerClicks(g, markers, 6).filter((x) => x.time < 3)
+    expect(c.map((x) => [Math.round(x.time * 1000) / 1000, x.level])).toEqual([
+      [0, "accent"], [0.667, "normal"], [1, "normal"], [1.5, "accent"], [2, "accent"], [2.667, "normal"],
+    ])
+    // The auto segment clicks on its detected beats again, starting with the marker's downbeat.
+    expect(markerClicks(g, markers, 6).find((x) => x.time >= 3)).toEqual({ time: 3, level: "accent" })
+  })
 })

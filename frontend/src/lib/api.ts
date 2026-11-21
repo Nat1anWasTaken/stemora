@@ -68,7 +68,7 @@ export type SongDetail = {
   tempo_markers?: TempoMarkerJson[]
 }
 /** A tempo marker as stored: `auto` hands the beats to the detected ones; `manual` lays a grid (BPM of `den` notes). */
-export type TempoMarkerJson = { time: number; kind: "auto" } | { time: number; kind: "manual"; bpm: number; num: number; den: number }
+export type TempoMarkerJson = { time: number; kind: "auto" } | { time: number; kind: "manual"; bpm: number; num: number; den: number; clicks?: ("accent" | "normal" | "muted")[][] }
 export type Usage = { used_bytes: number; quota_bytes: number }
 export type Upload =
   | { mode: "single"; url: string; headers: Record<string, string> }

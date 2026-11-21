@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { formatClock, formatRemaining } from "@/lib/format"
 import { usePlayer } from "@/player/store"
-import { KeyPanel, TempoPanel } from "@/player/ui/practice-sheets"
+import { MetronomePanel } from "@/player/ui/metronome/metronome-panel"
+import { KeyPanel } from "@/player/ui/practice-sheets"
 import { usePosition } from "@/player/ui/use-position"
 import { useState } from "react"
 
@@ -47,7 +48,7 @@ export function Transport() {
   const ready = status === "ready"
   return (
     <div className="flex items-center justify-between gap-1">
-      <TempoPanel trigger={<Button variant="toggle" size="icon-lg" aria-label="Metronome and tempo" aria-pressed={metronome || speed !== 1}><Metronome /></Button>} />
+      <MetronomePanel trigger={<Button variant="toggle" size="icon-lg" aria-label="Metronome and tempo" aria-pressed={metronome || speed !== 1}><Metronome /></Button>} />
       <Button variant="ghost" size="icon-lg" aria-label="Back 10 seconds" disabled={!ready} onClick={() => skip(-10)}><Rewind /></Button>
       <Button variant="play" size="icon-xl" aria-label={playing ? "Pause" : "Play"} disabled={!ready} onClick={toggle}>
         {status === "loading" ? <Loader2 className="animate-spin" /> : playing ? <Pause key="pause" className="animate-in fill-current duration-200 zoom-in-50 fade-in" /> : <Play key="play" className="animate-in fill-current duration-200 zoom-in-50 fade-in" />}
