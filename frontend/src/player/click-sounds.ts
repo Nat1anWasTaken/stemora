@@ -79,8 +79,8 @@ function sampled(id: string, label: string, dir: string, files: Record<ClickVolu
   }
 }
 
-/** Square-wave beeps: 999 Hz on accents, 699 Hz on normal clicks, 499 Hz on soft ones. */
-const square = sampled("square", "Square", "square", { accent: "hi.wav", normal: "mid-lo.wav", soft: "lo.wav" })
+/** Square-wave beeps: 999 Hz on accents, 499 Hz on normal clicks, 699 Hz on soft ones. */
+const square = sampled("square", "Square", "square", { accent: "hi.wav", normal: "lo.wav", soft: "mid-lo.wav" })
 
 export const CLICK_SOUNDS: readonly ClickSound[] = [classic, square]
 export const DEFAULT_CLICK_SOUND = classic.id

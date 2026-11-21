@@ -25,6 +25,12 @@ export type StemSource = { name: StemName; url: string }
 /** How far ahead clicks are put on the audio clock, and how often the scheduler looks. */
 const CLICK_AHEAD = 0.15
 const CLICK_EVERY = 25
+/**
+ * How far ahead clicks are put while the page is hidden. Phones keep the audio clock running in the background (see
+ * keepAlive) but throttle or freeze page timers, so a short lookahead would leave the metronome silent; this runs it
+ * from the audio clock alone for a long stretch. Any change (seek, pause, tempo) still silences and re-plans them.
+ */
+const CLICK_AHEAD_HIDDEN = 120
 
 type StemNode = { name: StemName; buffer: AudioBuffer; gain: GainNode; source: AudioBufferSourceNode | null }
 
@@ -60,6 +66,7 @@ export class StemEngine {
   private soundReady: Promise<void> | null = null
   private soundDone: () => boolean = () => false
   private metroGain: GainNode | null = null
+  private onVisibility = () => this.pumpClicks()
   duration = 0
   onEnded: (() => void) | null = null
   /** Called if the stretcher fails to start after loadShifter reported it available. */
@@ -84,6 +91,7 @@ export class StemEngine {
       this.metroGain = this.ctx.createGain()
       this.metroGain.gain.value = 0.5
       this.metroGain.connect(this.master)
+      document.addEventListener("visibilitychange", this.onVisibility)
     }
     return this.ctx
   }
@@ -431,7 +439,7 @@ export class StemEngine {
   private pumpClicks() {
     const ctx = this.ctx
     if (!ctx || !this.playing || !this.metroOn || !this.soundLoaded()) return
-    const until = ctx.currentTime + CLICK_AHEAD
+    const until = ctx.currentTime + (document.hidden ? CLICK_AHEAD_HIDDEN : CLICK_AHEAD)
     if (until <= this.metroUntil) return
     const from = Math.max(this.metroUntil, this.startedAt)
     const raw = (t: number) => this.offset + (t - this.startedAt) * this.speed
@@ -478,6 +486,7 @@ export class StemEngine {
   }
 
   dispose() {
+    document.removeEventListener("visibilitychange", this.onVisibility)
     this.stopSources()
     this.stopMetronome()
     this.playing = false
