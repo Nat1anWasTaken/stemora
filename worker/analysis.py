@@ -2,7 +2,7 @@
 
 Beats and downbeats come from the Beat This! model, chords from the BTC transformer
 (large vocabulary: maj/min/7/maj7/min7/dim/sus...), both run on the full mix. Chords are
-then snapped to the beat grid. Drum onsets (`drums.py`, ADT_STR) come from the separated drums
+then snapped to the beat grid. Drum onsets (`drums.py`, ADTOF) come from the separated drums
 stem when one is given; song sections (`sections.py`, SongFormer) from the full mix. Heavy
 imports are lazy; the helpers need only numpy.
 """
@@ -202,7 +202,7 @@ def analyse(mix_mono: np.ndarray, duration: float, device: str | None = None,
             import drums
             d = drums.transcribe(drums_mono, duration, device)
             if d:
-                out["drums"], out["drum_velocities"] = d
+                out["drums"] = d
         except Exception:  # noqa: BLE001
             traceback.print_exc()
     # Likewise best effort: no sections keeps everything else.

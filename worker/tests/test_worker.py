@@ -289,38 +289,16 @@ def test_estimate_key():
 
 def test_drums_format_hits():
     import drums as D
-    hits = [
-        (2.0, 36, 100), (0.5, 35, 90), (1.00049, 36, 80), (0.5004, 36, 120),  # kick ids merge; ms duplicates merge
-        (0.25, 42, 60), (0.262, 42, 75), (0.75, 44, 70),  # closed hats 12 ms apart -> one, the louder velocity
-        (-0.01, 38, 90), (9.99, 38, 90), (10.0, 38, 90),  # outside the song -> dropped
-        (1.5, 37, 0), (1.5, 39, 90), (3.0, 41, 90), (3.0, 47, 90),
-        (4.0, 53, 90), (4.0, 60, 90), (4.0, 61, 90), (4.0, 0, 90),  # no chart line -> dropped
-    ]
-    drums, vel = D.format_hits(hits, 10.0)
-    assert drums == {"kick": [0.5, 1.0, 2.0], "snare": [1.5, 9.99], "sidestick": [1.5], "hihat": [0.25],
-                     "hihat_open": [0.75], "tom_high": [3.0], "tom_floor": [3.0]}
-    assert vel == {"kick": [120, 80, 100], "snare": [90, 90], "sidestick": [1], "hihat": [75], "hihat_open": [70],
-                   "tom_high": [90], "tom_floor": [90]}
-    assert list(drums) == [k for k in D.KINDS if k in drums]
-    assert set(D.CLASS_TO_KIND.values()) == set(D.KINDS) and max(D.CLASS_TO_KIND) == 52
-    assert D.format_hits([(t * 0.5, 36, 90) for t in range(7)], 10.0) is None  # fewer than MIN_HITS
-    assert D.format_hits([], 10.0) is None
-
-
-def test_drums_windows():
-    import drums as D
-    w = D.windows(np.arange(10, dtype=np.float32), 4)
-    assert w.shape == (3, 4) and w[2].tolist() == [8, 9, 0, 0]
-    assert D.windows(np.zeros(0, dtype=np.float32), 4).shape == (1, 4)
-
-
-def test_adt_str_tokens():
-    from adt_str import tokens as T
-    # BOS, hit (0.12 s, class 38, vel 90), a stray class token, hit (1.0 s, 42, 64), half a hit, EOS, junk after EOS.
-    seq = [2, 16, 338, 490, 340, 104, 342, 464, 50, 336, 3, 20, 336, 400]
-    assert T.parse(seq) == [(0.12, 38, 90), (1.0, 42, 64)]
-    assert T.parse([2, 16, 490, 338, 3]) == []  # out of order: not a hit
-    assert not T.truncated(seq) and T.truncated([2, 16, 338, 490]) and not T.truncated([2, 3])
+    hits = {
+        "kick": np.array([2.0, 0.5, 1.00049, 0.5004]),  # unsorted; duplicates after ms rounding
+        "hihat": np.array([-0.01, 0.25, 0.75, 9.99, 10.0]),  # outside the song -> dropped
+        "snare": np.array([1.5, 2.5, 3.5]),
+        "bogus": np.array([1.0]),
+    }
+    out = D.format_hits(hits, 10.0)
+    assert out == {"kick": [0.5, 1.0, 2.0], "snare": [1.5, 2.5, 3.5], "hihat": [0.25, 0.75, 9.99], "tom": [], "cymbal": []}
+    assert D.format_hits({"kick": np.arange(7) * 0.5}, 10.0) is None  # fewer than MIN_HITS
+    assert D.format_hits({}, 10.0) is None
 
 
 def test_songformer_postprocess_segments():
