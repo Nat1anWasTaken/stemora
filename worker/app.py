@@ -41,6 +41,15 @@ def _download_btc_weights():
     urllib.request.urlretrieve(url, "/opt/btc/btc_model_large_voca.pt")
 
 
+ADTOF_COMMIT = "85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9"
+
+
+def _check_adtof():
+    """The weights ship inside the package; load them once so a broken install fails the build."""
+    import drums
+    drums.load_model("cpu")
+
+
 def _download_beat_model():
     from beat_this.inference import Audio2Beats
     Audio2Beats(checkpoint_path="final0", device="cpu", dbn=False)
@@ -52,15 +61,19 @@ image = (
     .pip_install(
         "torch==2.4.1", "torchaudio==2.4.1", "demucs==4.0.1", "numpy==1.26.4",
         "boto3==1.35.99", "requests==2.32.3", "fastapi[standard]==0.115.6",
-        "librosa==0.10.2.post1", "soxr", "rotary-embedding-torch", "einops",
+        "librosa==0.10.2.post1", "soxr", "rotary-embedding-torch", "einops", "pretty_midi==0.2.10",
     )
     .pip_install("https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip", extra_options="--no-deps")
+    # ADTOF drum transcription, PyTorch port (CC BY-NC-SA 4.0 via the original ADTOF weights).
+    .pip_install(f"https://github.com/xavriley/ADTOF-pytorch/archive/{ADTOF_COMMIT}.zip", extra_options="--no-deps")
     .env({"TORCH_HOME": TORCH_HOME})
     .run_function(_download_weights)
     .run_function(_download_beat_model)
     .run_function(_download_btc_weights)
     .add_local_python_source("scnet", copy=True)
     .run_function(_download_scnet_weights)
+    .add_local_python_source("drums", copy=True)
+    .run_function(_check_adtof)
     .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "btc")
 )
 
@@ -89,10 +102,10 @@ def separate_test(audio: bytes, filename: str, model: str):
 
 
 @app.function(image=image, gpu=GPU, retries=0, timeout=600)
-def analyse_test(audio: bytes, filename: str):
-    """Beat/chord analysis of a mix only (no separation)."""
+def analyse_test(audio: bytes, filename: str, drums: bytes | None = None, drums_filename: str = ""):
+    """Beat/chord analysis of a mix (no separation); drum hits too when a drums stem is given."""
     import runner
-    return runner.analyse_local(audio, filename)
+    return runner.analyse_local(audio, filename, drums=drums, drums_filename=drums_filename)
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name("stemora-auth")])
@@ -155,11 +168,21 @@ def local_test(song_path: str, model: str = "htdemucs", out_dir: str = "./out"):
 
 
 @app.local_entrypoint()
-def analysis_test(song_path: str):
-    """modal run app.py::analysis_test --song-path ./sample.mp3"""
+def analysis_test(song_path: str, drums_path: str = ""):
+    """modal run app.py::analysis_test --song-path ./sample.mp3 [--drums-path ./out/htdemucs-drums.flac]"""
     import json
     with open(song_path, "rb") as f:
-        res = analyse_test.remote(f.read(), os.path.basename(song_path))
-    print(json.dumps({k: v for k, v in res.items() if k not in ("beats", "downbeats")}, indent=1))
+        audio = f.read()
+    drums = None
+    if drums_path:
+        with open(drums_path, "rb") as f:
+            drums = f.read()
+    res = analyse_test.remote(audio, os.path.basename(song_path), drums, os.path.basename(drums_path))
+    print(json.dumps({k: v for k, v in res.items() if k not in ("beats", "downbeats", "drums")}, indent=1))
+    if "drums" in res:
+        print("drum hits:", {k: len(v) for k, v in res["drums"].items()})
+        print("first bar:", {k: [h for h in v if h[0] < res["beats_per_bar"]] for k, v in res["drums"].items()})
+    elif drums_path:
+        print("drum hits: none (no drums detected, or transcription failed: see the container log)")
     print("beats:", res["beats"][:12], "... n =", len(res["beats"]))
     print("downbeats:", res["downbeats"][:6], "... n =", len(res["downbeats"]))
