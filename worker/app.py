@@ -181,7 +181,7 @@ def analysis_test(song_path: str, drums_path: str = ""):
     print(json.dumps({k: v for k, v in res.items() if k not in ("beats", "downbeats", "drums")}, indent=1))
     if "drums" in res:
         print("drum hits:", {k: len(v) for k, v in res["drums"].items()})
-        print("first bar:", {k: [h for h in v if h[0] < res["beats_per_bar"]] for k, v in res["drums"].items()})
+        print("first 4 s:", {k: [t for t in v if t < 4] for k, v in res["drums"].items()})
     elif drums_path:
         print("drum hits: none (no drums detected, or transcription failed: see the container log)")
     print("beats:", res["beats"][:12], "... n =", len(res["beats"]))
