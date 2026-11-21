@@ -44,9 +44,8 @@ const buttonVariants = cva(
           "size-9 pointer-coarse:size-11 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-11 rounded-full active:scale-90",
         "icon-xl": "size-16 rounded-full active:scale-92 [&_svg:not([class*='size-'])]:size-7",
-        /* Metronome pattern dots: the beat itself, and its (smaller) subdivisions */
-        "click-beat": "size-11 after:size-7",
-        "click-sub": "size-10 pointer-coarse:size-11 after:size-5",
+        /* Metronome pattern dot: beats and subdivisions share one size, so only the level tells them apart */
+        click: "size-10 pointer-coarse:size-11 after:size-6",
       },
     },
     defaultVariants: {
