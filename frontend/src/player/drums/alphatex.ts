@@ -67,9 +67,9 @@ function beatTex(beat: QBeat, voice: DrumKind[]): string[] {
 
 /**
  * Drum notation for alphaTab: a percussion track (neutral clef), one bar per analysis bar, plus one sync point per
- * beat so the notation follows the song's real (drifting) tempo.
+ * beat so the notation follows the song's real (drifting) tempo. `sections` (bar index -> name) become section marks.
  */
-export function toAlphaTex(bars: QBar[], bpm: number | null): { tex: string; syncPoints: FlatSyncPoint[] } {
+export function toAlphaTex(bars: QBar[], bpm: number | null, sections?: Map<number, string>): { tex: string; syncPoints: FlatSyncPoint[] } {
   const header = [
     `\\track("Drums")`,
     `\\instrument(percussion)`,
@@ -77,12 +77,15 @@ export function toAlphaTex(bars: QBar[], bpm: number | null): { tex: string; syn
     ...Object.entries(ARTICULATIONS).map(([name, id]) => `\\articulation(${name} ${id})`),
     `\\tempo(${Math.round(bpm ?? 120)})`,
   ].join(" ")
-  const voices = VOICES.map((voice) => {
+  const voices = VOICES.map((voice, v) => {
     let meter = 0
     return bars
-      .map((bar) => {
+      .map((bar, i) => {
         const n = bar.beats.length
-        const ts = n !== meter ? `\\ts(${n} 4) ` : ""
+        const name = v === 0 ? sections?.get(i) : undefined
+        // Section marks belong to the bar (not a voice): written once, in the first voice.
+        const mark = name ? `\\section(${JSON.stringify(name)}) ` : ""
+        const ts = mark + (n !== meter ? `\\ts(${n} 4) ` : "")
         meter = n
         const empty = bar.beats.every((b) => b.steps.every((k) => !k.some((x) => voice.includes(x))))
         const body = empty ? split(n, BAR_RESTS).map((d) => `r.${d}`) : bar.beats.flatMap((b) => beatTex(b, voice))

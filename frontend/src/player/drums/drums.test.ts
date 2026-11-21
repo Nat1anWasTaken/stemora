@@ -100,6 +100,15 @@ describe("toAlphaTex", () => {
     })
   }
 
+  it("marks the bars where song parts start", () => {
+    const bars = quantize(a, "auto", true, 4)
+    const { tex } = toAlphaTex(bars, 120, new Map([[0, "Intro"], [1, "Chorus 1"]]))
+    const { score, diags } = parse(tex)
+    expect(diags).toEqual([])
+    expect(score.masterBars.map((m) => m.section?.text ?? null)).toEqual(["Intro", "Chorus 1"])
+    expect(score.masterBars).toHaveLength(2)
+  })
+
   it("handles pickup bars and meter changes", () => {
     const b = parseAnalysis({ version: 1, beats: [0, 1, 2, 3, 4, 5], downbeats: [1, 4], chords: [], drums: { kick: [0, 1, 2, 3, 4, 5, 1.5, 4.5] } })!
     const { tex } = toAlphaTex(quantize(b, "auto", true, 6), null)
