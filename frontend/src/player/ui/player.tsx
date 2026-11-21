@@ -16,7 +16,8 @@ import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackStat
 import { getPosition, usePlayer } from "@/player/store"
 import { ChartHeader, loadChart, saveChart, type Chart } from "@/player/ui/chart-header"
 import { ChordGrid } from "@/player/ui/chord-grid"
-import { DrumGrid } from "@/player/ui/drum-grid"
+import { DrumNotation } from "@/player/ui/drum-notation"
+import { loadPrecision, savePrecision, type DrumPrecision } from "@/player/drums/precision"
 import { PresetChips } from "@/player/ui/preset-chips"
 import { PracticeStrip } from "@/player/ui/practice-strip"
 import { StemRow, triggerDownload } from "@/player/ui/stem-row"
@@ -86,7 +87,12 @@ export function Player({ detail }: { detail: SongDetail }) {
     saveChart(c)
   }, [])
   const cycleChart = useCallback(() => setChart(chart === "chords" ? "drums" : "chords"), [chart, setChart])
-  const chartView = chart === "drums" ? <DrumGrid /> : <ChordGrid />
+  const [precision, setPrecisionState] = useState<DrumPrecision>(loadPrecision)
+  const setPrecision = useCallback((p: DrumPrecision) => {
+    setPrecisionState(p)
+    savePrecision(p)
+  }, [])
+  const chartView = chart === "drums" ? <DrumNotation precision={precision} /> : <ChordGrid />
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
@@ -163,7 +169,7 @@ export function Player({ detail }: { detail: SongDetail }) {
           {statusPanel ?? <PracticeStrip onExpand={toggleChords} />}
           {tab === "chords" ? (
             <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <ChartHeader chart={chart} onChart={setChart} onCollapse={() => setTab("practice")} />
+              <ChartHeader chart={chart} onChart={setChart} onCollapse={() => setTab("practice")} precision={precision} onPrecision={setPrecision} />
               {chartView}
             </div>
           ) : (
@@ -199,7 +205,7 @@ export function Player({ detail }: { detail: SongDetail }) {
           )}
           {tab === "chords" && (
             <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <ChartHeader chart={chart} onChart={setChart} />
+              <ChartHeader chart={chart} onChart={setChart} precision={precision} onPrecision={setPrecision} />
               {chartView}
             </div>
           )}

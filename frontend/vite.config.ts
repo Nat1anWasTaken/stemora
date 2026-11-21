@@ -1,6 +1,7 @@
 import { resolve } from "node:path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
+import { alphaTab } from "@coderline/alphatab-vite"
 import { VitePWA } from "vite-plugin-pwa"
 import { defineConfig } from "vitest/config"
 import { mockApi } from "./mock/plugin.ts"
@@ -12,6 +13,9 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // Drum notation: bundles alphaTab's worker and copies the Bravura music font to public/font (and its
+    // soundfonts to public/soundfont, unused: our own engine plays the audio).
+    alphaTab(),
     // Service worker precaches the app shell so the installed app opens instantly and offline.
     // API calls and presigned stem URLs (they expire after 1h) are never cached.
     VitePWA({
@@ -20,7 +24,7 @@ export default defineConfig({
       manifest: false, // public/manifest.webmanifest is the source of truth
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,webmanifest}"],
-        globIgnores: ["mock/**", "splash/**"],
+        globIgnores: ["mock/**", "splash/**", "soundfont/**", "font/*.svg"],
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api\//, /^\/mock/],
         cleanupOutdatedCaches: true,

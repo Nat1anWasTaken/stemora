@@ -287,31 +287,15 @@ def test_estimate_key():
     assert A.build_analysis(beats, beats[::4], prog("C", "F", "G", "C"), 8.0)["key"] == "C"
 
 
-def test_drums_snap_straight_and_triplet():
+def test_drums_format_hits():
     import drums as D
-    beats = np.arange(0.0, 4.0, 0.5)  # 8 beats at 120 BPM
     hits = {
-        "kick": np.array([0.0, 1.002, 2.0]),
-        "hihat": np.array([0.0, 0.124, 0.251, 0.376]),          # beat 0: 16ths
-        "snare": np.array([1.5, 1.5 + 0.5 / 3, 1.5 + 1.0 / 3]),  # beat 3: triplets
+        "kick": np.array([2.0, 0.5, 1.00049, 0.5004]),  # unsorted; duplicates after ms rounding
+        "hihat": np.array([-0.01, 0.25, 0.75, 9.99, 10.0]),  # outside the song -> dropped
+        "snare": np.array([1.5, 2.5, 3.5]),
+        "bogus": np.array([1.0]),
     }
-    out = D.snap_to_grid(hits, beats)
-    assert out["kick"] == [[0, 0], [2, 0], [4, 0]]
-    assert out["hihat"] == [[0, 0], [0, 3], [0, 6], [0, 9]]
-    assert out["snare"] == [[3, 0], [3, 4], [3, 8]]
-    assert out["tom"] == [] and out["cymbal"] == []
-
-
-def test_drums_snap_rollover_bounds_and_dedupe():
-    import drums as D
-    beats = np.array([1.0, 1.5, 2.0])
-    hits = {
-        "kick": np.array([1.49, 0.995, 0.5, 2.6, 3.0]),  # late-in-beat -> next beat; slightly early first; out of range
-        "snare": np.array([1.5, 1.501]),                 # duplicate after snapping
-        "hihat": np.array([2.49]),                       # rolls past the last beat -> dropped
-    }
-    out = D.snap_to_grid(hits, beats)
-    assert out["kick"] == [[0, 0], [1, 0]]
-    assert out["snare"] == [[1, 0]]
-    assert out["hihat"] == []
-    assert D.snap_to_grid(hits, np.array([1.0])) == {k: [] for k in D.KINDS}
+    out = D.format_hits(hits, 10.0)
+    assert out == {"kick": [0.5, 1.0, 2.0], "snare": [1.5, 2.5, 3.5], "hihat": [0.25, 0.75, 9.99], "tom": [], "cymbal": []}
+    assert D.format_hits({"kick": np.arange(7) * 0.5}, 10.0) is None  # fewer than MIN_HITS
+    assert D.format_hits({}, 10.0) is None

@@ -2,8 +2,8 @@
 
 Beats and downbeats come from the Beat This! model, chords from the BTC transformer
 (large vocabulary: maj/min/7/maj7/min7/dim/sus...), both run on the full mix. Chords are
-then snapped to the beat grid. Drum hits (`drums.py`, ADTOF) run on the separated drums stem
-when one is given. Heavy imports are lazy; the helpers need only numpy.
+then snapped to the beat grid. Drum onsets (`drums.py`, ADTOF) come from the separated drums
+stem when one is given. Heavy imports are lazy; the helpers need only numpy.
 """
 import os
 import traceback
@@ -199,7 +199,7 @@ def analyse(mix_mono: np.ndarray, duration: float, device: str | None = None,
         # Separate best-effort step: a drum failure keeps the beats and chords.
         try:
             import drums
-            d = drums.transcribe(drums_mono, beats, device)
+            d = drums.transcribe(drums_mono, duration, device)
             if d:
                 out["drums"] = d
         except Exception:  # noqa: BLE001

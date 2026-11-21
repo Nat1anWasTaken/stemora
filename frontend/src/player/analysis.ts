@@ -1,16 +1,9 @@
 export type ChordSegment = { start: number; end: number; label: string }
-/** Drum kinds in chart order, top to bottom (as on a drum staff: cymbals high, kick low). */
+/** The model's drum classes (cymbal = crash/ride/splash/china, hihat = open/closed/pedal, tom = all toms). */
 export const DRUM_KINDS = ["cymbal", "hihat", "tom", "snare", "kick"] as const
 export type DrumKind = (typeof DRUM_KINDS)[number]
-export const DRUM_NAMES: Record<DrumKind, { short: string; name: string }> = {
-  cymbal: { short: "CY", name: "cymbal" },
-  hihat: { short: "HH", name: "hi-hat" },
-  tom: { short: "TM", name: "tom" },
-  snare: { short: "SN", name: "snare" },
-  kick: { short: "BD", name: "kick" },
-}
-/** Per kind: [beat index, slot 0..11 in twelfths of that beat] (see docs/contract.md). */
-export type DrumHits = Record<DrumKind, [number, number][]>
+/** Per kind: onset times in seconds, sorted (see docs/contract.md). */
+export type DrumHits = Record<DrumKind, number[]>
 export type Analysis = {
   bpm: number | null
   /** Estimated song key, e.g. "Eb" or "Dm"; null for older analyses. */
@@ -21,8 +14,6 @@ export type Analysis = {
   chords: ChordSegment[]
   drums: DrumHits | null
 }
-/** One beat of the drum chart: `grid` steps (4 = 16ths, 3 = triplets), `hits[step]` = kinds struck there. */
-export type DrumBeat = { time: number; end: number; grid: 3 | 4; hits: DrumKind[][] }
 /**
  * One beat of the song as shown in the chord strip and chart. `chord` is set where a chord starts and repeated on
  * downbeats (`held` then marks the repeat); "N" means no chord.
@@ -50,66 +41,36 @@ export function parseAnalysis(json: unknown): Analysis | null {
     beats,
     downbeats: j.downbeats.filter(isNum),
     chords,
-    drums: parseDrums(j.drums, beats.length),
+    drums: parseDrums(j.drums, beats),
   }
 }
 
 const SLOTS = 12
 
-/** Lenient: keeps well-formed hits only; null when nothing is left (field missing, or no drums detected). */
-function parseDrums(json: unknown, nBeats: number): DrumHits | null {
+/**
+ * Lenient: keeps well-formed hits only; null when nothing is left (field missing, or no drums detected).
+ * Accepts onset times (current) and the first release's `[beat index, slot in twelfths]` pairs.
+ */
+function parseDrums(json: unknown, beats: number[]): DrumHits | null {
   if (!json || typeof json !== "object") return null
   const j = json as Record<string, unknown>
+  const beatLen = (b: number) => (beats[b + 1] ?? beats[b] + (b > 0 ? beats[b] - beats[b - 1] : 0.5)) - beats[b]
   let total = 0
   const out = {} as DrumHits
   for (const kind of DRUM_KINDS) {
     const list = Array.isArray(j[kind]) ? (j[kind] as unknown[]) : []
-    out[kind] = list.flatMap((h): [number, number][] => {
-      if (!Array.isArray(h) || h.length !== 2) return []
-      const [b, slot] = h as unknown[]
-      return Number.isInteger(b) && Number.isInteger(slot) && (b as number) >= 0 && (b as number) < nBeats && (slot as number) >= 0 && (slot as number) < SLOTS
-        ? [[b as number, slot as number]]
-        : []
-    })
+    out[kind] = list
+      .flatMap((h): number[] => {
+        if (isNum(h)) return h >= 0 ? [h] : []
+        if (!Array.isArray(h) || h.length !== 2) return []
+        const [b, slot] = h as unknown[]
+        if (!Number.isInteger(b) || !Number.isInteger(slot) || (b as number) < 0 || (b as number) >= beats.length || (slot as number) < 0 || (slot as number) >= SLOTS) return []
+        return [beats[b as number] + ((slot as number) / SLOTS) * beatLen(b as number)]
+      })
+      .sort((x, y) => x - y)
     total += out[kind].length
   }
   return total > 0 ? out : null
-}
-
-/**
- * Drum chart cells, one per entry of `a.beats`. A beat uses triplets when any hit sits on a triplet slot (4 or 8),
- * else 16ths. The last beat lasts as long as the one before it.
- */
-export function buildDrumBeats(a: Analysis): DrumBeat[] {
-  const { beats } = a
-  const out: DrumBeat[] = beats.map((time, i) => {
-    const prev = i > 0 ? time - beats[i - 1] : 0.5
-    return { time, end: beats[i + 1] ?? time + prev, grid: 4, hits: [] }
-  })
-  if (!a.drums) return out.map((b) => ({ ...b, hits: [[], [], [], []] }))
-  for (const kind of DRUM_KINDS) for (const [i, slot] of a.drums[kind]) if (slot % 4 === 0 && slot % 3 !== 0) out[i].grid = 3
-  for (const b of out) b.hits = Array.from({ length: b.grid }, () => [])
-  for (const kind of DRUM_KINDS) {
-    for (const [i, slot] of a.drums[kind]) {
-      const b = out[i]
-      const step = Math.min(b.grid - 1, Math.round((slot * b.grid) / SLOTS))
-      if (!b.hits[step].includes(kind)) b.hits[step].push(kind)
-    }
-  }
-  return out
-}
-
-/** Start time of each step of a drum beat. */
-export function stepTimes(b: DrumBeat): number[] {
-  return Array.from({ length: b.grid }, (_, k) => b.time + (k * (b.end - b.time)) / b.grid)
-}
-
-/** Screen-reader summary of a drum beat, e.g. "kick, hi-hat ×2" (kick first, as a drummer reads it). */
-export function describeDrumBeat(b: DrumBeat): string {
-  const counts = new Map<DrumKind, number>()
-  for (const step of b.hits) for (const k of step) counts.set(k, (counts.get(k) ?? 0) + 1)
-  const order = [...DRUM_KINDS].reverse().filter((k) => counts.has(k))
-  return order.length ? order.map((k) => `${DRUM_NAMES[k].name}${counts.get(k)! > 1 ? ` ×${counts.get(k)}` : ""}`).join(", ") : "rest"
 }
 
 export async function fetchAnalysis(url: string): Promise<Analysis | null> {
