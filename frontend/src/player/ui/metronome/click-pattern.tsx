@@ -48,7 +48,7 @@ export function ClickPatternGrid({ marker, index }: { marker: ManualMarker; inde
                 <Button
                   key={s}
                   variant="click"
-                  size={s === 0 ? "click-beat" : "click-sub"}
+                  size="click"
                   data-level={level}
                   data-playing={playing === `${b}:${s}` ? "" : undefined}
                   aria-label={`Beat ${b + 1}${s === 0 ? "" : `, subdivision ${s + 1} of ${pattern[b].length}`}: ${LEVEL_NAME[level]}`}
