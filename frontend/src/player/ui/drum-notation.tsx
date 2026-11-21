@@ -57,8 +57,8 @@ function styleDrumScore(at: AlphaTab, score: model.Score) {
 }
 
 /**
- * Start a new row at each break and mark it with a tick barline at the end of the bar before, so a row the user
- * broke by hand stands apart from one alphaTab wrapped. The score is re-laid out in place, so stale ticks are reset.
+ * Start a new row at each break and mark it with a dashed barline at the end of the bar before, so a row the user
+ * broke by hand stands apart from one alphaTab wrapped. The score is re-laid out in place, so stale marks are reset.
  */
 function applyBreaks(at: AlphaTab, score: model.Score, breaks: number[]) {
   const track = score.tracks[0]
@@ -66,7 +66,7 @@ function applyBreaks(at: AlphaTab, score: model.Score, breaks: number[]) {
   const lineBreaks = new Set(breaks.filter((b) => b > 0 && b < score.masterBars.length))
   track.lineBreaks = lineBreaks
   for (const bar of track.staves[0]?.bars ?? []) {
-    bar.barLineRight = lineBreaks.has(bar.index + 1) ? at.model.BarLineStyle.Tick : at.model.BarLineStyle.Automatic
+    bar.barLineRight = lineBreaks.has(bar.index + 1) ? at.model.BarLineStyle.Dashed : at.model.BarLineStyle.Automatic
   }
 }
 
