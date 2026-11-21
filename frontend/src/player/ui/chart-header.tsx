@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { ChevronDown, Drum, LayoutGrid, Minimize2, Moon, Sun, Volume2, VolumeX, WrapText } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
@@ -54,8 +55,8 @@ function NotationSettings({ drums, compact }: { drums: DrumControls; compact: bo
       >
         {compact ? <span className="text-xs font-semibold tabular-nums">{value.precision === "auto" ? "A" : value.precision}</span> : <>Grid: {label}<ChevronDown /></>}
       </PopoverTrigger>
-      <PopoverContent>
-        <div className="flex w-72 flex-col gap-4">
+      <PopoverContent className="w-80">
+        <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <p className="text-sm font-medium">Notation grid</p>
             <Tabs value={value.precision} onValueChange={(v) => onChange({ ...value, precision: v as Precision })}>
@@ -94,10 +95,10 @@ function NotationSettings({ drums, compact }: { drums: DrumControls; compact: bo
 }
 
 /** Bar at the playhead, re-rendering only when it changes. */
-function useCurrentBar(bars: QBar[] | null): number {
+function useCurrentBar(bars: QBar[] | null, active = true): number {
   const [bar, setBar] = useState(0)
   useEffect(() => {
-    if (!bars) return
+    if (!bars || !active) return
     let raf = 0
     const tick = () => {
       setBar(barIndexAt(bars, getPosition()))
@@ -105,13 +106,13 @@ function useCurrentBar(bars: QBar[] | null): number {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [bars])
+  }, [bars, active])
   return bar
 }
 
 /** Toggle a line break before the bar at the playhead (tap a note first to pick a bar while paused). */
-function LineBreakToggle({ drums, compact }: { drums: DrumControls; compact: boolean }) {
-  const bar = useCurrentBar(drums.bars)
+function LineBreakToggle({ drums, compact, active = true }: { drums: DrumControls; compact: boolean; active?: boolean }) {
+  const bar = useCurrentBar(drums.bars, active)
   const on = drums.breaks.includes(bar)
   const label = on ? `Remove the line break before bar ${bar + 1}` : `Start a new row at bar ${bar + 1}`
   return (
@@ -131,8 +132,8 @@ function LineBreakToggle({ drums, compact }: { drums: DrumControls; compact: boo
 
 /**
  * Chords | Drums switch above the chart; for drums also the notation settings, the line break toggle and the drums mute (play along over the
- * song while reading the chart). Desktop adds tempo/meter and Collapse; on mobile the switch spans the width with
- * 44px targets.
+ * song while reading the chart). Desktop adds tempo/meter and Collapse. On mobile the switch fills the row with 44px targets and the slot to its
+ * right keeps the drum tools' width in both charts (tempo/meter shows there for chords), so switching never resizes or moves the switch.
  */
 export function ChartHeader({ chart, onChart, onCollapse, drums }: {
   chart: Chart
@@ -144,36 +145,49 @@ export function ChartHeader({ chart, onChart, onCollapse, drums }: {
   const muted = usePlayer((s) => s.mixer.muted.includes("drums"))
   const { toggleMute } = usePlayer.getState()
   const desktop = !!onCollapse
+  const isDrums = chart === "drums"
+  const tempo = analysis && `${analysis.bpm ? `${Math.round(analysis.bpm)} BPM · ` : ""}${analysis.beatsPerBar}/4`
 
-  return (
-    <div className="flex shrink-0 items-center gap-2">
-      <Tabs value={chart} onValueChange={(v) => onChart(v as Chart)} className={desktop ? undefined : "min-w-0 flex-1"}>
-        <TabsList variant="segmented" aria-label="Chart" className={desktop ? undefined : "w-full"}>
-          <TabsTrigger value="chords"><LayoutGrid />Chords</TabsTrigger>
-          <TabsTrigger value="drums"><Drum />Drums</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      {desktop && analysis && (
-        <p className="text-sm text-muted-foreground tabular-nums">
-          {analysis.bpm ? `${Math.round(analysis.bpm)} BPM · ` : ""}
-          {analysis.beatsPerBar}/4
-        </p>
-      )}
-      <div className="ml-auto flex items-center gap-1">
-        {chart === "drums" && <NotationSettings drums={drums} compact={!desktop} />}
-        {chart === "drums" && <LineBreakToggle drums={drums} compact={!desktop} />}
-        {chart === "drums" && (
-          desktop ? (
-            <Button variant="toggle" size="sm" aria-pressed={muted} onClick={() => toggleMute("drums")}>
-              {muted ? <VolumeX /> : <Volume2 />}Mute drums
-            </Button>
-          ) : (
+  const tabs = (
+    <Tabs value={chart} onValueChange={(v) => onChart(v as Chart)} className={desktop ? undefined : "min-w-0 flex-1"}>
+      <TabsList variant="segmented" aria-label="Chart" className={desktop ? undefined : "w-full"}>
+        <TabsTrigger value="chords"><LayoutGrid />Chords</TabsTrigger>
+        <TabsTrigger value="drums"><Drum />Drums</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  )
+
+  if (!desktop) {
+    return (
+      <div className="flex shrink-0 items-center gap-2">
+        {tabs}
+        <div className="grid shrink-0 items-center justify-items-end">
+          <div inert={!isDrums} className={cn("col-start-1 row-start-1 flex items-center gap-1 transition-opacity duration-200", !isDrums && "invisible opacity-0")}>
+            <NotationSettings drums={drums} compact />
+            <LineBreakToggle drums={drums} compact active={isDrums} />
             <Button variant="toggle" size="icon-lg" aria-pressed={muted} aria-label="Mute drums" onClick={() => toggleMute("drums")}>
               {muted ? <VolumeX /> : <Volume2 />}
             </Button>
-          )
+          </div>
+          {!isDrums && tempo && <p className="col-start-1 row-start-1 animate-page pr-1 text-sm text-muted-foreground tabular-nums">{tempo}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      {tabs}
+      {tempo && <p className="text-sm text-muted-foreground tabular-nums">{tempo}</p>}
+      <div className="ml-auto flex items-center gap-1">
+        {isDrums && <NotationSettings drums={drums} compact={false} />}
+        {isDrums && <LineBreakToggle drums={drums} compact={false} />}
+        {isDrums && (
+          <Button variant="toggle" size="sm" aria-pressed={muted} onClick={() => toggleMute("drums")}>
+            {muted ? <VolumeX /> : <Volume2 />}Mute drums
+          </Button>
         )}
-        {onCollapse && <Button variant="ghost" size="sm" onClick={onCollapse}><Minimize2 />Collapse</Button>}
+        <Button variant="ghost" size="sm" onClick={onCollapse}><Minimize2 />Collapse</Button>
       </div>
     </div>
   )
