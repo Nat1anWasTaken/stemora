@@ -239,6 +239,13 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine?.setPitch(st)
     },
     setMarkers(markers, opts = {}) {
+      // A drag that ends where it began (a locked marker snapping back) is no edit: just end the preview.
+      if (opts.from && !opts.draft && JSON.stringify(markers) === JSON.stringify(opts.from)) {
+        const grid = buildGrid(opts.from, get().analysis, get().duration)
+        set({ markers: opts.from, grid, markersDraft: false })
+        engine?.setClicks(gridClicks(grid))
+        return
+      }
       if (opts.from && !opts.draft) {
         past = [...past, opts.from].slice(-HISTORY)
         future = []

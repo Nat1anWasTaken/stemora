@@ -56,13 +56,27 @@ export function useDrumBreaks(songId: string, detail: Pick<SongDetail, "drum_bre
   }, [saver, show])
 
   // Older songs: bar indices to times, once the bars are there. Their tempo map is still the default then, so these
-  // are the bars the breaks were set on.
+  // are the bars the breaks were set on. The indices are kept until the server has the times, so a failed save is
+  // retried the next time the song opens.
+  const converting = useRef(false)
   useEffect(() => {
-    if (!legacy.current.length || !hasAnalysis || grid.bars.length === 0) return
-    const t = legacy.current.map((i) => grid.bars[i]?.start).filter((x): x is number => x !== undefined && x > 0)
-    legacy.current = []
-    commit([...new Set(t)].sort((a, b) => a - b))
-  }, [grid, hasAnalysis, commit])
+    if (!legacy.current.length || converting.current || !hasAnalysis || grid.bars.length === 0) return
+    const bars = legacy.current
+    const t = [...new Set(bars.map((i) => grid.bars[i]?.start).filter((x): x is number => x !== undefined && x > 0))].sort((a, b) => a - b)
+    converting.current = true
+    setTimes(t)
+    api
+      .setDrumBreaks(songId, t)
+      .then((r) => {
+        legacy.current = []
+        saver.reset(r.times)
+        show(r.times)
+      })
+      .catch(() => toast.error("Could not update the line breaks; they will be converted next time"))
+      .finally(() => {
+        converting.current = false
+      })
+  }, [grid, hasAnalysis, songId, saver, show])
 
   // Tempo map edits move the breaks with the bars. The breaks each map had are kept, so undo and redo put them back.
   useEffect(() => {

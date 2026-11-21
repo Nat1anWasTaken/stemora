@@ -95,6 +95,11 @@ describe("buildGrid", () => {
     expect(Math.round(tempoAt(defaultMarkers(), g, 10)!)).toBe(120)
   })
 
+  it("keeps manual meters longer than 16 beats as one bar", () => {
+    const g = buildGrid([manual(0, 120, 20, 4)], null, 20)
+    expect(g.bars.map((b) => b.count)).toEqual([20, 20])
+  })
+
   it("is empty until the song's length is known", () => {
     expect(buildGrid([auto(0), manual(1, 120)], analysis, 0)).toEqual({ beats: [], bars: [] })
   })

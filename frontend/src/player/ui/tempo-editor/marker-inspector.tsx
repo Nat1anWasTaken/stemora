@@ -20,6 +20,8 @@ function useDraft<T>(value: T, format: (v: T) => string, parse: (s: string) => T
   const [draft, setDraft] = useState(() => format(value))
   const [invalid, setInvalid] = useState(false)
   const focused = useRef(false)
+  /** Set when the field already committed or cancelled (Enter, Escape), so the blur that follows does nothing. */
+  const settled = useRef(false)
   const shown = format(value)
   useEffect(() => {
     if (!focused.current) setDraft(shown)
@@ -47,11 +49,27 @@ function useDraft<T>(value: T, format: (v: T) => string, parse: (s: string) => T
       },
       onBlur: () => {
         focused.current = false
-        commit()
+        if (settled.current) settled.current = false
+        else commit()
       },
     },
-    commit,
-    revert: () => setDraft(shown),
+    /** Commit now (Enter); the blur that follows is skipped. */
+    commit: () => {
+      commit()
+      settled.current = true
+    },
+    /** Drop the draft (Escape); the blur that follows is skipped. */
+    revert: () => {
+      setDraft(shown)
+      settled.current = true
+    },
+    /** The value being edited: the draft if it parses, else the committed value. */
+    current: () => parse(draft) ?? value,
+    /** Commit `v` and show it, staying in the field (arrow keys). */
+    step: (v: T) => {
+      setDraft(format(v))
+      onCommit(v)
+    },
   }
 }
 
@@ -72,7 +90,7 @@ export function BpmField({ bpm, onCommit, inputRef, large }: { bpm: number; onCo
     } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault()
       const step = (e.altKey ? 0.01 : e.shiftKey ? 0.1 : 1) * (e.key === "ArrowUp" ? 1 : -1)
-      onCommit(clampBpm(bpm + step))
+      d.step(clampBpm(d.current() + step))
     }
   }
   return (
@@ -202,8 +220,9 @@ export function DesktopToolbar({ c }: { c: EditorControls }) {
       {m && <KindSwitch marker={m} index={i} />}
       {m?.kind === "manual" && (
         <>
-          <BpmField bpm={m.bpm} inputRef={c.bpmRef} onCommit={(bpm) => setBpm(i, bpm)} />
-          <TimeSignatureField value={m} onCommit={(s) => replaceMarker(i, { ...m, ...s })} />
+          {/* Keyed by marker so a draft never carries over to (and commits into) the next marker during playback. */}
+          <BpmField key={`bpm-${i}`} bpm={m.bpm} inputRef={c.bpmRef} onCommit={(bpm) => setBpm(i, bpm)} />
+          <TimeSignatureField key={`ts-${i}`} value={m} onCommit={(s) => replaceMarker(i, { ...m, ...s })} />
           <Button variant="ghost" size="icon-sm" aria-label="Detected tempo" title="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(i)}><Sparkles /></Button>
         </>
       )}
@@ -270,12 +289,12 @@ function MarkerDrawer({ index, marker: m, children }: { index: number; marker: T
           <Row>
             <Button variant="secondary" size="icon-lg" aria-label="BPM −1" onClick={() => setBpm(index, m.bpm - 1)}><Minus /></Button>
             <Button variant="ghost" size="icon-lg" aria-label="BPM −0.1" onClick={() => setBpm(index, m.bpm - 0.1)}>−.1</Button>
-            <BpmField bpm={m.bpm} onCommit={(bpm) => setBpm(index, bpm)} large />
+            <BpmField key={`bpm-${index}`} bpm={m.bpm} onCommit={(bpm) => setBpm(index, bpm)} large />
             <Button variant="ghost" size="icon-lg" aria-label="BPM +0.1" onClick={() => setBpm(index, m.bpm + 0.1)}>+.1</Button>
             <Button variant="secondary" size="icon-lg" aria-label="BPM +1" onClick={() => setBpm(index, m.bpm + 1)}><Plus /></Button>
           </Row>
           <div className="flex flex-col items-center gap-3">
-            <TimeSignatureField value={m} picker={false} onCommit={(s) => replaceMarker(index, { ...m, ...s })} />
+            <TimeSignatureField key={`ts-${index}`} value={m} picker={false} onCommit={(s) => replaceMarker(index, { ...m, ...s })} />
             <TimeSignaturePicker value={m} onPick={(s) => replaceMarker(index, { ...m, ...s })} />
           </div>
         </>

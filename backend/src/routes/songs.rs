@@ -811,7 +811,7 @@ async fn set_drum_breaks(
             return Err(too_many());
         }
         let n = sqlx::query(
-            "UPDATE songs SET drum_breaks = $3, updated_at = now() WHERE id = $1 AND user_id = $2",
+            "UPDATE songs SET drum_breaks = $3, drum_break_times = '{}', updated_at = now() WHERE id = $1 AND user_id = $2",
         )
         .bind(id)
         .bind(u.id)
@@ -874,11 +874,10 @@ async fn set_tempo_markers(
     Path(id): Path<Uuid>,
     Json(r): Json<TempoMarkersReq>,
 ) -> AppResult<Json<Value>> {
-    if r.markers.len() > MAX_TEMPO_MARKERS {
-        return Err(AppError::bad_request(
-            "too_many_markers",
-            "too many tempo markers",
-        ));
+    let too_many = || AppError::bad_request("too_many_markers", "too many tempo markers");
+    // Reject huge bodies before parsing; the limit itself applies to the normalised map below.
+    if r.markers.len() > 2 * MAX_TEMPO_MARKERS {
+        return Err(too_many());
     }
     let mut parsed: Vec<(f64, Value)> = r.markers.iter().filter_map(tempo_marker).collect();
     parsed.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -903,6 +902,10 @@ async fn set_tempo_markers(
     }
     if markers.is_empty() {
         markers.push(default_tempo_markers()[0].clone());
+    }
+    // Counted after normalising, so the auto marker added at 0 counts too.
+    if markers.len() > MAX_TEMPO_MARKERS {
+        return Err(too_many());
     }
     let markers = Value::Array(markers);
     let n = sqlx::query(

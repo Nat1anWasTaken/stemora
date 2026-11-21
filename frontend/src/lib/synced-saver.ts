@@ -60,10 +60,17 @@ export function createSyncedSaver<T>(opts: {
     get value() {
       return latest
     },
+    /** The server already holds `value` (saved some other way): adopt it without sending. */
+    reset(value: T) {
+      clearTimeout(timer)
+      latest = value
+      confirmed = value
+    },
     /** Page going away: a normal request may be cut off, so send the unsaved state with keepalive. */
     beacon() {
       clearTimeout(timer)
-      if (opts.same(latest, confirmed)) return
+      // A save in flight may still land a different state, so send the latest one anyway.
+      if (!inFlight && opts.same(latest, confirmed)) return
       void fetch(opts.beacon.url, {
         method: "PUT",
         credentials: "same-origin",

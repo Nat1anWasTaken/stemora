@@ -424,6 +424,8 @@ export function TempoEditor({ centered }: { centered: boolean }) {
     const noGesture = (e: Event) => e.preventDefault()
     ov.addEventListener("gesturestart", noGesture)
     return () => {
+      // Settle a marker drag the cleanup interrupts, as pointerup would.
+      if (gesture?.kind === "marker" && gesture.moved && gesture.last) usePlayer.getState().setMarkers(gesture.last, { from: gesture.from })
       cancelAnimationFrame(raf)
       cancelAnimationFrame(inertia)
       ro.disconnect()

@@ -5,8 +5,8 @@
  */
 export type Viewport = { start: number; pps: number; width: number }
 
-/** Closest zoom: about two pixels per sample at 44.1 kHz. */
-export const MAX_PPS = 20000
+/** Closest zoom: a little over two pixels per sample at 44.1 kHz (the drawing shows samples below 1.5 per pixel). */
+export const MAX_PPS = 100000
 /** Share of the width kept ahead of the playhead when a page turns. */
 const PAGE_LEAD = 0.05
 

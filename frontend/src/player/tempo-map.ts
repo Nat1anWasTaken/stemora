@@ -248,7 +248,8 @@ export function buildGrid(markers: TempoMarker[], analysis: Analysis | null, dur
     else groups[groups.length - 1].push(r)
   }
   const pieces = groups.flatMap((g, gi) => {
-    if (g.length <= MAX_BAR_BEATS) return [{ g, pickup: gi === 0 && !g[0].downbeat }]
+    // Only detected stretches without downbeats are cut; a manual meter (up to 32 beats) stays one bar.
+    if (g.length <= MAX_BAR_BEATS || !g[0].auto) return [{ g, pickup: gi === 0 && !g[0].downbeat }]
     const size = Math.min(MAX_BAR_BEATS, g[0].meter || meter)
     const out: { g: Raw[]; pickup: boolean }[] = []
     for (let i = 0; i < g.length; i += size) out.push({ g: g.slice(i, i + size), pickup: false })

@@ -822,6 +822,50 @@ async fn songs_full_flow() {
         )
         .await;
     assert_eq!(t.status, StatusCode::BAD_REQUEST);
+    // 1000 markers from 1 s: the auto marker added at 0 makes 1001, so it is refused...
+    let from_one: Vec<Value> = (1..=1000)
+        .map(|i| json!({"time": f64::from(i), "kind": "auto"}))
+        .collect();
+    let t = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/tempo-markers"),
+            Some(&bob),
+            None,
+            Some(json!({ "markers": from_one })),
+        )
+        .await;
+    assert_eq!(t.status, StatusCode::BAD_REQUEST);
+    // ...while 1000 that already start at 0 are kept.
+    let from_zero: Vec<Value> = (0..1000)
+        .map(|i| json!({"time": f64::from(i), "kind": "auto"}))
+        .collect();
+    let t = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/tempo-markers"),
+            Some(&bob),
+            None,
+            Some(json!({ "markers": from_zero })),
+        )
+        .await;
+    assert_eq!(t.status, StatusCode::OK, "{:?}", t.body);
+    assert_eq!(t.body["markers"].as_array().map(Vec::len), Some(1000));
+
+    // a legacy bar-index save replaces the times too
+    let b = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/drum-breaks"),
+            Some(&bob),
+            None,
+            Some(json!({"bars":[8]})),
+        )
+        .await;
+    assert_eq!(b.status, StatusCode::OK, "{:?}", b.body);
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.body["drum_breaks"], json!([8]));
+    assert_eq!(d.body["drum_break_times"], json!([]));
 
     // reprocess
     app.storage

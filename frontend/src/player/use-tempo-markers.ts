@@ -26,7 +26,11 @@ export function useTempoMarkers(songId: string, initial: TempoMarker[] | undefin
   )
 
   useEffect(() => {
-    saver.listen((markers) => usePlayer.getState().setMarkers(markers))
+    saver.listen((markers) => {
+      // A failed save of this song must not roll back another song the player has moved on to.
+      if (usePlayer.getState().songId !== songId) return
+      usePlayer.getState().setMarkers(markers)
+    })
     const unsub = usePlayer.subscribe((s, prev) => {
       if (s.songId !== songId || s.markersDraft || (s.markers === prev.markers && !prev.markersDraft)) return
       saver.set(s.markers)
