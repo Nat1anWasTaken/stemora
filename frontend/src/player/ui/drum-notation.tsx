@@ -56,10 +56,18 @@ function styleDrumScore(at: AlphaTab, score: model.Score) {
   hideCoveredRests(score)
 }
 
-function applyBreaks(score: model.Score, breaks: number[]) {
+/**
+ * Start a new row at each break and mark it with a dashed barline at the end of the bar before, so a row the user
+ * broke by hand stands apart from one alphaTab wrapped. The score is re-laid out in place, so stale marks are reset.
+ */
+function applyBreaks(at: AlphaTab, score: model.Score, breaks: number[]) {
   const track = score.tracks[0]
   if (!track) return
-  track.lineBreaks = new Set(breaks.filter((b) => b > 0 && b < score.masterBars.length))
+  const lineBreaks = new Set(breaks.filter((b) => b > 0 && b < score.masterBars.length))
+  track.lineBreaks = lineBreaks
+  for (const bar of track.staves[0]?.bars ?? []) {
+    bar.barLineRight = lineBreaks.has(bar.index + 1) ? at.model.BarLineStyle.Dashed : at.model.BarLineStyle.Automatic
+  }
 }
 
 /** Why the notation is not shown: per attempt, and for a drawing problem also per chart (another grid may draw fine). */
@@ -230,7 +238,7 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
             score.applyFlatSyncPoints(next.syncPoints)
           }
           styleDrumScore(lib, score)
-          applyBreaks(score, live.current.breaks)
+          applyBreaks(lib, score, live.current.breaks)
           self.updateSyncPoints()
         })
 
@@ -346,7 +354,8 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
     const score = instance?.score
     if (!instance || !score || !ready || appliedBreaks.current === breaks) return
     appliedBreaks.current = breaks
-    applyBreaks(score, breaks)
+    const lib = at.current
+    if (lib) applyBreaks(lib, score, breaks)
     instance.render()
   }, [instance, ready, breaks])
 
