@@ -11,14 +11,19 @@
  * channels, so they share one time map and stay in sync) and changes speed and key in a single pass, without first
  * resampling through playbackRate. Its output is split back into the per-stem gains, so the mixer stays live. The node
  * and its copy are only built the first time the speed or key leaves the original. Where it cannot run, playbackRate
- * changes the speed and the pitch moves with it. The metronome never goes through it.
+ * changes the speed and the pitch moves with it. The metronome never goes through it: it clicks on the song's beat
+ * grid (`setClicks`), mapped onto the audio clock through the same offset, speed and loop as the stems.
  */
 import type { StretchNode } from "signalsmith-stretch"
 import type { StemName } from "@/lib/api"
+import { clicksBetween, type Click } from "@/player/clicks"
 import { defaultMixer, effectiveGain, loopedPosition, clampLoop, type LoopRegion, type MixerState } from "@/player/mixer"
 
 export type StemSource = { name: StemName; url: string }
-export type Metronome = { enabled: boolean; bpm: number }
+
+/** How far ahead clicks are put on the audio clock, and how often the scheduler looks. */
+const CLICK_AHEAD = 0.15
+const CLICK_EVERY = 25
 
 type StemNode = { name: StemName; buffer: AudioBuffer; gain: GainNode; source: AudioBufferSourceNode | null }
 
@@ -43,10 +48,13 @@ export class StemEngine {
   private startedAt = 0 // ctx time at which `offset` was (or will be) heard
   private offset = 0 // song position at startedAt (the song then advances `speed` seconds per second)
   private endClock: ConstantSourceNode | null = null
-  private metro: Metronome = { enabled: false, bpm: 100 }
+  private metroOn = false
+  private clicks: Click[] = []
+  private clickTimes: number[] = []
   private metroTimer: ReturnType<typeof setInterval> | null = null
-  private metroNext = 0
-  private metroBeat = 0
+  /** Context time up to which clicks are scheduled, and the clicks still to sound (so a seek can silence them). */
+  private metroUntil = 0
+  private scheduled: { osc: OscillatorNode; when: number }[] = []
   private metroGain: GainNode | null = null
   duration = 0
   onEnded: (() => void) | null = null
@@ -185,8 +193,7 @@ export class StemEngine {
     let pos = this.offset >= this.duration - 0.05 ? 0 : this.offset
     if (this.loop?.enabled && pos >= this.loop.b) pos = this.loop.a
     this.playing = true
-    const origin = this.startSources(pos, ctx.currentTime + 0.08)
-    this.startMetronome(origin)
+    this.startSources(pos, ctx.currentTime + 0.08)
   }
 
   pause() {
@@ -274,6 +281,7 @@ export class StemEngine {
     if (this.stretching) this.scheduleStretch()
     else for (const s of this.stems) s.source?.playbackRate.setValueAtTime(this.speed, when)
     this.armEnd()
+    this.rescheduleClicks()
   }
 
   /** Points the stretcher at `offset` from `startedAt` on, with the current speed, key and loop. */
@@ -282,12 +290,19 @@ export class StemEngine {
     void this.stretch!.schedule({ active: true, output: this.startedAt, input: this.offset, rate: this.speed, semitones: this.semitones, loopStart: loop?.a ?? 0, loopEnd: loop?.b ?? 0 })
   }
 
-  setMetronome(m: Metronome) {
-    const wasOn = this.metro.enabled
-    this.metro = m
+  setMetronome(enabled: boolean) {
+    if (enabled === this.metroOn) return
+    this.metroOn = enabled
     if (!this.playing || !this.ctx) return
-    if (m.enabled && !wasOn) this.startMetronome(this.ctx.currentTime + 0.05)
-    if (!m.enabled) this.stopMetronome()
+    if (enabled) this.startMetronome()
+    else this.stopMetronome()
+  }
+
+  /** The beats to click on (song seconds, sorted); takes effect at once, also mid-playback. */
+  setClicks(clicks: Click[]) {
+    this.clicks = clicks
+    this.clickTimes = clicks.map((c) => c.time)
+    this.rescheduleClicks()
   }
 
   /** Starts playing from `offset`, heard from `when` or later if the stretcher needs time; returns when it is heard. */
@@ -319,6 +334,7 @@ export class StemEngine {
       }
     }
     this.armEnd()
+    this.rescheduleClicks()
     return when
   }
 
@@ -369,26 +385,57 @@ export class StemEngine {
     this.endClock = null
   }
 
-  private startMetronome(origin: number) {
+  private startMetronome() {
     this.stopMetronome()
-    if (!this.metro.enabled || !this.ctx) return
-    this.metroNext = origin
-    this.metroBeat = 0
-    const pump = () => {
-      const ctx = this.ctx
-      if (!ctx) return
-      while (this.metroNext < ctx.currentTime + 0.15) {
-        this.click(this.metroNext, this.metroBeat % 4 === 0)
-        this.metroNext += 60 / this.metro.bpm
-        this.metroBeat++
+    if (!this.metroOn || !this.ctx || !this.playing) return
+    this.metroUntil = Math.max(this.ctx.currentTime, this.startedAt)
+    this.pumpClicks()
+    this.metroTimer = setInterval(() => this.pumpClicks(), CLICK_EVERY)
+  }
+  /** Puts the clicks heard between `metroUntil` and a little ahead of now on the audio clock. */
+  private pumpClicks() {
+    const ctx = this.ctx
+    if (!ctx || !this.playing || !this.metroOn) return
+    const until = ctx.currentTime + CLICK_AHEAD
+    if (until <= this.metroUntil) return
+    const from = Math.max(this.metroUntil, this.startedAt)
+    const raw = (t: number) => this.offset + (t - this.startedAt) * this.speed
+    const due = clicksBetween(this.clicks, this.clickTimes, raw(from), raw(until), { offset: this.offset, startedAt: this.startedAt, speed: this.speed, loop: this.activeLoop })
+    this.metroUntil = until
+    this.scheduled = this.scheduled.filter((s) => s.when > ctx.currentTime - 0.1)
+    for (const c of due) this.click(c.when, c.accent)
+  }
+  /** Silences clicks already scheduled past now and schedules again from the current timing. */
+  private rescheduleClicks() {
+    const ctx = this.ctx
+    if (!ctx) return
+    for (const s of this.scheduled) {
+      if (s.when <= ctx.currentTime) continue
+      try {
+        s.osc.stop()
+      } catch {
+        /* not started */
       }
     }
-    pump()
-    this.metroTimer = setInterval(pump, 25)
+    this.scheduled = []
+    if (!this.playing || !this.metroOn) return
+    if (!this.metroTimer) return this.startMetronome()
+    this.metroUntil = Math.max(ctx.currentTime, this.startedAt)
+    this.pumpClicks()
   }
   private stopMetronome() {
     if (this.metroTimer) clearInterval(this.metroTimer)
     this.metroTimer = null
+    const ctx = this.ctx
+    for (const s of this.scheduled) {
+      if (ctx && s.when <= ctx.currentTime) continue
+      try {
+        s.osc.stop()
+      } catch {
+        /* not started */
+      }
+    }
+    this.scheduled = []
   }
   private click(when: number, accent: boolean) {
     const ctx = this.ctx!
@@ -401,6 +448,7 @@ export class StemEngine {
     osc.connect(env).connect(this.metroGain!)
     osc.start(when)
     osc.stop(when + 0.06)
+    this.scheduled.push({ osc, when })
   }
 
   dispose() {

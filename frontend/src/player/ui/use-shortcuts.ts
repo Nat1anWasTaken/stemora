@@ -5,9 +5,10 @@ import type { StemName } from "@/lib/api"
 
 /**
  * Desktop keyboard shortcuts. `selected` is the stem that M / S act on (change it with 1-4); C switches the open chart;
- * B toggles a line break before the bar at the playhead in the drum notation.
+ * B toggles a line break before the bar at the playhead in the drum notation; V switches between Tempo and Practice.
+ * The tempo editor handles its own keys (see tempo-editor.tsx).
  */
-export function useShortcuts(selected: StemName, select: (n: StemName) => void, cycleChart?: () => void, toggleBreak?: () => void) {
+export function useShortcuts(selected: StemName, select: (n: StemName) => void, cycleChart?: () => void, toggleBreak?: () => void, toggleView?: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -50,8 +51,11 @@ export function useShortcuts(selected: StemName, select: (n: StemName) => void, 
           cycleChart?.()
           break
         case "b":
-        case "B":
           toggleBreak?.()
+          break
+        case "v":
+        case "V":
+          toggleView?.()
           break
         case "Home":
           st.seek(0)
@@ -62,5 +66,5 @@ export function useShortcuts(selected: StemName, select: (n: StemName) => void, 
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selected, select, cycleChart, toggleBreak])
+  }, [selected, select, cycleChart, toggleBreak, toggleView])
 }

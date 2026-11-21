@@ -7,8 +7,11 @@ import { useIsDesktop } from "@/hooks/use-media"
  * A panel of controls: popover on desktop, bottom drawer on touch/mobile, with a centred title and an optional control on the right.
  * Use this (or ActionMenu for a list of actions) instead of Popover/Drawer directly so phones always get a sheet; lint enforces it.
  */
-export function ResponsivePanel({ title, action, trigger, size = "default", children }: {
+export function ResponsivePanel({ title, action, trigger, size = "default", open: openProp, onOpenChange, children }: {
   title: string
+  /** Controlled open state (optional), e.g. to close the panel from inside it. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   action?: ReactNode
   trigger: ReactElement
   /** Popover width on desktop; the drawer is always full width. */
@@ -16,7 +19,12 @@ export function ResponsivePanel({ title, action, trigger, size = "default", chil
   children: ReactNode
 }) {
   const desktop = useIsDesktop()
-  const [open, setOpen] = useState(false)
+  const [own, setOwn] = useState(false)
+  const open = openProp ?? own
+  const setOpen = (o: boolean) => {
+    setOwn(o)
+    onOpenChange?.(o)
+  }
   const header = (Title: typeof DrawerTitle | typeof PopoverTitle) => (
     <div className="relative flex min-h-9 items-center justify-center">
       <Title className="text-lg font-semibold">{title}</Title>

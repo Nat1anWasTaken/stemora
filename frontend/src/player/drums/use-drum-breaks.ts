@@ -1,92 +1,53 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, type SongDetail } from "@/lib/api"
 import { keys } from "@/lib/queries"
-
-/** Wait this long after the last toggle before saving, so a burst of toggles becomes one request. */
-const SAVE_DELAY = 300
+import { createSyncedSaver } from "@/lib/synced-saver"
+import { breakBars, remapBreaks } from "@/player/drums/breaks"
+import { usePlayer } from "@/player/store"
+import type { TempoMarker } from "@/player/tempo-map"
 
 const same = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i])
 
 /**
- * Saves one song's line breaks behind the UI: debounced, whole set at a time, never more than one request in flight
- * (a newer state goes out once the current request ends, so an older response can never overwrite it). `show` puts a
- * state on screen; a failed save shows what the server last confirmed again.
+ * The song's drum-notation line breaks, stored on the server as the start times of the bars that begin a row (see
+ * drums/breaks.ts), shown as bar indices. Changes show at once and are saved behind them (`createSyncedSaver`).
+ *
+ * When the tempo map changes, the breaks move to the bar lines now nearest them; any left without a bar line are
+ * removed with an Undo toast, and undoing the tempo change (here or with Ctrl/⌘+Z) brings them back. Older songs
+ * stored bar indices: those are converted once the bars are known. Mount once per song.
  */
-function createSaver(songId: string, initial: number[]) {
-  let latest = initial
-  let confirmed = initial
-  let inFlight = false
-  let timer = 0
-  let show: (breaks: number[]) => void = () => {}
-  const saver = {
-    /** Where saved or rolled-back states are shown. */
-    listen(fn: (breaks: number[]) => void) {
-      show = fn
-    },
-    flush() {
-      clearTimeout(timer)
-      if (inFlight || same(latest, confirmed)) return
-      const sent = latest
-      inFlight = true
-      api
-        .setDrumBreaks(songId, sent)
-        .then((r) => {
-          confirmed = r.bars
-          // The server normalises; adopt its answer unless the user changed something meanwhile.
-          if (same(latest, sent) && !same(r.bars, sent)) {
-            latest = r.bars
-            show(r.bars)
-          }
-        })
-        .catch((e: unknown) => {
-          toast.error(e instanceof Error ? `Could not save the line breaks: ${e.message}` : "Could not save the line breaks")
-          latest = confirmed
-          show(confirmed)
-        })
-        .finally(() => {
-          inFlight = false
-          if (!same(latest, confirmed)) saver.flush()
-        })
-    },
-    toggle(bar: number) {
-      if (bar < 1) return
-      latest = latest.includes(bar) ? latest.filter((b) => b !== bar) : [...latest, bar].sort((a, b) => a - b)
-      show(latest)
-      clearTimeout(timer)
-      timer = window.setTimeout(saver.flush, SAVE_DELAY)
-    },
-    /** Page going away: a normal request may be cut off, so send the unsaved state with keepalive. */
-    beacon() {
-      clearTimeout(timer)
-      if (same(latest, confirmed)) return
-      void fetch(`/api/songs/${songId}/drum-breaks`, {
-        method: "PUT",
-        credentials: "same-origin",
-        keepalive: true,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bars: latest }),
-      }).catch(() => {})
-    },
-  }
-  return saver
-}
-
-/**
- * The song's drum-notation line breaks (bars that start a new row), stored on the server. Toggles show at once (local
- * state and the song query cache) and are saved behind them; see `createSaver`. Mount once per song.
- */
-export function useDrumBreaks(songId: string, initial: number[] | undefined) {
+export function useDrumBreaks(songId: string, detail: Pick<SongDetail, "drum_breaks" | "drum_break_times">) {
   const qc = useQueryClient()
-  const [breaks, setBreaks] = useState(() => initial ?? [])
-  const [saver] = useState(() => createSaver(songId, initial ?? []))
+  const grid = usePlayer((s) => s.grid)
+  const hasAnalysis = usePlayer((s) => !!s.analysis)
+  const initial = detail.drum_break_times ?? []
+  const [times, setTimes] = useState(initial)
+  const legacy = useRef(initial.length ? [] : (detail.drum_breaks ?? []))
+  /** Older breaks still waiting to be saved as times: edits wait too, or they would save an incomplete set. */
+  const [pending, setPending] = useState(() => !initial.length && !!detail.drum_breaks?.length)
+  const [saver] = useState(() =>
+    createSyncedSaver<number[]>({
+      initial,
+      same,
+      save: (t) => api.setDrumBreaks(songId, t).then((r) => r.times),
+      beacon: { url: `/api/songs/${songId}/drum-breaks`, body: (t) => ({ times: t }) },
+      onError: (e) => toast.error(e instanceof Error ? `Could not save the line breaks: ${e.message}` : "Could not save the line breaks"),
+    }),
+  )
+
+  const show = useCallback((t: number[]) => {
+    setTimes(t)
+    qc.setQueryData<SongDetail>(keys.song(songId), (d) => (d ? { ...d, drum_breaks: [], drum_break_times: t } : d))
+  }, [qc, songId])
+  const commit = useCallback((t: number[]) => {
+    show(t)
+    saver.set(t)
+  }, [show, saver])
 
   useEffect(() => {
-    saver.listen((b) => {
-      setBreaks(b)
-      qc.setQueryData<SongDetail>(keys.song(songId), (d) => (d ? { ...d, drum_breaks: b } : d))
-    })
+    saver.listen(show)
     const onHide = () => saver.beacon()
     window.addEventListener("pagehide", onHide)
     return () => {
@@ -94,7 +55,75 @@ export function useDrumBreaks(songId: string, initial: number[] | undefined) {
       // Closing the player: save what is left (a request in flight sends the rest when it ends).
       saver.flush()
     }
-  }, [saver, qc, songId])
+  }, [saver, show])
 
-  return { breaks, toggle: saver.toggle }
+  // Older songs: bar indices to times, once the bars are there. Their tempo map is still the default then, so these
+  // are the bars the breaks were set on. The indices are kept until the server has the times, so a failed save is
+  // retried the next time the song opens.
+  const converting = useRef(false)
+  useEffect(() => {
+    if (!legacy.current.length || converting.current || !hasAnalysis || grid.bars.length === 0) return
+    const bars = legacy.current
+    const t = [...new Set(bars.map((i) => grid.bars[i]?.start).filter((x): x is number => x !== undefined && x > 0))].sort((a, b) => a - b)
+    converting.current = true
+    setTimes(t)
+    api
+      .setDrumBreaks(songId, t)
+      .then((r) => {
+        legacy.current = []
+        setPending(false)
+        saver.reset(r.times)
+        show(r.times)
+      })
+      .catch(() => toast.error("Could not update the line breaks; they will be converted next time"))
+      .finally(() => {
+        converting.current = false
+      })
+  }, [grid, hasAnalysis, songId, saver, show])
+
+  // Tempo map edits move the breaks with the bars. The breaks each map had are kept, so undo and redo put them back.
+  useEffect(() => {
+    const kept = new WeakMap<TempoMarker[], number[]>()
+    let current = usePlayer.getState().markers
+    return usePlayer.subscribe((s, p) => {
+      if (s.markersDraft) return
+      if (s.markerEdits === p.markerEdits) {
+        current = s.markers // loading, not an edit
+        return
+      }
+      const before = saver.value
+      kept.set(current, before)
+      current = s.markers
+      const back = kept.get(s.markers)
+      if (back) {
+        if (!same(back, before)) commit(back)
+        return
+      }
+      if (before.length === 0 || legacy.current.length || !s.analysis?.drums) return
+      const r = remapBreaks(before, s.grid.bars)
+      if (!same(r.times, before)) commit(r.times)
+      if (r.removed === 0) return
+      const edited = s.markers
+      toast(`Removed ${r.removed} line ${r.removed === 1 ? "break" : "breaks"}`, {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            const st = usePlayer.getState()
+            if (st.markers === edited) st.undo()
+          },
+        },
+      })
+    })
+  }, [saver, commit])
+
+  const breaks = useMemo(() => breakBars(times, grid.bars), [times, grid])
+  const toggle = useCallback((bar: number) => {
+    const start = usePlayer.getState().grid.bars[bar]?.start
+    if (bar < 1 || start === undefined || legacy.current.length) return
+    const cur = saver.value
+    const on = breakBars(cur, usePlayer.getState().grid.bars).includes(bar)
+    commit(on ? cur.filter((t) => Math.abs(t - start) > 0.002) : [...cur, start].sort((a, b) => a - b))
+  }, [saver, commit])
+
+  return { breaks, toggle, editable: !pending }
 }

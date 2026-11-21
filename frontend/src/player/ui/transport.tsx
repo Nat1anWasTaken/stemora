@@ -40,7 +40,7 @@ export function SeekBar() {
 export function Transport() {
   const playing = usePlayer((s) => s.playing)
   const status = usePlayer((s) => s.status)
-  const metronome = usePlayer((s) => s.metronome.enabled)
+  const metronome = usePlayer((s) => s.metronome)
   const speed = usePlayer((s) => s.speed)
   const semitones = usePlayer((s) => s.semitones)
   const { toggle, skip } = usePlayer.getState()

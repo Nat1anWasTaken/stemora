@@ -5,6 +5,7 @@ import { splitChord, transposeChord } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
 import { MAX_SEMITONES, speedFor, tempoMarking, tempoRange, tempoUnit, tempoValue } from "@/player/tempo"
 import { TickDial } from "@/player/ui/tick-dial"
+import { usePlayheadTempo } from "@/player/ui/use-playhead-tempo"
 
 const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : "0")
 
@@ -14,11 +15,15 @@ function ShiftUnavailable() {
   return <p className="text-center text-sm text-muted-foreground">This browser cannot keep the pitch while changing speed, so the key cannot be changed and tempo changes also shift the pitch.</p>
 }
 
-/** Metronome on/off plus the tempo dial; the dial changes the song's speed (in BPM when the song's tempo is known). */
+/**
+ * Metronome on/off plus the tempo dial; the dial changes the song's speed, in BPM of the tempo under the playhead
+ * when there is one (else percent).
+ */
 export function TempoPanel({ trigger }: { trigger: ReactElement }) {
-  const enabled = usePlayer((s) => s.metronome.enabled)
+  const enabled = usePlayer((s) => s.metronome)
   const speed = usePlayer((s) => s.speed)
-  const baseBpm = usePlayer((s) => s.analysis?.bpm ?? null)
+  const playhead = usePlayheadTempo().bpm
+  const baseBpm = playhead ? Math.round(playhead) : null
   const { setMetronome, setSpeed } = usePlayer.getState()
   const { min, max } = tempoRange(baseBpm)
   const value = tempoValue(speed, baseBpm)
