@@ -10,7 +10,16 @@ import { lastAtOrBefore, type Analysis } from "@/player/analysis"
  * marker is free.
  */
 export type AutoMarker = { time: number; kind: "auto" }
-export type ManualMarker = { time: number; kind: "manual"; bpm: number; num: number; den: number }
+/**
+ * How loud one metronome click is. `muted` keeps its place in the pattern but makes no sound.
+ */
+export type ClickLevel = "accent" | "normal" | "muted"
+/**
+ * A manual marker's click pattern: one column per beat of the bar, each a list of the beat's evenly spaced clicks
+ * (index 0 is the beat itself, the rest are its subdivisions). Absent means the default: beat 1 accented, one click a beat.
+ */
+export type ClickPattern = ClickLevel[][]
+export type ManualMarker = { time: number; kind: "manual"; bpm: number; num: number; den: number; clicks?: ClickPattern }
 export type TempoMarker = AutoMarker | ManualMarker
 
 export const DENOMINATORS = [2, 4, 8, 16] as const
@@ -18,6 +27,8 @@ export const MIN_BPM = 20
 export const MAX_BPM = 400
 export const MAX_NUM = 32
 export const MAX_MARKERS = 1000
+/** Most clicks one beat may be split into. */
+export const MAX_SUBDIVISIONS = 8
 /** Closest two markers may sit, in seconds. */
 const MIN_GAP = 0.02
 /** Detected beats closer than this share of a beat to a marker are dropped (the marker is the beat). */
@@ -41,8 +52,47 @@ export function parseMarker(json: unknown): TempoMarker | null {
   if (j.kind === "auto") return { time: j.time, kind: "auto" }
   if (j.kind !== "manual" || !isNum(j.bpm) || !isNum(j.num) || !isNum(j.den)) return null
   if (!Number.isInteger(j.num) || j.num < 1 || j.num > MAX_NUM || !(DENOMINATORS as readonly number[]).includes(j.den)) return null
-  return { time: j.time, kind: "manual", bpm: clampBpm(j.bpm), num: j.num, den: j.den }
+  const clicks = parsePattern(j.clicks)
+  return { time: j.time, kind: "manual", bpm: clampBpm(j.bpm), num: j.num, den: j.den, ...(clicks ? { clicks } : {}) }
 }
+
+// --- Click patterns ----------------------------------------------------------------------------------------------
+
+const LEVELS: readonly ClickLevel[] = ["accent", "normal", "muted"]
+
+/** A well-formed click pattern from JSON (1..MAX_NUM beats of 1..MAX_SUBDIVISIONS known levels), or null. */
+export function parsePattern(json: unknown): ClickPattern | null {
+  if (!Array.isArray(json) || json.length < 1 || json.length > MAX_NUM) return null
+  const ok = json.every((col) => Array.isArray(col) && col.length >= 1 && col.length <= MAX_SUBDIVISIONS && col.every((l) => LEVELS.includes(l as ClickLevel)))
+  return ok ? (json as ClickLevel[][]).map((col) => [...col]) : null
+}
+
+const defaultColumn = (beat: number): ClickLevel[] => [beat === 0 ? "accent" : "normal"]
+/** Beat 1 accented, every other beat normal, no subdivisions. */
+export const defaultPattern = (num: number): ClickPattern => Array.from({ length: num }, (_, i) => defaultColumn(i))
+
+/** The marker's pattern with exactly one column per beat of its meter (missing beats get the default). */
+export const patternFor = (m: ManualMarker): ClickPattern =>
+  Array.from({ length: m.num }, (_, i) => (m.clicks?.[i] ? [...m.clicks[i]] : defaultColumn(i)))
+
+/** accent → normal → muted → accent. */
+export const cycleLevel = (l: ClickLevel): ClickLevel => LEVELS[(LEVELS.indexOf(l) + 1) % LEVELS.length]
+
+/** Sets the level of one click. */
+export const setLevel = (p: ClickPattern, beat: number, sub: number, level: ClickLevel): ClickPattern =>
+  p.map((col, i) => (i === beat ? col.map((l, j) => (j === sub ? level : l)) : col))
+
+/** One more subdivision on `beat`, or on every beat that has room. New subdivisions sound normal. */
+export const addSubdivision = (p: ClickPattern, beat: number | "all"): ClickPattern =>
+  p.map((col, i) => ((beat === "all" || i === beat) && col.length < MAX_SUBDIVISIONS ? [...col, "normal"] : col))
+
+/** Drops the last subdivision of `beat`, or of every beat that has one; the beat itself always stays. */
+export const removeSubdivision = (p: ClickPattern, beat: number | "all"): ClickPattern =>
+  p.map((col, i) => ((beat === "all" || i === beat) && col.length > 1 ? col.slice(0, -1) : col))
+
+/** A pattern to store on a marker: undefined when it is the default, so plain markers stay plain. */
+export const storedPattern = (p: ClickPattern): ClickPattern | undefined =>
+  JSON.stringify(p) === JSON.stringify(defaultPattern(p.length)) ? undefined : p
 
 /** Sorted, one marker per time, the first at 0:00, locked markers exactly on their grid, nothing past `duration`. */
 export function normalizeMarkers(list: unknown, duration = Infinity): TempoMarker[] {
@@ -173,7 +223,7 @@ export const formatTimeSignature = (s: TimeSignature) => `${s.num}/${s.den}`
 // --- Beat grid ---------------------------------------------------------------------------------------------------
 
 /** One beat. `beat` is 1-based within its bar; pickup beats before the first bar are bar 0. */
-export type GridBeat = { time: number; bar: number; beat: number; downbeat: boolean; den: number; auto: boolean }
+export type GridBeat = { time: number; bar: number; beat: number; downbeat: boolean; den: number; auto: boolean; marker: number }
 /** One bar: `count` beats of `den` notes from beat index `first`; `end` is where the next bar starts (or the song ends). */
 export type GridBar = { bar: number; start: number; end: number; first: number; count: number; den: number; auto: boolean }
 export type BeatGrid = { beats: GridBeat[]; bars: GridBar[] }
@@ -205,7 +255,7 @@ export function detectedTempo(a: Analysis | null, from: number, to: number): { b
 export function buildGrid(markers: TempoMarker[], analysis: Analysis | null, duration: number): BeatGrid {
   // Without the song's length the last manual segment would never end.
   if (!(duration > 0) || !Number.isFinite(duration)) return { beats: [], bars: [] }
-  type Raw = { time: number; downbeat: boolean; den: number; auto: boolean; meter: number }
+  type Raw = { time: number; downbeat: boolean; den: number; auto: boolean; meter: number; marker: number }
   const raw: Raw[] = []
   const end = duration
   const detected = analysis?.beats ?? []
@@ -220,7 +270,7 @@ export function buildGrid(markers: TempoMarker[], analysis: Analysis | null, dur
       for (let j = 0; j < 100_000; j++) {
         const time = start + j * len
         if (time >= stop - 1e-6 || !Number.isFinite(time)) break
-        raw.push({ time, downbeat: j % m.num === 0, den: m.den, auto: false, meter: m.num })
+        raw.push({ time, downbeat: j % m.num === 0, den: m.den, auto: false, meter: m.num, marker: k })
       }
       return
     }
@@ -228,7 +278,7 @@ export function buildGrid(markers: TempoMarker[], analysis: Analysis | null, dur
     if (!Number.isFinite(len)) len = detectedBeatLength(detected, 0, Infinity)
     const edge = Number.isFinite(len) ? len * EDGE_SHARE : 0
     // The song's start keeps the detected pickup; a later auto marker is itself a downbeat.
-    if (k > 0) raw.push({ time: start, downbeat: true, den: 4, auto: true, meter })
+    if (k > 0) raw.push({ time: start, downbeat: true, den: 4, auto: true, meter, marker: k })
     const from = k > 0 ? start + edge : start
     const next = markers[k + 1]
     const to = next ? stop - edge : stop
@@ -236,7 +286,7 @@ export function buildGrid(markers: TempoMarker[], analysis: Analysis | null, dur
     for (let i = i0; i < detected.length && detected[i] < to; i++) {
       const time = detected[i]
       if (time < from) continue
-      raw.push({ time, downbeat: downs.has(Math.round(time * 1000)), den: 4, auto: true, meter })
+      raw.push({ time, downbeat: downs.has(Math.round(time * 1000)), den: 4, auto: true, meter, marker: k })
     }
   })
 
@@ -262,7 +312,7 @@ export function buildGrid(markers: TempoMarker[], analysis: Analysis | null, dur
     if (!pickup) bar += 1
     const n = pickup ? 0 : bar
     bars.push({ bar: n, start: g[0].time, end: g[0].time, first: beats.length, count: g.length, den: g[0].den, auto: g[0].auto })
-    g.forEach((r, j) => beats.push({ time: r.time, bar: n, beat: j + 1, downbeat: j === 0 && !pickup, den: r.den, auto: r.auto }))
+    g.forEach((r, j) => beats.push({ time: r.time, bar: n, beat: j + 1, downbeat: j === 0 && !pickup, den: r.den, auto: r.auto, marker: r.marker }))
   }
   bars.forEach((b, i) => {
     b.end = bars[i + 1]?.start ?? end
@@ -282,5 +332,31 @@ export function tempoAt(markers: TempoMarker[], grid: BeatGrid, t: number): numb
   return Number.isFinite(len) && len > 0 ? 60 / len : null
 }
 
-/** Metronome clicks for a grid: every beat, accented on downbeats. */
-export const gridClicks = (grid: BeatGrid) => grid.beats.map((b) => ({ time: b.time, accent: b.downbeat }))
+/** One click the metronome plays: song time and how it sounds. */
+export type GridClick = { time: number; level: Exclude<ClickLevel, "muted"> }
+
+/**
+ * Metronome clicks for a grid. Beats of a manual marker follow its click pattern (subdivisions evenly spaced inside
+ * the beat, muted clicks left out); detected beats click on every beat, accented on downbeats. Sorted by time.
+ */
+export function markerClicks(grid: BeatGrid, markers: TempoMarker[], duration = Infinity): GridClick[] {
+  const out: GridClick[] = []
+  const patterns = new Map<number, ClickPattern>()
+  for (const b of grid.beats) {
+    const m = markers[b.marker]
+    if (!m || m.kind !== "manual" || b.auto) {
+      out.push({ time: b.time, level: b.downbeat ? "accent" : "normal" })
+      continue
+    }
+    let p = patterns.get(b.marker)
+    if (!p) patterns.set(b.marker, (p = patternFor(m)))
+    const col = p[(b.beat - 1) % m.num] ?? defaultColumn(b.beat - 1)
+    const len = beatLength(m)
+    const end = Math.min(duration, markers[b.marker + 1]?.time ?? Infinity)
+    col.forEach((level, k) => {
+      const time = b.time + (k / col.length) * len
+      if (level !== "muted" && time < end - 1e-6) out.push({ time, level })
+    })
+  }
+  return out
+}

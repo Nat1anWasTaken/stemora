@@ -49,10 +49,13 @@ export function ResponsivePanel({ title, action, trigger, size = "default", open
     <Drawer open={open} onOpenChange={setOpen} showSwipeHandle>
       <DrawerTrigger render={trigger} />
       <DrawerContent>
-        <div className="flex flex-col gap-4 px-5 pt-3 pb-safe">
-          {header(DrawerTitle)}
-          {children}
-          <div className="h-2" />
+        <div className="flex min-h-0 flex-1 flex-col gap-4 pt-3">
+          <div className="px-5">{header(DrawerTitle)}</div>
+          {/* A panel taller than the drawer allows (a long metronome pattern) scrolls under the fixed header. */}
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-safe">
+            {children}
+            <div className="h-2 shrink-0" />
+          </div>
         </div>
       </DrawerContent>
     </Drawer>

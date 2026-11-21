@@ -54,6 +54,9 @@ export function mockApi(): Plugin {
   const invites: { id: string; created_at: string; expires_at: string; used_at: string | null; used_by_email: string | null; status: "pending" | "used" | "expired" }[] = []
   const now = Date.now()
   const iso = (ms: number) => new Date(ms).toISOString()
+  /** A manual marker's click pattern as the server keeps it: 1..32 beats of 1..8 known levels. */
+  const validClicks = (c: unknown) =>
+    Array.isArray(c) && c.length >= 1 && c.length <= 32 && c.every((col) => Array.isArray(col) && col.length >= 1 && col.length <= 8 && col.every((l) => l === "accent" || l === "normal" || l === "muted"))
   /** Tempo maps per song id (PUT /api/songs/{id}/tempo-markers). */
   const tempoMarkers = new Map<string, { time: number }[]>()
   /** Drum-notation line breaks (bar start times) per song id (PUT /api/songs/{id}/drum-breaks). */
@@ -314,7 +317,7 @@ export function mockApi(): Plugin {
               if (list.length > 1000) return err(res, 400, "too_many_markers", "too many tempo markers")
               const ok = list
                 .filter((m) => typeof m.time === "number" && m.time >= 0 && (m.kind === "auto" || (m.kind === "manual" && typeof m.bpm === "number" && [2, 4, 8, 16].includes(m.den as number) && Number.isInteger(m.num) && (m.num as number) >= 1 && (m.num as number) <= 32)))
-                .map((m) => (m.kind === "auto" ? { time: m.time as number, kind: "auto" } : { time: m.time as number, kind: "manual", bpm: Math.round(Math.min(400, Math.max(20, m.bpm as number)) * 100) / 100, num: m.num, den: m.den }))
+                .map((m) => (m.kind === "auto" ? { time: m.time as number, kind: "auto" } : { time: m.time as number, kind: "manual", bpm: Math.round(Math.min(400, Math.max(20, m.bpm as number)) * 100) / 100, num: m.num, den: m.den, ...(validClicks(m.clicks) ? { clicks: m.clicks } : {}) }))
                 .sort((x, y) => x.time - y.time)
               const out: { time: number }[] = []
               for (const m of ok) {

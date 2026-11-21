@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { clicksBetween, type Click } from "@/player/clicks"
 
-const clicks: Click[] = [0, 0.5, 1, 1.5, 2, 2.5, 3].map((time, i) => ({ time, accent: i % 4 === 0 }))
+const clicks: Click[] = [0, 0.5, 1, 1.5, 2, 2.5, 3].map((time, i) => ({ time, level: i % 4 === 0 ? ("accent" as const) : ("normal" as const) }))
 const times = clicks.map((c) => c.time)
 const at = (r: { when: number }[]) => r.map((x) => Math.round(x.when * 1000) / 1000)
 

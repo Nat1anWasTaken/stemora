@@ -841,7 +841,26 @@ struct TempoMarkersReq {
     markers: Vec<Value>,
 }
 
-/// One well-formed marker, normalised (BPM rounded to 0.01), or None.
+/// Most clicks one beat of a metronome pattern may be split into.
+const MAX_SUBDIVISIONS: usize = 8;
+
+/// Whether a manual marker's `clicks` is a well-formed metronome pattern: 1..32 beats, each a list of 1..8 levels.
+fn click_pattern_ok(v: &Value) -> bool {
+    let Some(beats) = v.as_array() else {
+        return false;
+    };
+    (1..=32).contains(&beats.len())
+        && beats.iter().all(|b| {
+            b.as_array().is_some_and(|subs| {
+                (1..=MAX_SUBDIVISIONS).contains(&subs.len())
+                    && subs
+                        .iter()
+                        .all(|l| matches!(l.as_str(), Some("accent" | "normal" | "muted")))
+            })
+        })
+}
+
+/// One well-formed marker, normalised (BPM rounded to 0.01, a malformed click pattern dropped), or None.
 fn tempo_marker(v: &Value) -> Option<(f64, Value)> {
     let time = v.get("time")?.as_f64()?;
     if !time.is_finite() || !(0.0..=86_400.0).contains(&time) {
@@ -857,10 +876,11 @@ fn tempo_marker(v: &Value) -> Option<(f64, Value)> {
                 return None;
             }
             let bpm = (bpm.clamp(20.0, 400.0) * 100.0).round() / 100.0;
-            Some((
-                time,
-                json!({"time": time, "kind": "manual", "bpm": bpm, "num": num, "den": den}),
-            ))
+            let mut m = json!({"time": time, "kind": "manual", "bpm": bpm, "num": num, "den": den});
+            if let Some(clicks) = v.get("clicks").filter(|c| click_pattern_ok(c)) {
+                m["clicks"] = clicks.clone();
+            }
+            Some((time, m))
         }
         _ => None,
     }
@@ -1026,5 +1046,27 @@ mod tests {
         let d = content_disposition("My \"Song\" é", "vocals", "m4a");
         assert!(d.starts_with("attachment; filename=\"My _Song_ _ - vocals.m4a\""));
         assert!(d.contains("filename*=UTF-8''My%20%22Song%22%20%C3%A9%20-%20vocals.m4a"));
+    }
+
+    #[test]
+    fn tempo_marker_keeps_only_valid_click_patterns() {
+        let base = json!({"time": 1.0, "kind": "manual", "bpm": 120, "num": 2, "den": 4});
+        let with = |clicks: Value| {
+            let mut m = base.clone();
+            m["clicks"] = clicks;
+            tempo_marker(&m).unwrap().1
+        };
+        let ok = json!([["accent", "muted"], ["normal"]]);
+        assert_eq!(with(ok.clone())["clicks"], ok);
+        assert!(with(json!([["loud"]])).get("clicks").is_none());
+        assert!(with(json!([[]])).get("clicks").is_none());
+        assert!(with(json!([vec!["normal"; 9]])).get("clicks").is_none());
+        assert!(with(json!("accent")).get("clicks").is_none());
+        assert!(tempo_marker(&base).unwrap().1.get("clicks").is_none());
+        // Auto markers never carry a pattern.
+        let auto = tempo_marker(&json!({"time": 0, "kind": "auto", "clicks": ok}))
+            .unwrap()
+            .1;
+        assert!(auto.get("clicks").is_none());
     }
 }

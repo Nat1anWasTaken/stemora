@@ -25,6 +25,9 @@ const buttonVariants = cva(
         addon: "rounded-l-none border-input border-l-0 text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted dark:bg-input/30",
         /* Pill showing a value that opens its editor (tempo marker on phones) */
         chip: "rounded-full border-border bg-secondary/60 font-semibold tabular-nums text-foreground hover:bg-secondary",
+        /* One click of a metronome pattern, drawn as a dot by `data-level`: accent filled, normal a ring, muted a faint speck; `data-playing` marks the click sounding now */
+        click:
+          "rounded-full hover:bg-muted/60 after:block after:rounded-full after:transition-all after:duration-150 after:ease-spring data-[level=accent]:after:bg-primary data-[level=normal]:after:border-[3px] data-[level=normal]:after:border-muted-foreground data-[level=muted]:after:scale-40 data-[level=muted]:after:bg-muted-foreground/40 data-playing:after:scale-125 data-playing:after:ring-4 data-playing:after:ring-primary/35 data-[level=normal]:data-playing:after:border-foreground",
       },
       size: {
         default:
@@ -41,6 +44,9 @@ const buttonVariants = cva(
           "size-9 pointer-coarse:size-11 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-11 rounded-full active:scale-90",
         "icon-xl": "size-16 rounded-full active:scale-92 [&_svg:not([class*='size-'])]:size-7",
+        /* Metronome pattern dots: the beat itself, and its (smaller) subdivisions */
+        "click-beat": "size-11 after:size-7",
+        "click-sub": "size-10 pointer-coarse:size-11 after:size-5",
       },
     },
     defaultVariants: {

@@ -7,7 +7,8 @@ import { loadMixer, saveMixer } from "@/player/mixerStorage"
 import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
 import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED } from "@/player/tempo"
-import { buildGrid, defaultMarkers, gridClicks, normalizeMarkers, type BeatGrid, type TempoMarker } from "@/player/tempo-map"
+import { loadClickSound, saveClickSound } from "@/player/click-sounds"
+import { buildGrid, defaultMarkers, markerClicks, normalizeMarkers, type BeatGrid, type TempoMarker } from "@/player/tempo-map"
 
 let engine: StemEngine | null = null
 let abort: AbortController | null = null
@@ -34,6 +35,8 @@ type PlayerState = {
   pendingA: number | null
   /** Metronome click on/off; it clicks on the beat grid. */
   metronome: boolean
+  /** Metronome sound (an id from CLICK_SOUNDS), kept per browser. */
+  clickSound: string
   /** Playback speed, 1 = original tempo. */
   speed: number
   /** Key change in semitones. */
@@ -64,6 +67,7 @@ type PlayerState = {
   setLoop: (a: number, b: number) => void
   clearLoop: () => void
   setMetronome: (enabled: boolean) => void
+  setClickSound: (id: string) => void
   setSpeed: (speed: number) => void
   setSemitones: (n: number) => void
   /** Whether `markers` is a preview (mid-drag) rather than a state to keep. */
@@ -96,14 +100,14 @@ export const usePlayer = create<PlayerState>((set, get) => {
     const { markers, analysis, duration } = get()
     const grid = buildGrid(markers, analysis, duration)
     set({ grid })
-    engine?.setClicks(gridClicks(grid))
+    engine?.setClicks(markerClicks(grid, markers, duration))
   }
   /** A new tempo map and its grid in one update, so subscribers never see one without the other. */
   const showMarkers = (markers: TempoMarker[], draft: boolean) => {
     const { analysis, duration, markerEdits } = get()
     const grid = buildGrid(markers, analysis, duration)
     set({ markers, grid, markersDraft: draft, markerEdits: draft ? markerEdits : markerEdits + 1, canUndo: past.length > 0, canRedo: future.length > 0 })
-    engine?.setClicks(gridClicks(grid))
+    engine?.setClicks(markerClicks(grid, markers, duration))
   }
 
   return {
@@ -117,6 +121,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
     loop: null,
     pendingA: null,
     metronome: false,
+    clickSound: loadClickSound(),
     speed: 1,
     semitones: 0,
     canShift: null,
@@ -140,6 +145,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       // The song record's length lets the charts and tempo map show before the stems are decoded.
       set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
       e.setMetronome(get().metronome)
+      e.setClickSound(get().clickSound)
       applyGrid()
       void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
       e.onShiftUnavailable = () => engine === e && set({ canShift: false })
@@ -228,6 +234,11 @@ export const usePlayer = create<PlayerState>((set, get) => {
       set({ metronome: enabled })
       engine?.setMetronome(enabled)
     },
+    setClickSound(id) {
+      set({ clickSound: id })
+      saveClickSound(id)
+      engine?.setClickSound(id)
+    },
     setSpeed(speed) {
       const s = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed))
       set({ speed: s })
@@ -243,7 +254,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       if (opts.from && !opts.draft && JSON.stringify(markers) === JSON.stringify(opts.from)) {
         const grid = buildGrid(opts.from, get().analysis, get().duration)
         set({ markers: opts.from, grid, markersDraft: false })
-        engine?.setClicks(gridClicks(grid))
+        engine?.setClicks(markerClicks(grid, opts.from, get().duration))
         return
       }
       if (opts.from && !opts.draft) {
