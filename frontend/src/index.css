@@ -296,6 +296,22 @@ html[data-nav="none"]::view-transition-new(.page-enter),
 html[data-nav="none"]::view-transition-old(root),
 html[data-nav="none"]::view-transition-new(root) { animation: none; }
 
+/* In-place swap inside a fixed frame (player views, toolbar contents): fade only, nothing moves */
+@keyframes swap-in {
+  from { opacity: 0; }
+}
+@utility animate-swap {
+  animation: swap-in 200ms var(--ease-spring) both;
+}
+/*
+ * Desktop player workspace: mixer column (w-72) beside the main view; a toolbar row over the content row.
+ * The mixer's header block is h-15, which must equal RULER_H + TEMPO_H in player/ui/tempo-editor/render.ts.
+ */
+@utility workspace-grid {
+  grid-template-columns: 18rem minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 /* Entrance for routed content and freshly shown blocks */
 @utility animate-page {
   animation: page-in 280ms var(--ease-spring) both;

@@ -15,7 +15,7 @@ import { useSongActions } from "@/lib/queries"
 import { STEM_NAMES } from "@/player/mixer"
 import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
 import { getPosition, usePlayer } from "@/player/store"
-import { ChartHeader, loadChart, saveChart, type Chart, type DrumControls } from "@/player/ui/chart-header"
+import { ChartToolbar, loadChart, saveChart, type Chart, type DrumControls } from "@/player/ui/chart-header"
 import { ChordGrid } from "@/player/ui/chord-grid"
 import { DrumNotation } from "@/player/ui/drum-notation"
 import { barIndexAt, useDrumChart } from "@/player/drums/chart"
@@ -23,11 +23,12 @@ import { loadNotationPrefs, saveNotationPrefs, type NotationPrefs } from "@/play
 import { loadPrecision, savePrecision, type DrumPrecision } from "@/player/drums/precision"
 import { useDrumBreaks } from "@/player/drums/use-drum-breaks"
 import { SectionBar } from "@/player/ui/section-bar"
-import { StemRow, triggerDownload } from "@/player/ui/stem-row"
+import { MixerTools, StemRow, triggerDownload } from "@/player/ui/stem-row"
 import { SeekBar, Transport } from "@/player/ui/transport"
 import { useSheetDrag } from "@/player/ui/use-sheet-drag"
 import { useShortcuts } from "@/player/ui/use-shortcuts"
 import { TempoEditor } from "@/player/ui/tempo-editor/tempo-editor"
+import { Swap, WorkspaceToolbar } from "@/player/ui/workspace"
 import { useTempoMarkers } from "@/player/use-tempo-markers"
 import type { StemName } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -78,6 +79,8 @@ export function Player({ detail }: { detail: SongDetail }) {
   const [tab, setTab] = useState<"mixer" | "tempo" | "practice">("mixer")
   const [view, setView] = useState<"tempo" | "practice">("tempo")
   const [closing, setClosing] = useState(false)
+  /** The workspace toolbar's slot, where the tempo editor renders its tools. */
+  const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null)
   const sheet = useRef<HTMLDivElement>(null)
   const dragZone = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setClosing(true), [])
@@ -178,13 +181,10 @@ export function Player({ detail }: { detail: SongDetail }) {
       <Button variant="secondary" size="sm" onClick={() => void usePlayer.getState().load(detail)}>Try again</Button>
     </div>
   ) : null
-  const floatingStatus = statusPanel && <div className="absolute inset-x-4 bottom-2 z-10 rounded-2xl glass md:inset-x-0">{statusPanel}</div>
-  const chartBlock = (
-    <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-      <ChartHeader chart={chart} onChart={setChart} desktop={desktop} drums={drums} />
-      {chartView}
-    </div>
-  )
+  const floatingStatus = statusPanel && <div className="absolute inset-x-4 bottom-2 z-10 rounded-2xl glass md:inset-x-6">{statusPanel}</div>
+  const chartToolbar = <ChartToolbar chart={chart} onChart={setChart} desktop={desktop} drums={drums} />
+  const chartBlock = <Swap key={chart} className="flex-col">{chartView}</Swap>
+  const stems = STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)
 
   return (
     <div
@@ -204,49 +204,55 @@ export function Player({ detail }: { detail: SongDetail }) {
             <h1 className="truncate text-lg leading-tight font-semibold">{song.title}</h1>
             <p className="truncate text-sm text-muted-foreground">{song.duration_s ? formatClock(song.duration_s) : "Stems"}{isHighQuality(song.model) ? " · High quality" : ""}</p>
           </div>
-          {desktop && (
-            <Tabs value={view} onValueChange={(v) => setView(v as "tempo" | "practice")}>
-              <TabsList variant="segmented" aria-label="View">
-                <TabsTrigger value="tempo" title="Tempo (V)"><AudioWaveform />Tempo</TabsTrigger>
-                <TabsTrigger value="practice" title="Practice (V)"><LayoutGrid />Practice</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
           <ActionMenu title={song.title} entries={entries} trigger={<Button variant="secondary" size="icon-lg" aria-label="More options"><MoreHorizontal /></Button>} />
         </header>
       </div>
 
       {desktop ? (
-        <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-6 pt-4 pb-2">
+        <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-6 pt-3 pb-2">
           {floatingStatus}
-          <div className="flex min-h-0 flex-1 gap-4">
-            {/* Track headers: in the tempo view they line up with the editor's stem lanes. */}
-            <aside aria-label="Mixer" className="flex w-72 shrink-0 flex-col">
-              {view === "tempo" && <div aria-hidden className="h-12 shrink-0" />}
-              {view === "tempo" && <div aria-hidden className="h-17 shrink-0" />}
-              <ul className={cn("grid min-h-0 flex-1 grid-rows-4", view === "tempo" && "border-y border-transparent")}>
-                {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
-              </ul>
+          {/* One fixed skeleton for both views: only the toolbar's tools and the main area's content change. */}
+          <div className="grid min-h-0 flex-1 workspace-grid gap-x-4 gap-y-2">
+            <Tabs value={view} onValueChange={(v) => setView(v as "tempo" | "practice")}>
+              <TabsList variant="workspace" aria-label="View">
+                <TabsTrigger value="tempo" title="Tempo (V)"><AudioWaveform />Tempo</TabsTrigger>
+                <TabsTrigger value="practice" title="Practice (V)"><LayoutGrid />Practice</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <WorkspaceToolbar label={view === "tempo" ? "Tempo map" : "Chart"} slotRef={setToolbar}>
+              {view === "practice" && chartToolbar}
+            </WorkspaceToolbar>
+            {/* Track headers: the mixer header is as tall as the editor's ruler and tempo lane, and the 1px borders
+                match the editor's frame, so in the tempo view each row sits on its stem's lane. */}
+            <aside aria-label="Mixer" className="flex min-h-0 flex-col border-y border-transparent">
+              <div className="flex h-15 shrink-0 items-center"><MixerTools /></div>
+              <ul className="grid min-h-0 flex-1 grid-rows-4">{stems}</ul>
             </aside>
-            <div className="flex min-w-0 flex-1 flex-col">
-              {view === "tempo" ? <div className="animate-page flex min-h-0 flex-1 flex-col"><TempoEditor centered={false} /></div> : chartBlock}
+            <div className="flex min-h-0 min-w-0 flex-col">
+              {view === "tempo"
+                ? <Swap key="tempo" className="flex-col"><TempoEditor centered={false} toolbar={toolbar} /></Swap>
+                : <Swap key="practice" className="flex-col">{chartBlock}</Swap>}
             </div>
           </div>
           <SectionBar />
         </div>
       ) : (
-        <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-2 pb-2">
+        <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 pt-2 pb-2">
           {floatingStatus}
+          <WorkspaceToolbar label={tab === "mixer" ? "Mixer" : tab === "tempo" ? "Tempo map" : "Chart"} slotRef={setToolbar}>
+            {tab === "mixer" && <Swap className="items-center"><MixerTools /></Swap>}
+            {tab === "practice" && chartToolbar}
+          </WorkspaceToolbar>
           {tab === "mixer" && (
-            <section aria-label="Mixer" className="animate-page flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain">
-              <ul className="flex flex-1 flex-col justify-evenly gap-1">
-                {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
-              </ul>
-              <SectionBar />
-            </section>
+            <Swap key="mixer" className="flex-col gap-2 overflow-y-auto overscroll-contain">
+              <section aria-label="Mixer" className="flex flex-1 flex-col">
+                <ul className="flex flex-1 flex-col justify-evenly">{stems}</ul>
+              </section>
+              <div className="shrink-0"><SectionBar /></div>
+            </Swap>
           )}
-          {tab === "tempo" && <div className="animate-page flex min-h-0 flex-1 flex-col"><TempoEditor centered /></div>}
-          {tab === "practice" && chartBlock}
+          {tab === "tempo" && <Swap key="tempo" className="flex-col"><TempoEditor centered toolbar={toolbar} /></Swap>}
+          {tab === "practice" && <Swap key="practice" className="flex-col">{chartBlock}</Swap>}
         </div>
       )}
 

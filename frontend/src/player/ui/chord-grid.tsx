@@ -35,7 +35,7 @@ export function ChordGrid() {
   if (bars.length === 0) {
     return (
       <section aria-label="Chord chart" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-3xl border border-border bg-surface/70 p-6 text-sm text-muted-foreground">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface/70 p-6 text-sm text-muted-foreground">
           <Music className="size-6" />No beats
         </div>
       </section>
@@ -46,7 +46,7 @@ export function ChordGrid() {
     <section aria-label="Chord chart" className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scroller}
-        className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-none"
+        className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface/70 p-3 scrollbar-none"
         onWheel={() => setFollow(false)}
         onTouchMove={() => setFollow(false)}
       >

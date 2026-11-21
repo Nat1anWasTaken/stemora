@@ -13,6 +13,7 @@ import {
 } from "@/player/tempo-map"
 import { formatBpm } from "@/player/ui/use-playhead-tempo"
 import { flagLabel } from "@/player/ui/tempo-editor/render"
+import { Swap, ToolbarDivider } from "@/player/ui/workspace"
 import { applyDetectedTempo, deleteMarker, nudgeMarker, replaceMarker, setBpm, setKind } from "@/player/ui/tempo-editor/actions"
 
 /** A text field that edits a value on Enter or blur and goes back to it on Escape or invalid input. */
@@ -181,7 +182,7 @@ export function TimeSignatureField({ value, onCommit, picker = true }: { value: 
 function KindSwitch({ marker, index }: { marker: TempoMarker; index: number }) {
   return (
     <Tabs value={marker.kind} onValueChange={(v) => setKind(index, v as "auto" | "manual")}>
-      <TabsList variant="segmented" aria-label="Marker kind">
+      <TabsList variant="pill" aria-label="Marker kind">
         <TabsTrigger value="auto">Auto</TabsTrigger>
         <TabsTrigger value="manual">Manual</TabsTrigger>
       </TabsList>
@@ -202,7 +203,7 @@ export type EditorControls = {
 
 const tip = (label: string, key: string) => `${label} (${key})`
 
-/** Desktop info line above the editor: the marker being edited, then add, history, zoom and follow. */
+/** Desktop tools for the workspace toolbar: the marker being edited, then add, history, zoom and follow. */
 export function DesktopToolbar({ c }: { c: EditorControls }) {
   const markers = usePlayer((s) => s.markers)
   const canUndo = usePlayer((s) => s.canUndo)
@@ -212,11 +213,11 @@ export function DesktopToolbar({ c }: { c: EditorControls }) {
   const i = Math.min(c.active, markers.length - 1)
   const m = markers[i]
   return (
-    <div role="toolbar" aria-label="Tempo map" className="flex h-12 shrink-0 items-center gap-1 rounded-2xl border border-border bg-surface/70 px-1.5">
+    <Swap className="items-center gap-1">
       <Button variant="ghost" size="icon-sm" aria-label="Previous marker" title={tip("Previous marker", "Shift+B")} onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
       <span className="min-w-8 text-center text-xs text-muted-foreground tabular-nums">{i + 1}/{markers.length}</span>
       <Button variant="ghost" size="icon-sm" aria-label="Next marker" title={tip("Next marker", "Shift+N")} onClick={() => c.onLocate(1)}><ChevronRight /></Button>
-      <div className="mx-1 h-6 w-px bg-border" />
+      <ToolbarDivider />
       {m && <KindSwitch marker={m} index={i} />}
       {m?.kind === "manual" && (
         <>
@@ -229,20 +230,20 @@ export function DesktopToolbar({ c }: { c: EditorControls }) {
       <Button variant="ghost" size="icon-sm" aria-label="Delete marker" title={tip("Delete marker", "Del")} disabled={i === 0} onClick={() => deleteMarker(i)}><Trash2 /></Button>
       <div className="ml-auto flex items-center gap-0.5">
         <Button variant="secondary" size="icon-sm" aria-label="Add marker" title={tip("Add marker", "T")} onClick={c.onAdd}><Plus /></Button>
-        <div className="mx-1 h-6 w-px bg-border" />
+        <ToolbarDivider />
         <Button variant="ghost" size="icon-sm" aria-label="Undo" title={tip("Undo", "Ctrl+Z")} disabled={!canUndo} onClick={undo}><Undo2 /></Button>
         <Button variant="ghost" size="icon-sm" aria-label="Redo" title={tip("Redo", "Ctrl+Shift+Z")} disabled={!canRedo} onClick={redo}><Redo2 /></Button>
-        <div className="mx-1 h-6 w-px bg-border" />
+        <ToolbarDivider />
         <Button variant="ghost" size="icon-sm" aria-label="Zoom out" title={tip("Zoom out", "G")} onClick={() => c.onZoom(1 / 1.6)}><ZoomOut /></Button>
         <Button variant="ghost" size="icon-sm" aria-label="Zoom in" title={tip("Zoom in", "H")} onClick={() => c.onZoom(1.6)}><ZoomIn /></Button>
         <Button variant="ghost" size="icon-sm" aria-label="Whole song" title={tip("Whole song", "Shift+F")} onClick={c.onFit}><Maximize2 /></Button>
         <Button variant="toggle" size="icon-sm" aria-label="Follow playback" title={tip("Follow playback", "F")} aria-pressed={c.following} onClick={c.onFollow}><LocateFixed /></Button>
       </div>
-    </div>
+    </Swap>
   )
 }
 
-/** Phone controls under the editor: markers either side, the one at the cursor (tap to edit), add, move here, undo. */
+/** Phone tools for the workspace toolbar: markers either side, the one at the cursor (tap to edit), add, move here, undo. */
 export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere: () => void }) {
   const markers = usePlayer((s) => s.markers)
   const canUndo = usePlayer((s) => s.canUndo)
@@ -250,7 +251,7 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
   const i = Math.min(c.active, markers.length - 1)
   const m = markers[i]
   return (
-    <div role="toolbar" aria-label="Tempo map" className="flex shrink-0 items-center gap-1">
+    <Swap className="items-center gap-1">
       <Button variant="ghost" size="icon-lg" aria-label="Previous marker" onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
       {m && (
         <MarkerDrawer index={i} marker={m}>
@@ -264,7 +265,7 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
       <Button variant="secondary" size="icon-lg" aria-label="Add marker at the cursor" onClick={c.onAdd}><Plus /></Button>
       <Button variant="secondary" size="icon-lg" aria-label="Move this marker to the cursor" disabled={i === 0} onClick={onMoveHere}><Crosshair /></Button>
       <Button variant="ghost" size="icon-lg" aria-label="Undo" disabled={!canUndo} onClick={undo}><Undo2 /></Button>
-    </div>
+    </Swap>
   )
 }
 
