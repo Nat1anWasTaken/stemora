@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import * as alphaTab from "@coderline/alphatab"
-import { parseAnalysis, type Analysis } from "@/player/analysis"
-import { toAlphaTex } from "@/player/drums/alphatex"
+import { DRUM_KINDS, parseAnalysis, type Analysis } from "@/player/analysis"
+import { ARTICULATIONS, toAlphaTex, VOICES } from "@/player/drums/alphatex"
 import { hideCoveredRests } from "@/player/drums/hide-rests"
 import { chooseGrid, quantize } from "@/player/drums/quantize"
 
@@ -15,6 +15,14 @@ describe("drum parsing", () => {
     expect(song({ kick: [[1, 6], [0, 0], [9, 0], [0, 12]] }).drums!.kick).toEqual([0, 0.75])
     expect(parseAnalysis({ ...base, drums: { kick: [] } })!.drums).toBeNull()
     expect(parseAnalysis(base)!.drums).toBeNull()
+  })
+
+  it("folds the 5-class files' tom and cymbal into tom_mid and crash, and ignores unknown kinds", () => {
+    const d = song({ tom: [1, 0.5], cymbal: [0], tom_mid: [2], hihat: [0.25], cowbell2: [1], constructor: [1] }).drums!
+    expect(d.tom_mid).toEqual([0.5, 1, 2])
+    expect(d.crash).toEqual([0])
+    expect(d.hihat).toEqual([0.25])
+    expect(DRUM_KINDS.reduce((n, k) => n + d[k].length, 0)).toBe(5)
   })
 })
 
@@ -46,12 +54,12 @@ describe("quantize", () => {
   })
 
   it("keeps 32nds only at 32nd or auto precision", () => {
-    const a = song({ tom: [3.5, 3.5625, 3.625, 3.6875] })
+    const a = song({ tom_floor: [3.5, 3.5625, 3.625, 3.6875] })
     expect(quantize(a, "32", false, 4)[1].beats[3].grid).toBe(8)
     expect(quantize(a, "auto", false, 4)[1].beats[3].grid).toBe(8)
     const coarse = quantize(a, "16", false, 4)[1].beats[3]
     expect(coarse.grid).toBe(4)
-    expect(coarse.steps.flat()).toEqual(["tom", "tom", "tom"]) // four 32nds land on three 16th steps
+    expect(coarse.steps.flat()).toEqual(["tom_floor", "tom_floor", "tom_floor"]) // four 32nds land on three 16th steps
   })
 })
 
@@ -118,6 +126,25 @@ describe("toAlphaTex", () => {
   })
 })
 
+describe("drum kinds", () => {
+  it("draws every kind on its own articulation, feet in the second voice", () => {
+    const drums = Object.fromEntries(DRUM_KINDS.map((k, i) => [k, [(i % 8) * 0.5]]))
+    const { tex } = toAlphaTex(quantize(song(drums), "auto", true, 4), 120)
+    const { score, diags } = parse(tex)
+    expect(diags).toEqual([])
+    const track = score.tracks[0]
+    const drawn = new Map<number, number>() // articulation -> voice
+    for (const bar of track.staves[0].bars) {
+      for (const voice of bar.voices) {
+        for (const beat of voice.beats) for (const n of beat.notes) drawn.set(track.percussionArticulations[n.percussionArticulation].outputMidiNumber, voice.index)
+      }
+    }
+    for (const kind of DRUM_KINDS) expect(drawn.get(ARTICULATIONS[kind]), kind).toBe(VOICES[1].includes(kind) ? 1 : 0)
+    expect(VOICES[1]).toEqual(["kick", "hihat_pedal"])
+    expect(new Set(Object.values(ARTICULATIONS)).size).toBe(DRUM_KINDS.length)
+  })
+})
+
 describe("hideCoveredRests", () => {
   it("hides rests the other voice sounds through, keeps rests where both are silent", () => {
     // Beat 1 kick, 2 hands, 3 kick + kick on the "and", 4 hands; then a bar with a silent last beat.
@@ -155,7 +182,7 @@ describe("toAlphaTex fuzz", () => {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-  const KINDS = ["kick", "snare", "hihat", "tom", "cymbal"] as const
+  const KINDS = [...DRUM_KINDS, "tom", "cymbal"] // the 5-class files' kinds too
 
   for (let seed = 1; seed <= 60; seed++) {
     it(`parses random songs cleanly (seed ${seed})`, () => {
