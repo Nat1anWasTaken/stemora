@@ -742,6 +742,60 @@ async fn songs_full_flow() {
         .await;
     assert_eq!(b.status, StatusCode::BAD_REQUEST);
 
+    // tempo map: starts with one auto marker; whole-map replace, normalised, owner only
+    assert_eq!(
+        d.body["tempo_markers"],
+        json!([{"time": 0.0, "kind": "auto"}])
+    );
+    let t = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/tempo-markers"),
+            Some(&bob),
+            None,
+            Some(json!({"markers": [
+                {"time": 12.5, "kind": "auto"},
+                {"time": 2.0, "kind": "manual", "bpm": 120.456, "num": 6, "den": 8},
+                {"time": 2.005, "kind": "auto"},
+                {"time": 4.0, "kind": "manual", "bpm": 90, "num": 4, "den": 3},
+                {"time": -1.0, "kind": "auto"},
+                {"time": 5.0, "kind": "tempo"}
+            ]})),
+        )
+        .await;
+    assert_eq!(t.status, StatusCode::OK, "{:?}", t.body);
+    let expected = json!([
+        {"time": 0.0, "kind": "auto"},
+        {"time": 2.0, "kind": "manual", "bpm": 120.46, "num": 6, "den": 8},
+        {"time": 12.5, "kind": "auto"}
+    ]);
+    assert_eq!(t.body["markers"], expected);
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.body["tempo_markers"], expected);
+    let t = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/tempo-markers"),
+            Some(&admin),
+            None,
+            Some(json!({"markers": []})),
+        )
+        .await;
+    assert_eq!(t.status, StatusCode::NOT_FOUND);
+    let many: Vec<Value> = (0..1001)
+        .map(|i| json!({"time": f64::from(i), "kind": "auto"}))
+        .collect();
+    let t = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/tempo-markers"),
+            Some(&bob),
+            None,
+            Some(json!({ "markers": many })),
+        )
+        .await;
+    assert_eq!(t.status, StatusCode::BAD_REQUEST);
+
     // reprocess
     app.storage
         .put(&storage::stem_key(uid, sid, "vocals", "m4a"), 1000);

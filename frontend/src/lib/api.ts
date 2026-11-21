@@ -62,7 +62,11 @@ export type SongDetail = {
   analysis_url: string | null
   /** Bars that start a new row in the drum notation (sorted). Missing from older backends. */
   drum_breaks?: number[]
+  /** The song's tempo map, sorted, the first at 0 (see docs/contract.md). Missing from older backends. */
+  tempo_markers?: TempoMarkerJson[]
 }
+/** A tempo marker as stored: `auto` hands the beats to the detected ones; `manual` lays a grid (BPM of `den` notes). */
+export type TempoMarkerJson = { time: number; kind: "auto" } | { time: number; kind: "manual"; bpm: number; num: number; den: number }
 export type Usage = { used_bytes: number; quota_bytes: number }
 export type Upload =
   | { mode: "single"; url: string; headers: Record<string, string> }
@@ -158,6 +162,8 @@ export const api = {
   rename: (id: string, title: string) => request<Song>(`/songs/${id}`, { method: "PATCH", body: { title } }),
   remove: (id: string) => request<void>(`/songs/${id}`, { method: "DELETE" }),
   setDrumBreaks: (id: string, bars: number[]) => request<{ bars: number[] }>(`/songs/${id}/drum-breaks`, { method: "PUT", body: { bars } }),
+  setTempoMarkers: (id: string, markers: TempoMarkerJson[]) =>
+    request<{ markers: TempoMarkerJson[] }>(`/songs/${id}/tempo-markers`, { method: "PUT", body: { markers } }),
   reprocess: (id: string, model: Model) => request<Song>(`/songs/${id}/reprocess`, { method: "POST", body: { model } }),
   usage: () => request<Usage>("/me/usage"),
 }

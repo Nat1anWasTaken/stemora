@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { LocateFixed, RotateCcw } from "lucide-react"
+import { Drum, LocateFixed, RotateCcw } from "lucide-react"
 import type { AlphaTabApi, model, synth } from "@coderline/alphatab"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -390,18 +390,11 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
     onZoom(zoom)
   })
 
-  if (!analysis?.drums) {
+  if (!analysis?.drums || !chart) {
     return (
       <section aria-label="Drum notation" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-1 flex-col items-center justify-center gap-1 rounded-3xl border border-border bg-surface/70 p-6 text-center text-sm text-muted-foreground">
-          {analysis ? (
-            <>
-              <p className="font-medium text-foreground">No drums detected</p>
-              <p>Songs processed before drum charts existed can be reprocessed from the menu to get one.</p>
-            </>
-          ) : (
-            <p>No beat analysis for this song.</p>
-          )}
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-3xl border border-border bg-surface/70 p-6 text-sm text-muted-foreground">
+          <Drum className="size-6" />{analysis?.drums ? "No beats" : "No drums"}
         </div>
       </section>
     )

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
 import { AudioWaveform, ChevronDown, Download, LayoutGrid, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
@@ -21,13 +22,13 @@ import { barIndexAt, useDrumChart } from "@/player/drums/chart"
 import { loadNotationPrefs, saveNotationPrefs, type NotationPrefs } from "@/player/drums/notation-prefs"
 import { loadPrecision, savePrecision, type DrumPrecision } from "@/player/drums/precision"
 import { useDrumBreaks } from "@/player/drums/use-drum-breaks"
-import { PracticeStrip } from "@/player/ui/practice-strip"
 import { SectionBar } from "@/player/ui/section-bar"
 import { StemRow, triggerDownload } from "@/player/ui/stem-row"
 import { SeekBar, Transport } from "@/player/ui/transport"
 import { useSheetDrag } from "@/player/ui/use-sheet-drag"
 import { useShortcuts } from "@/player/ui/use-shortcuts"
-import { Waveform } from "@/player/ui/waveform"
+import { TempoEditor } from "@/player/ui/tempo-editor/tempo-editor"
+import { useTempoMarkers } from "@/player/use-tempo-markers"
 import type { StemName } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -73,7 +74,9 @@ export function Player({ detail }: { detail: SongDetail }) {
   const loadProgress = usePlayer((s) => s.loadProgress)
   const error = usePlayer((s) => s.error)
   const desktop = useIsDesktop()
-  const [tab, setTab] = useState<"mixer" | "practice" | "chords">("mixer")
+  /** Phone tab; on desktop the mixer is always shown and `view` picks the main area. */
+  const [tab, setTab] = useState<"mixer" | "tempo" | "practice">("mixer")
+  const [view, setView] = useState<"tempo" | "practice">("tempo")
   const [closing, setClosing] = useState(false)
   const sheet = useRef<HTMLDivElement>(null)
   const dragZone = useRef<HTMLDivElement>(null)
@@ -83,7 +86,8 @@ export function Player({ detail }: { detail: SongDetail }) {
   const [deleting, setDeleting] = useState(false)
   const [reproc, setReproc] = useState(false)
   const select = useCallback((n: StemName) => setSelected(n), [])
-  const toggleChords = useCallback(() => setTab((t) => (t === "chords" ? "practice" : "chords")), [])
+  const toggleView = useCallback(() => setView((v) => (v === "tempo" ? "practice" : "tempo")), [])
+  const practice = desktop ? view === "practice" : tab === "practice"
   const [chart, setChartState] = useState<Chart>(loadChart)
   const setChart = useCallback((c: Chart) => {
     setChartState(c)
@@ -107,6 +111,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   }), [])
   const drumChart = useDrumChart(precision)
   const { breaks, toggle: toggleBreak } = useDrumBreaks(song.id, detail.drum_breaks)
+  useTempoMarkers(song.id, detail.tempo_markers)
   const toggleBreakAtPlayhead = useCallback(() => {
     if (!drumChart) return
     const bar = barIndexAt(drumChart.bars, getPosition())
@@ -127,7 +132,7 @@ export function Player({ detail }: { detail: SongDetail }) {
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
-  useShortcuts(selected, select, tab === "chords" ? cycleChart : undefined, tab === "chords" && chart === "drums" ? toggleBreakAtPlayhead : undefined)
+  useShortcuts(selected, select, practice ? cycleChart : undefined, practice && chart === "drums" ? toggleBreakAtPlayhead : undefined, desktop ? toggleView : undefined)
   useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)
 
@@ -159,11 +164,11 @@ export function Player({ detail }: { detail: SongDetail }) {
     { key: "delete", label: "Delete song", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(true) },
   ]
 
-  // Loading/error state, sized like the practice strip it is replaced by so nothing moves once stems are ready.
+  // Loading/error state, floating over the bottom of the view until the stems are ready.
   const statusPanel = status === "loading" || status === "idle" ? (
     <div className="flex h-14 shrink-0 items-center rounded-2xl border border-border bg-surface/70 px-4">
       <Progress value={Math.round(loadProgress * 100)} aria-label="Loading stems" className="flex-1">
-        <span className="flex items-center gap-2 text-sm text-muted-foreground tabular-nums"><Loader2 className="size-4 animate-spin" />Loading stems {Math.round(loadProgress * 100)}%</span>
+        <span className="flex items-center gap-2 text-sm text-muted-foreground tabular-nums"><Loader2 className="size-4 animate-spin" />{Math.round(loadProgress * 100)}%</span>
       </Progress>
     </div>
   ) : status === "error" ? (
@@ -172,6 +177,13 @@ export function Player({ detail }: { detail: SongDetail }) {
       <Button variant="secondary" size="sm" onClick={() => void usePlayer.getState().load(detail)}>Try again</Button>
     </div>
   ) : null
+  const floatingStatus = statusPanel && <div className="absolute inset-x-4 bottom-2 z-10 rounded-2xl glass md:inset-x-0">{statusPanel}</div>
+  const chartBlock = (
+    <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
+      <ChartHeader chart={chart} onChart={setChart} desktop={desktop} drums={drums} />
+      {chartView}
+    </div>
+  )
 
   return (
     <div
@@ -191,35 +203,39 @@ export function Player({ detail }: { detail: SongDetail }) {
             <h1 className="truncate text-lg leading-tight font-semibold">{song.title}</h1>
             <p className="truncate text-sm text-muted-foreground">{song.duration_s ? formatClock(song.duration_s) : "Stems"}{isHighQuality(song.model) ? " · High quality" : ""}</p>
           </div>
+          {desktop && (
+            <Tabs value={view} onValueChange={(v) => setView(v as "tempo" | "practice")}>
+              <TabsList variant="segmented" aria-label="View">
+                <TabsTrigger value="tempo" title="Tempo (V)"><AudioWaveform />Tempo</TabsTrigger>
+                <TabsTrigger value="practice" title="Practice (V)"><LayoutGrid />Practice</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
           <ActionMenu title={song.title} entries={entries} trigger={<Button variant="secondary" size="icon-lg" aria-label="More options"><MoreHorizontal /></Button>} />
         </header>
       </div>
 
       {desktop ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 pt-4 pb-2">
-          {statusPanel ?? <PracticeStrip onExpand={toggleChords} />}
-          {tab === "chords" ? (
-            <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <ChartHeader chart={chart} onChart={setChart} onCollapse={() => setTab("practice")} drums={drums} />
-              {chartView}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-6 pt-4 pb-2">
+          {floatingStatus}
+          <div className="flex min-h-0 flex-1 gap-4">
+            {/* Track headers: in the tempo view they line up with the editor's stem lanes. */}
+            <aside aria-label="Mixer" className="flex w-72 shrink-0 flex-col">
+              {view === "tempo" && <div aria-hidden className="h-12 shrink-0" />}
+              {view === "tempo" && <div aria-hidden className="h-17 shrink-0" />}
+              <ul className={cn("grid min-h-0 flex-1 grid-rows-4", view === "tempo" && "border-y border-transparent")}>
+                {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
+              </ul>
+            </aside>
+            <div className="flex min-w-0 flex-1 flex-col">
+              {view === "tempo" ? <div className="animate-page flex min-h-0 flex-1 flex-col"><TempoEditor centered={false} /></div> : chartBlock}
             </div>
-          ) : (
-            <section aria-label="Tracks" className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <div className="grid min-h-0 flex-1 grid-cols-12 gap-3">
-                <ul aria-label="Mixer" className="col-span-4 grid grid-rows-4">
-                  {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
-                </ul>
-                <div className="col-span-8 flex min-h-0">
-                  <Waveform />
-                </div>
-              </div>
-              <SectionBar />
-            </section>
-          )}
+          </div>
+          <SectionBar />
         </div>
       ) : (
         <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-2 pb-2">
-          {tab !== "practice" && statusPanel && <div className="absolute inset-x-4 bottom-2 z-10 rounded-2xl glass">{statusPanel}</div>}
+          {floatingStatus}
           {tab === "mixer" && (
             <section aria-label="Mixer" className="animate-page flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain">
               <ul className="flex flex-1 flex-col justify-evenly gap-1">
@@ -228,29 +244,19 @@ export function Player({ detail }: { detail: SongDetail }) {
               <SectionBar />
             </section>
           )}
-          {tab === "practice" && (
-            <section aria-label="Practice" className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              {statusPanel ?? <PracticeStrip onExpand={() => setTab("chords")} />}
-              <Waveform />
-            </section>
-          )}
-          {tab === "chords" && (
-            <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <ChartHeader chart={chart} onChart={setChart} drums={drums} />
-              {chartView}
-            </div>
-          )}
+          {tab === "tempo" && <div className="animate-page flex min-h-0 flex-1 flex-col"><TempoEditor centered /></div>}
+          {tab === "practice" && chartBlock}
         </div>
       )}
 
-      <footer className="flex shrink-0 flex-col gap-2 border-t border-border/60 px-4 pt-2 pb-safe md:px-6">
+      <footer className="flex shrink-0 flex-col gap-2 border-t border-border/60 px-4 pt-2 pb-safe md:px-6 md:pb-4">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         <SeekBar />
         <Transport />
         <nav className="mx-auto w-full max-w-sm rounded-full border border-border bg-secondary/60 p-1 md:hidden" aria-label="Player view">
           <div className="relative flex">
-            <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1/3 rounded-full bg-primary transition-transform duration-300 ease-spring", tab === "practice" && "translate-x-full", tab === "chords" && "translate-x-double")} />
-            {([["mixer", "Mixer", SlidersVertical], ["practice", "Practice", AudioWaveform], ["chords", "Charts", LayoutGrid]] as const).map(([key, label, Icon]) => (
+            <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1/3 rounded-full bg-primary transition-transform duration-300 ease-spring", tab === "tempo" && "translate-x-full", tab === "practice" && "translate-x-double")} />
+            {([["mixer", "Mixer", SlidersVertical], ["tempo", "Tempo", AudioWaveform], ["practice", "Practice", LayoutGrid]] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
                 type="button"
@@ -263,7 +269,6 @@ export function Player({ detail }: { detail: SongDetail }) {
             ))}
           </div>
         </nav>
-        <p className="hidden pb-3 text-center text-xs text-muted-foreground md:block">Space play/pause · arrows skip 10s · 1-4 select stem · M mute · S solo · L loop{tab === "chords" ? " · C chords/drums" : ""}{tab === "chords" && chart === "drums" ? " · B line break" : ""}</p>
         <div className="h-1 md:hidden" />
         </div>
       </footer>

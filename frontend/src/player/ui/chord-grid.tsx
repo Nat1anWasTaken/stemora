@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { LocateFixed } from "lucide-react"
+import { LocateFixed, Music } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { sectionsByBar } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
@@ -12,12 +12,12 @@ import { cn } from "@/lib/utils"
  * song part starts carries its name.
  */
 export function ChordGrid() {
-  const analysis = usePlayer((s) => s.analysis)
+  const sections = usePlayer((s) => s.analysis?.sections)
   const playing = usePlayer((s) => s.playing)
   const loop = usePlayer((s) => s.loop)
   const { seek, setLoop, clearLoop } = usePlayer.getState()
-  const { cells, bars, active } = useBeats(analysis)
-  const partAt = useMemo(() => sectionsByBar(analysis?.sections ?? [], bars), [analysis, bars])
+  const { cells, bars, active } = useBeats()
+  const partAt = useMemo(() => sectionsByBar(sections ?? [], bars), [sections, bars])
   const activeBar = active >= 0 ? cells[active].bar : null
   const activeTime = active >= 0 ? cells[active].time : null
   const [follow, setFollow] = useState(true)
@@ -30,11 +30,11 @@ export function ChordGrid() {
     box.scrollTo({ top: Math.max(0, row.offsetTop - box.clientHeight / 4), behavior: playing ? "smooth" : "auto" })
   }, [activeBar, bars, follow, playing])
 
-  if (!analysis) {
+  if (bars.length === 0) {
     return (
       <section aria-label="Chord chart" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-1 items-center justify-center rounded-3xl border border-border bg-surface/70 p-6 text-center text-sm text-muted-foreground">
-          No beat or chord analysis for this song.
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-3xl border border-border bg-surface/70 p-6 text-sm text-muted-foreground">
+          <Music className="size-6" />No beats
         </div>
       </section>
     )
@@ -74,7 +74,7 @@ export function ChordGrid() {
                     </span>
                   )}
                 </div>
-                <BarBeats bar={b} activeTime={activeTime} beatsPerBar={analysis.beatsPerBar} looped={looped} onSeek={seek} />
+                <BarBeats bar={b} activeTime={activeTime} looped={looped} onSeek={seek} />
               </li>
             )
           })}

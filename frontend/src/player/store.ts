@@ -1,18 +1,26 @@
 import { create } from "zustand"
 import type { SongDetail, StemName } from "@/lib/api"
-import { StemEngine, type Metronome } from "@/player/engine"
+import { StemEngine } from "@/player/engine"
 import { startKeepAlive, stopKeepAlive } from "@/player/keepAlive"
 import { applyPreset, clampLoop, defaultMixer, toggleIn, type LoopRegion, type MixerState, type Preset } from "@/player/mixer"
 import { loadMixer, saveMixer } from "@/player/mixerStorage"
 import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
-import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED, tempoUnit } from "@/player/tempo"
+import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED } from "@/player/tempo"
+import { buildGrid, defaultMarkers, gridClicks, normalizeMarkers, type BeatGrid, type TempoMarker } from "@/player/tempo-map"
 
 let engine: StemEngine | null = null
 let abort: AbortController | null = null
 
 /** Current playhead in seconds; read in rAF loops (not reactive). */
 export const getPosition = () => engine?.position ?? 0
+/** Decoded stems, for drawing the real waveform (empty until loaded). */
+export const getBuffers = () => engine?.buffers ?? []
+
+/** Undo and redo stacks of the tempo map (committed states only). */
+let past: TempoMarker[][] = []
+let future: TempoMarker[][] = []
+const HISTORY = 200
 
 type PlayerState = {
   songId: string | null
@@ -24,7 +32,8 @@ type PlayerState = {
   mixer: MixerState
   loop: LoopRegion | null
   pendingA: number | null
-  metronome: Metronome
+  /** Metronome click on/off; it clicks on the beat grid. */
+  metronome: boolean
   /** Playback speed, 1 = original tempo. */
   speed: number
   /** Key change in semitones. */
@@ -33,6 +42,11 @@ type PlayerState = {
   canShift: boolean | null
   peaks: Peaks | null
   analysis: Analysis | null
+  /** The song's tempo map and the beats it puts on the song (see tempo-map.ts). */
+  markers: TempoMarker[]
+  grid: BeatGrid
+  canUndo: boolean
+  canRedo: boolean
 
   load: (detail: SongDetail) => Promise<void>
   unload: () => void
@@ -52,6 +66,15 @@ type PlayerState = {
   setMetronome: (enabled: boolean) => void
   setSpeed: (speed: number) => void
   setSemitones: (n: number) => void
+  /** Whether `markers` is a preview (mid-drag) rather than a state to keep. */
+  markersDraft: boolean
+  /**
+   * Shows a new tempo map. `from` (the state before the edit, e.g. before a drag began) goes on the undo stack;
+   * `draft` marks a preview that is neither saved nor put in the history.
+   */
+  setMarkers: (markers: TempoMarker[], opts?: { from?: TempoMarker[]; draft?: boolean }) => void
+  undo: () => void
+  redo: () => void
 }
 
 export const usePlayer = create<PlayerState>((set, get) => {
@@ -66,13 +89,14 @@ export const usePlayer = create<PlayerState>((set, get) => {
     set({ loop })
     engine?.setLoop(loop)
   }
-  // The click follows the song: the detected BPM (or 100) scaled by the playback speed.
-  const applyMetronome = () => {
-    const { metronome, speed, analysis } = get()
-    const bpm = Math.min(240, Math.max(30, Math.round(tempoUnit(analysis?.bpm ?? null) * speed)))
-    set({ metronome: { ...metronome, bpm } })
-    engine?.setMetronome({ ...metronome, bpm })
+  // The click and every chart follow the beat grid, rebuilt whenever the markers, the analysis or the length change.
+  const applyGrid = () => {
+    const { markers, analysis, duration } = get()
+    const grid = buildGrid(markers, analysis, duration)
+    set({ grid })
+    engine?.setClicks(gridClicks(grid))
   }
+  const history = () => set({ canUndo: past.length > 0, canRedo: future.length > 0 })
 
   return {
     songId: null,
@@ -84,12 +108,17 @@ export const usePlayer = create<PlayerState>((set, get) => {
     mixer: defaultMixer(),
     loop: null,
     pendingA: null,
-    metronome: { enabled: false, bpm: 100 },
+    metronome: false,
     speed: 1,
     semitones: 0,
     canShift: null,
     peaks: null,
     analysis: null,
+    markers: defaultMarkers(),
+    grid: { beats: [], bars: [] },
+    canUndo: false,
+    canRedo: false,
+    markersDraft: false,
 
     async load(detail) {
       get().unload()
@@ -97,8 +126,12 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine = e
       abort = new AbortController()
       const mixer = loadMixer(detail.song.id)
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, canShift: null })
-      applyMetronome()
+      past = []
+      future = []
+      // The song record's length lets the charts and tempo map show before the stems are decoded.
+      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      e.setMetronome(get().metronome)
+      applyGrid()
       void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
       e.onShiftUnavailable = () => engine === e && set({ canShift: false })
       e.onEnded = () => {
@@ -111,7 +144,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
           void fetchAnalysis(detail.analysis_url).then((analysis) => {
             if (engine !== e || !analysis) return
             set({ analysis })
-            applyMetronome()
+            applyGrid()
           })
         }
         const peaksPromise = detail.peaks_url ? fetchPeaks(detail.peaks_url) : Promise.resolve(null)
@@ -121,7 +154,8 @@ export const usePlayer = create<PlayerState>((set, get) => {
         let peaks = await peaksPromise
         if (!peaks) peaks = { samplesPerSecond: 20, stems: Object.fromEntries(e.buffers.map((b) => [b.name, computePeaks(Array.from({ length: b.buffer.numberOfChannels }, (_, c) => b.buffer.getChannelData(c)), b.buffer.sampleRate, 20)])) }
         if (engine !== e) return
-        set({ status: "ready", duration: e.duration, peaks, loadProgress: 1 })
+        set({ status: "ready", duration: e.duration, peaks, loadProgress: 1, markers: normalizeMarkers(get().markers, e.duration) })
+        applyGrid()
       } catch (err) {
         if (engine !== e || (err instanceof DOMException && err.name === "AbortError")) return
         set({ status: "error", error: err instanceof Error ? err.message : "Could not load the stems" })
@@ -133,7 +167,9 @@ export const usePlayer = create<PlayerState>((set, get) => {
       engine?.dispose()
       engine = null
       stopKeepAlive()
-      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0 })
+      past = []
+      future = []
+      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
     },
     play() {
       if (!engine || get().status !== "ready") return
@@ -180,19 +216,43 @@ export const usePlayer = create<PlayerState>((set, get) => {
       applyLoop(null)
     },
     setMetronome(enabled) {
-      set({ metronome: { ...get().metronome, enabled } })
-      applyMetronome()
+      set({ metronome: enabled })
+      engine?.setMetronome(enabled)
     },
     setSpeed(speed) {
       const s = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed))
       set({ speed: s })
       engine?.setSpeed(s)
-      applyMetronome()
     },
     setSemitones(n) {
       const st = Math.min(MAX_SEMITONES, Math.max(-MAX_SEMITONES, Math.round(n)))
       set({ semitones: st })
       engine?.setPitch(st)
+    },
+    setMarkers(markers, opts = {}) {
+      if (opts.from && !opts.draft) {
+        past = [...past, opts.from].slice(-HISTORY)
+        future = []
+      }
+      set({ markers, markersDraft: !!opts.draft })
+      applyGrid()
+      history()
+    },
+    undo() {
+      const prev = past.pop()
+      if (!prev) return
+      future.push(get().markers)
+      set({ markers: prev, markersDraft: false })
+      applyGrid()
+      history()
+    },
+    redo() {
+      const next = future.pop()
+      if (!next) return
+      past.push(get().markers)
+      set({ markers: next, markersDraft: false })
+      applyGrid()
+      history()
     },
   }
 })

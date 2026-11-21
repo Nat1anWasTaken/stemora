@@ -1,18 +1,22 @@
 import { useEffect, useMemo, useState } from "react"
-import { buildBars, buildCells, lastAtOrBefore, splitChord, transposeChord, type Analysis, type Bar } from "@/player/analysis"
+import { buildBars, buildCells, lastAtOrBefore, splitChord, transposeChord, type Bar } from "@/player/analysis"
 import { getPosition, usePlayer } from "@/player/store"
 import { cn } from "@/lib/utils"
 
 /** Highlight a beat this many seconds early so it lands with the sound rather than just after it. */
 const LOOKAHEAD = 0.02
 
-const COLS: Record<number, string> = { 1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5", 6: "grid-cols-6", 7: "grid-cols-7" }
+const COLS: Record<number, string> = {
+  1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4", 5: "grid-cols-5", 6: "grid-cols-6",
+  7: "grid-cols-7", 8: "grid-cols-8", 9: "grid-cols-9", 10: "grid-cols-10", 11: "grid-cols-11", 12: "grid-cols-12",
+}
 
-/** Beat cells and bars of an analysis, plus the index of the beat under the playhead. */
-export function useBeats(analysis: Analysis | null) {
-  const duration = usePlayer((s) => s.duration)
-  const cells = useMemo(() => (analysis ? buildCells(analysis) : []), [analysis])
-  const bars = useMemo(() => buildBars(cells, duration), [cells, duration])
+/** Beat cells and bars of the song's beat grid (tempo map), plus the index of the beat under the playhead. */
+export function useBeats() {
+  const grid = usePlayer((s) => s.grid)
+  const chords = usePlayer((s) => s.analysis?.chords)
+  const cells = useMemo(() => buildCells(grid, chords ?? []), [grid, chords])
+  const bars = useMemo(() => buildBars(cells, grid), [cells, grid])
   const times = useMemo(() => cells.map((c) => c.time), [cells])
   const active = useActiveBeat(times)
   return { cells, bars, times, active }
@@ -35,21 +39,16 @@ export function useActiveBeat(times: number[]): number {
 
 export const beatAt = (times: number[], pos: number) => lastAtOrBefore(times, pos + LOOKAHEAD)
 
-/**
- * One bar of beat cells, shared by the chord strip (`compact`, a static row inside its own button) and the chord
- * chart (a grid of cells that seek when tapped).
- */
-export function BarBeats({ bar, activeTime, beatsPerBar, compact, looped, onSeek }: {
+/** One bar of the chord chart: a grid of beat cells that seek when tapped. */
+export function BarBeats({ bar, activeTime, looped, onSeek }: {
   bar: Bar
   activeTime: number | null
-  beatsPerBar: number
-  compact?: boolean
   looped?: boolean
   onSeek?: (t: number) => void
 }) {
   const semitones = usePlayer((s) => s.semitones)
   return (
-    <div className={cn("gap-0.5 rounded-2xl", compact ? "flex shrink-0" : cn("grid", COLS[beatsPerBar] ?? "grid-cols-4"), looped && "ring-2 ring-primary")}>
+    <div className={cn("grid gap-0.5 rounded-2xl", COLS[bar.cells.length] ?? "grid-cols-4", looped && "ring-2 ring-primary")}>
       {bar.cells.map((c) => {
         const on = c.time === activeTime
         const label = c.chord && c.chord !== "N" ? transposeChord(c.chord, semitones) : null
@@ -57,7 +56,7 @@ export function BarBeats({ bar, activeTime, beatsPerBar, compact, looped, onSeek
         const className = cn(
           "flex items-center justify-center px-1 font-semibold first:rounded-l-2xl last:rounded-r-2xl",
           // No colour transition: a fading highlight leaves the previous beat lit while the next one lights up.
-          compact ? "min-h-14 w-14 shrink-0 text-base" : "min-h-16 text-lg transition-transform duration-150 ease-spring active:scale-97",
+          "min-h-16 text-lg transition-transform duration-150 ease-spring active:scale-97",
           c.beat === 1 && "border-l-4 border-l-border",
           on ? "bg-foreground text-background" : cn("bg-secondary/60", onSeek && "hover:bg-secondary"),
           !on && c.held && "text-muted-foreground",

@@ -1,0 +1,305 @@
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import {
+  ChevronDown, ChevronLeft, ChevronRight, Crosshair, LocateFixed, Maximize2, Minus, Plus, Redo2, Sparkles, Trash2, Undo2, ZoomIn, ZoomOut,
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
+import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
+import { usePlayer } from "@/player/store"
+import {
+  clampBpm, COMMON_SIGNATURES, DENOMINATORS, formatTimeSignature, MAX_NUM, parseTimeSignature, type TempoMarker, type TimeSignature,
+} from "@/player/tempo-map"
+import { formatBpm } from "@/player/ui/use-playhead-tempo"
+import { flagLabel } from "@/player/ui/tempo-editor/render"
+import { applyDetectedTempo, deleteMarker, nudgeMarker, replaceMarker, setBpm, setKind } from "@/player/ui/tempo-editor/actions"
+
+/** A text field that edits a value on Enter or blur and goes back to it on Escape or invalid input. */
+function useDraft<T>(value: T, format: (v: T) => string, parse: (s: string) => T | null, onCommit: (v: T) => void) {
+  const [draft, setDraft] = useState(() => format(value))
+  const [invalid, setInvalid] = useState(false)
+  const focused = useRef(false)
+  const shown = format(value)
+  useEffect(() => {
+    if (!focused.current) setDraft(shown)
+  }, [shown])
+  const commit = () => {
+    const v = parse(draft)
+    if (v === null) {
+      setInvalid(true)
+      window.setTimeout(() => setInvalid(false), 600)
+      setDraft(shown)
+      return
+    }
+    onCommit(v)
+    setDraft(format(v))
+  }
+  return {
+    invalid,
+    props: {
+      value: draft,
+      "aria-invalid": invalid || undefined,
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) => setDraft(e.target.value),
+      onFocus: (e: React.FocusEvent<HTMLInputElement>) => {
+        focused.current = true
+        e.target.select()
+      },
+      onBlur: () => {
+        focused.current = false
+        commit()
+      },
+    },
+    commit,
+    revert: () => setDraft(shown),
+  }
+}
+
+/** BPM input: type a value (two decimals), or ↑/↓ for ±1 (Shift ±0.1, Alt ±0.01). */
+export function BpmField({ bpm, onCommit, inputRef, large }: { bpm: number; onCommit: (bpm: number) => void; inputRef?: RefObject<HTMLInputElement | null>; large?: boolean }) {
+  const d = useDraft(bpm, formatBpm, (s) => {
+    const n = Number(s.replace(",", "."))
+    return s.trim() && Number.isFinite(n) ? clampBpm(n) : null
+  }, onCommit)
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    e.stopPropagation()
+    if (e.key === "Enter") {
+      d.commit()
+      e.currentTarget.blur()
+    } else if (e.key === "Escape") {
+      d.revert()
+      e.currentTarget.blur()
+    } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault()
+      const step = (e.altKey ? 0.01 : e.shiftKey ? 0.1 : 1) * (e.key === "ArrowUp" ? 1 : -1)
+      onCommit(clampBpm(bpm + step))
+    }
+  }
+  return (
+    <Input
+      ref={inputRef}
+      aria-label="BPM"
+      title="BPM (↑↓, Shift, Alt)"
+      inputMode="decimal"
+      autoComplete="off"
+      variant="value"
+      inputSize={large ? "lg" : "default"}
+      className={large ? "w-24" : "w-20"}
+      onKeyDown={onKeyDown}
+      {...d.props}
+    />
+  )
+}
+
+/** Common meters and numerator / denominator steppers. */
+export function TimeSignaturePicker({ value, onPick }: { value: TimeSignature; onPick: (s: TimeSignature) => void }) {
+  const dens: readonly number[] = DENOMINATORS
+  const di = dens.indexOf(value.den)
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-4 gap-1.5">
+        {COMMON_SIGNATURES.map((s) => {
+          const on = s.num === value.num && s.den === value.den
+          return (
+            <Button key={formatTimeSignature(s)} variant="toggle" size="sm" aria-pressed={on} onClick={() => onPick(s)}>
+              {formatTimeSignature(s)}
+            </Button>
+          )
+        })}
+      </div>
+      <div className="flex items-center justify-center gap-4">
+        <Stepper label="Beats per bar" value={value.num} onMinus={value.num > 1 ? () => onPick({ ...value, num: value.num - 1 }) : undefined} onPlus={value.num < MAX_NUM ? () => onPick({ ...value, num: value.num + 1 }) : undefined} />
+        <span className="text-2xl font-light text-muted-foreground">/</span>
+        <Stepper label="Beat note" value={value.den} onMinus={di > 0 ? () => onPick({ ...value, den: dens[di - 1] }) : undefined} onPlus={di < dens.length - 1 ? () => onPick({ ...value, den: dens[di + 1] }) : undefined} />
+      </div>
+    </div>
+  )
+}
+
+function Stepper({ label, value, onMinus, onPlus }: { label: string; value: number; onMinus?: () => void; onPlus?: () => void }) {
+  return (
+    <div role="group" aria-label={label} className="flex items-center gap-1">
+      <Button variant="secondary" size="icon-lg" aria-label={`Fewer: ${label}`} disabled={!onMinus} onClick={onMinus}><Minus /></Button>
+      <span className="w-8 text-center font-heading text-xl font-semibold tabular-nums">{value}</span>
+      <Button variant="secondary" size="icon-lg" aria-label={`More: ${label}`} disabled={!onPlus} onClick={onPlus}><Plus /></Button>
+    </div>
+  )
+}
+
+/** Time signature input: type "6/8" (or "6 8", "6:8"), or pick from the list beside it. */
+export function TimeSignatureField({ value, onCommit, picker = true }: { value: TimeSignature; onCommit: (s: TimeSignature) => void; picker?: boolean }) {
+  const d = useDraft(value, formatTimeSignature, parseTimeSignature, onCommit)
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    e.stopPropagation()
+    if (e.key === "Enter") {
+      d.commit()
+      e.currentTarget.blur()
+    } else if (e.key === "Escape") {
+      d.revert()
+      e.currentTarget.blur()
+    }
+  }
+  return (
+    <div className="flex items-center">
+      <Input
+        aria-label="Time signature"
+        title="Time signature, e.g. 6/8"
+        autoComplete="off"
+        variant="value"
+        attached={picker}
+        className="w-16"
+        onKeyDown={onKeyDown}
+        {...d.props}
+      />
+      {picker && (
+        <Popover>
+          <PopoverTrigger render={<Button variant="addon" size="addon" aria-label="Pick a time signature" />}>
+            <ChevronDown />
+          </PopoverTrigger>
+          <PopoverContent className="w-80">
+            <TimeSignaturePicker value={value} onPick={onCommit} />
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  )
+}
+
+function KindSwitch({ marker, index }: { marker: TempoMarker; index: number }) {
+  return (
+    <Tabs value={marker.kind} onValueChange={(v) => setKind(index, v as "auto" | "manual")}>
+      <TabsList variant="segmented" aria-label="Marker kind">
+        <TabsTrigger value="auto">Auto</TabsTrigger>
+        <TabsTrigger value="manual">Manual</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  )
+}
+
+export type EditorControls = {
+  active: number
+  onLocate: (dir: -1 | 1) => void
+  onAdd: () => void
+  onZoom: (factor: number) => void
+  onFit: () => void
+  following: boolean
+  onFollow: () => void
+  bpmRef: RefObject<HTMLInputElement | null>
+}
+
+const tip = (label: string, key: string) => `${label} (${key})`
+
+/** Desktop info line above the editor: the marker being edited, then add, history, zoom and follow. */
+export function DesktopToolbar({ c }: { c: EditorControls }) {
+  const markers = usePlayer((s) => s.markers)
+  const canUndo = usePlayer((s) => s.canUndo)
+  const canRedo = usePlayer((s) => s.canRedo)
+  const analysis = usePlayer((s) => s.analysis)
+  const { undo, redo } = usePlayer.getState()
+  const i = Math.min(c.active, markers.length - 1)
+  const m = markers[i]
+  return (
+    <div role="toolbar" aria-label="Tempo map" className="flex h-12 shrink-0 items-center gap-1 rounded-2xl border border-border bg-surface/70 px-1.5">
+      <Button variant="ghost" size="icon-sm" aria-label="Previous marker" title={tip("Previous marker", "Shift+B")} onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
+      <span className="min-w-8 text-center text-xs text-muted-foreground tabular-nums">{i + 1}/{markers.length}</span>
+      <Button variant="ghost" size="icon-sm" aria-label="Next marker" title={tip("Next marker", "Shift+N")} onClick={() => c.onLocate(1)}><ChevronRight /></Button>
+      <div className="mx-1 h-6 w-px bg-border" />
+      {m && <KindSwitch marker={m} index={i} />}
+      {m?.kind === "manual" && (
+        <>
+          <BpmField bpm={m.bpm} inputRef={c.bpmRef} onCommit={(bpm) => setBpm(i, bpm)} />
+          <TimeSignatureField value={m} onCommit={(s) => replaceMarker(i, { ...m, ...s })} />
+          <Button variant="ghost" size="icon-sm" aria-label="Detected tempo" title="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(i)}><Sparkles /></Button>
+        </>
+      )}
+      <Button variant="ghost" size="icon-sm" aria-label="Delete marker" title={tip("Delete marker", "Del")} disabled={i === 0} onClick={() => deleteMarker(i)}><Trash2 /></Button>
+      <div className="ml-auto flex items-center gap-0.5">
+        <Button variant="secondary" size="icon-sm" aria-label="Add marker" title={tip("Add marker", "T")} onClick={c.onAdd}><Plus /></Button>
+        <div className="mx-1 h-6 w-px bg-border" />
+        <Button variant="ghost" size="icon-sm" aria-label="Undo" title={tip("Undo", "Ctrl+Z")} disabled={!canUndo} onClick={undo}><Undo2 /></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Redo" title={tip("Redo", "Ctrl+Shift+Z")} disabled={!canRedo} onClick={redo}><Redo2 /></Button>
+        <div className="mx-1 h-6 w-px bg-border" />
+        <Button variant="ghost" size="icon-sm" aria-label="Zoom out" title={tip("Zoom out", "G")} onClick={() => c.onZoom(1 / 1.6)}><ZoomOut /></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Zoom in" title={tip("Zoom in", "H")} onClick={() => c.onZoom(1.6)}><ZoomIn /></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Whole song" title={tip("Whole song", "Shift+F")} onClick={c.onFit}><Maximize2 /></Button>
+        <Button variant="toggle" size="icon-sm" aria-label="Follow playback" title={tip("Follow playback", "F")} aria-pressed={c.following} onClick={c.onFollow}><LocateFixed /></Button>
+      </div>
+    </div>
+  )
+}
+
+/** Phone controls under the editor: markers either side, the one at the cursor (tap to edit), add, move here, undo. */
+export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere: () => void }) {
+  const markers = usePlayer((s) => s.markers)
+  const canUndo = usePlayer((s) => s.canUndo)
+  const { undo } = usePlayer.getState()
+  const i = Math.min(c.active, markers.length - 1)
+  const m = markers[i]
+  return (
+    <div role="toolbar" aria-label="Tempo map" className="flex shrink-0 items-center gap-1">
+      <Button variant="ghost" size="icon-lg" aria-label="Previous marker" onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
+      {m && (
+        <MarkerDrawer index={i} marker={m}>
+          <Button variant="chip" className="h-11 min-w-0 flex-1" aria-label={`Edit marker ${i + 1}: ${flagLabel(m)}`}>
+            <span className={cn("size-2 shrink-0 rounded-full", m.kind === "manual" ? "bg-primary" : "bg-muted-foreground")} />
+            <span className="truncate">{flagLabel(m)}</span>
+          </Button>
+        </MarkerDrawer>
+      )}
+      <Button variant="ghost" size="icon-lg" aria-label="Next marker" onClick={() => c.onLocate(1)}><ChevronRight /></Button>
+      <Button variant="secondary" size="icon-lg" aria-label="Add marker at the cursor" onClick={c.onAdd}><Plus /></Button>
+      <Button variant="secondary" size="icon-lg" aria-label="Move this marker to the cursor" disabled={i === 0} onClick={onMoveHere}><Crosshair /></Button>
+      <Button variant="ghost" size="icon-lg" aria-label="Undo" disabled={!canUndo} onClick={undo}><Undo2 /></Button>
+    </div>
+  )
+}
+
+/** Phone marker editor in a bottom drawer: kind, BPM (−/+ by 1 and 0.1), meter, nudge, detected tempo, delete. */
+function MarkerDrawer({ index, marker: m, children }: { index: number; marker: TempoMarker; children: React.ReactElement }) {
+  const analysis = usePlayer((s) => s.analysis)
+  const [open, setOpen] = useState(false)
+  const nudge = (dir: -1 | 1) => nudgeMarker(index, dir, 0.005)
+  return (
+    <Drawer open={open} onOpenChange={setOpen} showSwipeHandle>
+      <DrawerTrigger render={children} />
+      <DrawerContent>
+        <div className="flex flex-col gap-5 px-5 pt-3 pb-safe">
+          <div className="relative flex min-h-9 items-center justify-center">
+            <DrawerTitle>{markerClock(m.time)}</DrawerTitle>
+            <Button variant="destructive" size="icon-lg" aria-label="Delete marker" className="absolute right-0" disabled={index === 0} onClick={() => {
+              if (deleteMarker(index)) setOpen(false)
+            }}><Trash2 /></Button>
+          </div>
+          <div className="flex justify-center"><KindSwitch marker={m} index={index} /></div>
+          {m.kind === "manual" && (
+            <>
+              <Row>
+                <Button variant="secondary" size="icon-lg" aria-label="BPM −1" onClick={() => setBpm(index, m.bpm - 1)}><Minus /></Button>
+                <Button variant="ghost" size="icon-lg" aria-label="BPM −0.1" onClick={() => setBpm(index, m.bpm - 0.1)}>−.1</Button>
+                <BpmField bpm={m.bpm} onCommit={(bpm) => setBpm(index, bpm)} large />
+                <Button variant="ghost" size="icon-lg" aria-label="BPM +0.1" onClick={() => setBpm(index, m.bpm + 0.1)}>+.1</Button>
+                <Button variant="secondary" size="icon-lg" aria-label="BPM +1" onClick={() => setBpm(index, m.bpm + 1)}><Plus /></Button>
+              </Row>
+              <div className="flex flex-col items-center gap-3">
+                <TimeSignatureField value={m} picker={false} onCommit={(s) => replaceMarker(index, { ...m, ...s })} />
+                <TimeSignaturePicker value={m} onPick={(s) => replaceMarker(index, { ...m, ...s })} />
+              </div>
+            </>
+          )}
+          <Row>
+            <Button variant="secondary" size="icon-lg" aria-label="Nudge earlier" disabled={index === 0} onClick={() => nudge(-1)}><ChevronLeft /></Button>
+            <Button variant="secondary" size="icon-lg" aria-label="Nudge later" disabled={index === 0} onClick={() => nudge(1)}><ChevronRight /></Button>
+            {m.kind === "manual" && <Button variant="secondary" size="icon-lg" aria-label="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(index)}><Sparkles /></Button>}
+          </Row>
+          <div className="h-2" />
+        </div>
+      </DrawerContent>
+    </Drawer>
+  )
+}
+
+/** Where a marker sits, to the millisecond: "1:04.250". */
+const markerClock = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(3).padStart(6, "0")}`
+
+const Row = ({ children }: { children: ReactNode }) => <div className="flex items-center justify-center gap-1.5">{children}</div>

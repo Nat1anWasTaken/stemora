@@ -42,6 +42,8 @@ const STAGES = ["downloading", "validating", "separating", "encoding", "uploadin
 /** MAX_CONCURRENT_JOBS: songs importing/queued/processing at once; more wait as `pending`. */
 const MAX_ACTIVE = 2
 
+const DEFAULT_MARKERS = [{ time: 0, kind: "auto" }]
+
 export function mockApi(): Plugin {
   const users: MockUser[] = []
   if (process.env.VITE_MOCK_FRESH !== "1") {
@@ -52,6 +54,8 @@ export function mockApi(): Plugin {
   const invites: { id: string; created_at: string; expires_at: string; used_at: string | null; used_by_email: string | null; status: "pending" | "used" | "expired" }[] = []
   const now = Date.now()
   const iso = (ms: number) => new Date(ms).toISOString()
+  /** Tempo maps per song id (PUT /api/songs/{id}/tempo-markers). */
+  const tempoMarkers = new Map<string, { time: number }[]>()
   /** Drum-notation line breaks per song id (PUT /api/songs/{id}/drum-breaks). */
   const drumBreaks = new Map<string, number[]>()
   const songs: MockSong[] = [
@@ -301,8 +305,28 @@ export function mockApi(): Plugin {
             if (!sub && method === "GET") {
               const p = publicSong(s)
               return json(res, 200, s.status === "ready"
-                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: drumBreaks.get(s.id) ?? [] }
-                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: drumBreaks.get(s.id) ?? [] })
+                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS }
+                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS })
+            }
+            if (sub === "tempo-markers" && method === "PUT") {
+              const b = await readBody(req)
+              const list = Array.isArray(b.markers) ? (b.markers as Record<string, unknown>[]) : []
+              if (list.length > 1000) return err(res, 400, "too_many_markers", "too many tempo markers")
+              const ok = list
+                .filter((m) => typeof m.time === "number" && m.time >= 0 && (m.kind === "auto" || (m.kind === "manual" && typeof m.bpm === "number" && [2, 4, 8, 16].includes(m.den as number) && Number.isInteger(m.num) && (m.num as number) >= 1 && (m.num as number) <= 32)))
+                .map((m) => (m.kind === "auto" ? { time: m.time as number, kind: "auto" } : { time: m.time as number, kind: "manual", bpm: Math.round(Math.min(400, Math.max(20, m.bpm as number)) * 100) / 100, num: m.num, den: m.den }))
+                .sort((x, y) => x.time - y.time)
+              const out: { time: number }[] = []
+              for (const m of ok) {
+                if (out.length === 0) {
+                  if (m.time < 0.02) { out.push({ ...m, time: 0 }); continue }
+                  out.push(DEFAULT_MARKERS[0])
+                }
+                if (m.time - out[out.length - 1].time >= 0.02) out.push(m)
+              }
+              const markers = out.length ? out : DEFAULT_MARKERS
+              tempoMarkers.set(s.id, markers)
+              return json(res, 200, { markers })
             }
             if (sub === "drum-breaks" && method === "PUT") {
               const b = await readBody(req)

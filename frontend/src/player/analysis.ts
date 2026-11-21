@@ -1,3 +1,5 @@
+import type { BeatGrid } from "@/player/tempo-map"
+
 export type ChordSegment = { start: number; end: number; label: string }
 /** Drum kinds a chart writes differently (docs/contract.md); `hihat` is the closed hi-hat. */
 export const DRUM_KINDS = [
@@ -32,7 +34,7 @@ export type Analysis = {
  */
 export type BeatCell = { time: number; beat: number; bar: number; chord: string | null; held: boolean }
 /** One bar of the chord chart; `end` is where the next bar starts (or the song ends). */
-export type Bar = { bar: number; start: number; end: number; cells: BeatCell[] }
+export type Bar = { bar: number; start: number; end: number; den: number; cells: BeatCell[] }
 
 const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x)
 
@@ -162,40 +164,24 @@ export function lastAtOrBefore(sorted: number[], t: number): number {
   return ans
 }
 
-/** Beats annotated with bar/beat numbers (1-based; pickup beats before the first downbeat are bar 0) and chord changes. */
-export function buildCells(a: Analysis): BeatCell[] {
-  const downs = new Set(a.downbeats.map((d) => Math.round(d * 1000)))
-  let bar = 0
-  let beat = 0
+/** Beats of a grid with their chord changes. */
+export function buildCells(grid: BeatGrid, chords: ChordSegment[]): BeatCell[] {
   let ci = -1
-  const starts = a.chords.map((c) => c.start)
-  return a.beats.map((time) => {
-    if (downs.has(Math.round(time * 1000))) {
-      bar += 1
-      beat = 1
-    } else beat += 1
-    // A chord label is shown on the beat where the chord changes, and again on every downbeat.
+  const starts = chords.map((c) => c.start)
+  return grid.beats.map(({ time, beat, bar }) => {
+    // A chord label is shown on the beat where the chord changes, and again on every bar's first beat.
     const idx = lastAtOrBefore(starts, time + 0.01)
     const changed = idx !== ci
     ci = idx
-    const label = idx >= 0 ? a.chords[idx].label : null
+    const label = idx >= 0 ? chords[idx].label : null
     const shown = !!label && (changed || beat === 1)
     return { time, beat, bar, chord: shown ? label : null, held: shown && !changed }
   })
 }
 
-/** Group beat cells into bars (pickup beats form bar 0). */
-export function buildBars(cells: BeatCell[], duration: number): Bar[] {
-  const bars: Bar[] = []
-  for (const c of cells) {
-    const last = bars.at(-1)
-    if (last && last.bar === c.bar) last.cells.push(c)
-    else bars.push({ bar: c.bar, start: c.time, end: duration, cells: [c] })
-  }
-  bars.forEach((b, i) => {
-    if (i + 1 < bars.length) b.end = bars[i + 1].start
-  })
-  return bars
+/** Group beat cells into the grid's bars (pickup = bar 0). */
+export function buildBars(cells: BeatCell[], grid: BeatGrid): Bar[] {
+  return grid.bars.map((b) => ({ bar: b.bar, start: b.start, end: b.end, den: b.den, cells: cells.slice(b.first, b.first + b.count) }))
 }
 
 /** Split "Abmaj7" into the root ("Ab") and the quality suffix ("maj7"). */

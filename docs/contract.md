@@ -58,7 +58,11 @@ type Download = { downloaded_bytes: number; total_bytes: number | null /* exact,
 type LinkPreview = { title: string | null; duration_s: number | null; uploader: string | null; site: string | null;
                      filesize: number | null; problem: string | null /* why importing it would fail */ }
 type Stem = { name: "vocals"|"drums"|"bass"|"other"; url: string /* presigned GET m4a */; size_bytes: number }
-type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null /* presigned; the object may be missing (404) */ }
+type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null /* presigned; the object may be missing (404) */;
+                    drum_breaks: number[]; tempo_markers: TempoMarker[] }
+type TempoMarker = { time: number /* seconds */; kind: "auto" }
+                 | { time: number; kind: "manual"; bpm: number /* 20..400, 0.01 steps, in `den` notes: 6/8 at 120 = 120 eighths a minute */;
+                     num: number /* 1..32 */; den: 2 | 4 | 8 | 16 }
 type Usage = { used_bytes: number; quota_bytes: number }
 ```
 Auth:
@@ -86,6 +90,7 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `POST /api/songs/{id}/complete` `{parts?:{part_number:number,etag:string}[]}` -> Song. Completes multipart if needed, HEADs the object (size must match and be within cap), then moves the song to `pending` and starts it at once if the user has a free slot (job created, Modal spawned; status `queued`). Idempotent.
 - `GET /api/songs/{id}` -> SongDetail (stems/peaks_url only when ready; presigned URLs valid 1h)
 - `PUT /api/songs/{id}/drum-breaks` `{bars:number[]}` -> `{bars:number[]}`. Replaces the song's drum-notation line breaks: indices of the bars that start a new row. The server keeps indices 1..99999, sorted and deduplicated (others are dropped); more than 2000 -> 400 `too_many_breaks`. SongDetail carries them as `drum_breaks`.
+- `PUT /api/songs/{id}/tempo-markers` `{markers:TempoMarker[]}` -> `{markers:TempoMarker[]}`. Replaces the song's tempo map: from each marker on, the beats are a fixed grid (`manual`) or the detected beats of `analysis.json` (`auto`), until the next marker; every marker starts a bar. The server drops malformed markers (unknown kind, time outside 0..86400, `num`/`den` out of range), clamps and rounds `bpm`, sorts by time, keeps one marker per 20 ms, and makes the first marker sit at 0 (adding an auto marker there when none is). More than 1000 -> 400 `too_many_markers`. New songs (and songs from before the feature) hold `[{"time":0,"kind":"auto"}]`. Snapping (a marker after a manual one sits a whole number of its beats later) is kept by the client, not checked by the server.
 - `PATCH /api/songs/{id}` `{title}` -> Song; `DELETE /api/songs/{id}` -> 204 (removes R2 prefix `users/{uid}/songs/{sid}/`, DB rows)
 - `POST /api/songs/{id}/reprocess` `{model}` -> Song (needs original still present; deletes old stems; joins the back of the queue as `pending`, started at once when a slot is free; 429 `queue_full`)
 - `GET /api/songs/{id}/stems/{name}/download?format=m4a|flac` -> 302 to presigned GET with `Content-Disposition: attachment; filename="{title} - {name}.{ext}"`

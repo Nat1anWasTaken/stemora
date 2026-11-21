@@ -19,22 +19,29 @@ export const VOICES: DrumKind[][] = [DRUM_KINDS.filter((k) => !FEET.includes(k))
 
 export type FlatSyncPoint = { barIndex: number; barPosition: number; barOccurence: number; millisecondOffset: number }
 
-/** Plain and dotted values in 32nds, longest first, as alphaTex durations. */
+/** Plain and dotted values in 64ths, longest first, as alphaTex durations (nothing finer than a 32nd). */
 const VALUES: { len: number; tex: string }[] = [
-  { len: 8, tex: "4" },
-  { len: 6, tex: "8{d}" },
-  { len: 4, tex: "8" },
-  { len: 3, tex: "16{d}" },
-  { len: 2, tex: "16" },
-  { len: 1, tex: "32" },
+  { len: 32, tex: "2" },
+  { len: 24, tex: "4{d}" },
+  { len: 16, tex: "4" },
+  { len: 12, tex: "8{d}" },
+  { len: 8, tex: "8" },
+  { len: 6, tex: "16{d}" },
+  { len: 4, tex: "16" },
+  { len: 2, tex: "32" },
 ]
-/** Whole-bar rests in quarters. */
+/** Whole-bar rests in 64ths. */
 const BAR_RESTS: { len: number; tex: string }[] = [
-  { len: 4, tex: "1" },
-  { len: 3, tex: "2{d}" },
-  { len: 2, tex: "2" },
-  { len: 1, tex: "4" },
+  { len: 64, tex: "1" },
+  { len: 48, tex: "2{d}" },
+  { len: 32, tex: "2" },
+  { len: 24, tex: "4{d}" },
+  { len: 16, tex: "4" },
+  { len: 8, tex: "8" },
+  { len: 4, tex: "16" },
 ]
+/** Length of one beat (a `den` note) in 64ths. */
+const beatLen = (den: number) => 64 / den
 
 function head(kinds: DrumKind[]): string {
   return kinds.length === 1 ? kinds[0] : `(${kinds.join(" ")})`
@@ -51,17 +58,17 @@ function split(len: number, values: { len: number; tex: string }[]): string[] {
   return out
 }
 
-/** One beat of one voice as alphaTex beats. */
-function beatTex(beat: QBeat, voice: DrumKind[]): string[] {
+/** One beat (a `den` note) of one voice as alphaTex beats. */
+function beatTex(beat: QBeat, voice: DrumKind[], den: number): string[] {
   const hits = beat.steps.map((kinds) => kinds.filter((k) => voice.includes(k)))
-  if (hits.every((k) => k.length === 0)) return ["r.4"]
+  if (hits.every((k) => k.length === 0)) return split(beatLen(den), VALUES).map((d) => `r.${d}`)
   if (beat.grid === 3 || beat.grid === 6) {
     // Triplets: one tuplet value per step keeps every group complete.
-    const value = beat.grid === 3 ? "8" : "16"
+    const value = (2 * den * beat.grid) / 3
     return hits.map((k) => `${k.length ? head(k) : "r"}.${value}{tu ${beat.grid}}`)
   }
-  // Straight grids (1, 2, 4, 8 steps): a note lasts until the next hit in this voice; gaps become rests.
-  const unit = 8 / beat.grid
+  // Straight grids: a note lasts until the next hit in this voice; gaps become rests.
+  const unit = beatLen(den) / beat.grid
   const out: string[] = []
   const starts = hits.flatMap((k, s) => (k.length ? [s] : []))
   if (starts[0] > 0) out.push(...split(starts[0] * unit, VALUES).map((d) => `r.${d}`))
@@ -86,17 +93,18 @@ export function toAlphaTex(bars: QBar[], bpm: number | null, sections?: Map<numb
     `\\tempo(${Math.round(bpm ?? 120)})`,
   ].join(" ")
   const voices = VOICES.map((voice, v) => {
-    let meter = 0
+    let meter = ""
     return bars
       .map((bar, i) => {
         const n = bar.beats.length
+        const den = bar.den
         const name = v === 0 ? sections?.get(i) : undefined
         // Section marks belong to the bar (not a voice): written once, in the first voice.
         const mark = name ? `\\section(${JSON.stringify(name)}) ` : ""
-        const ts = mark + (n !== meter ? `\\ts(${n} 4) ` : "")
-        meter = n
+        const ts = mark + (`${n}/${den}` !== meter ? `\\ts(${n} ${den}) ` : "")
+        meter = `${n}/${den}`
         const empty = bar.beats.every((b) => b.steps.every((k) => !k.some((x) => voice.includes(x))))
-        const body = empty ? split(n, BAR_RESTS).map((d) => `r.${d}`) : bar.beats.flatMap((b) => beatTex(b, voice))
+        const body = empty ? split(n * beatLen(den), BAR_RESTS).map((d) => `r.${d}`) : bar.beats.flatMap((b) => beatTex(b, voice, den))
         return ts + body.join(" ")
       })
       .join(" | ")

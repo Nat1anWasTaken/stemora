@@ -311,6 +311,14 @@ html[data-nav="none"]::view-transition-new(root) { animation: none; }
   & > :nth-child(7) { animation-delay: 240ms; }
   & > :nth-child(n + 8) { animation-delay: 280ms; }
 }
+/* Rejected input: a short sideways shake */
+@keyframes shake {
+  20%, 60% { translate: -3px 0; }
+  40%, 80% { translate: 3px 0; }
+}
+@utility animate-shake {
+  animation: shake 320ms var(--ease-spring);
+}
 /* Full-screen sheet (player) sliding up from / down to the bottom edge */
 @utility animate-sheet-in {
   animation: sheet-in 380ms var(--ease-sheet) both;

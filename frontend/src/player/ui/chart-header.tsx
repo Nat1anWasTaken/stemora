@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ChevronDown, Drum, LayoutGrid, Minimize2, Moon, Sun, Volume2, VolumeX, WrapText } from "lucide-react"
+import { ChevronDown, Drum, LayoutGrid, Moon, Sun, Volume2, VolumeX, WrapText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
@@ -11,6 +11,7 @@ import { barIndexAt } from "@/player/drums/chart"
 import { BARS_PER_ROW, type NotationPrefs, type NotationTheme } from "@/player/drums/notation-prefs"
 import type { Precision, QBar } from "@/player/drums/quantize"
 import { getPosition, usePlayer } from "@/player/store"
+import { formatBpm, usePlayheadTempo } from "@/player/ui/use-playhead-tempo"
 
 export type Chart = "chords" | "drums"
 const CHART_KEY = "stemora:chart"
@@ -132,21 +133,21 @@ function LineBreakToggle({ drums, compact, active = true }: { drums: DrumControl
 
 /**
  * Chords | Drums switch above the chart; for drums also the notation settings, the line break toggle and the drums mute (play along over the
- * song while reading the chart). Desktop adds tempo/meter and Collapse. On mobile the switch fills the row with 44px targets and the slot to its
+ * song while reading the chart). Desktop adds tempo/meter. On mobile the switch fills the row with 44px targets and the slot to its
  * right keeps the drum tools' width in both charts (tempo/meter shows there for chords), so switching never resizes or moves the switch.
  */
-export function ChartHeader({ chart, onChart, onCollapse, drums }: {
+export function ChartHeader({ chart, onChart, desktop, drums }: {
   chart: Chart
   onChart: (c: Chart) => void
-  onCollapse?: () => void
+  desktop: boolean
   drums: DrumControls
 }) {
-  const analysis = usePlayer((s) => s.analysis)
+  const playhead = usePlayheadTempo()
+  const speed = usePlayer((s) => s.speed)
   const muted = usePlayer((s) => s.mixer.muted.includes("drums"))
   const { toggleMute } = usePlayer.getState()
-  const desktop = !!onCollapse
   const isDrums = chart === "drums"
-  const tempo = analysis && `${analysis.bpm ? `${Math.round(analysis.bpm)} BPM · ` : ""}${analysis.beatsPerBar}/4`
+  const tempo = `${playhead.bpm ? `${formatBpm(Math.round(playhead.bpm * speed))} BPM · ` : ""}${playhead.num}/${playhead.den}`
 
   const tabs = (
     <Tabs value={chart} onValueChange={(v) => onChart(v as Chart)} className={desktop ? undefined : "min-w-0 flex-1"}>
@@ -187,7 +188,6 @@ export function ChartHeader({ chart, onChart, onCollapse, drums }: {
             {muted ? <VolumeX /> : <Volume2 />}Mute drums
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={onCollapse}><Minimize2 />Collapse</Button>
       </div>
     </div>
   )

@@ -29,6 +29,7 @@ pub fn router() -> Router<AppState> {
         .route("/songs/{id}/reprocess", post(reprocess))
         .route("/songs/{id}/cancel", post(cancel))
         .route("/songs/{id}/drum-breaks", put(set_drum_breaks))
+        .route("/songs/{id}/tempo-markers", put(set_tempo_markers))
         .route("/songs/{id}/stems/{name}/download", get(download))
 }
 
@@ -689,10 +690,13 @@ async fn detail(
 ) -> AppResult<Json<Value>> {
     owned_song(&st.pool, u.id, id).await?;
     let song = live_view(&st, id).await?;
-    let drum_breaks: Vec<i32> = sqlx::query_scalar("SELECT drum_breaks FROM songs WHERE id = $1")
-        .bind(id)
-        .fetch_one(&st.pool)
-        .await?;
+    let (drum_breaks, tempo_markers): (Vec<i32>, String) =
+        sqlx::query_as("SELECT drum_breaks, tempo_markers::text FROM songs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&st.pool)
+            .await?;
+    let tempo_markers: Value =
+        serde_json::from_str(&tempo_markers).unwrap_or_else(|_| default_tempo_markers());
     let (mut stems, mut peaks_url, mut analysis_url) = (Vec::new(), None, None);
     if song.status == SongStatus::Ready.as_str() {
         let rows: Vec<StemRow> = sqlx::query_as("SELECT * FROM stems WHERE song_id = $1")
@@ -712,7 +716,7 @@ async fn detail(
         );
     }
     Ok(Json(
-        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks}),
+        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks, "tempo_markers": tempo_markers}),
     ))
 }
 
@@ -789,6 +793,99 @@ async fn set_drum_breaks(
         return Err(AppError::not_found());
     }
     Ok(Json(json!({ "bars": bars })))
+}
+
+/// Most markers one tempo map may hold.
+const MAX_TEMPO_MARKERS: usize = 1000;
+/// Markers closer than this (seconds) are one marker.
+const MIN_MARKER_GAP: f64 = 0.02;
+
+fn default_tempo_markers() -> Value {
+    json!([{"time": 0.0, "kind": "auto"}])
+}
+
+#[derive(Deserialize)]
+struct TempoMarkersReq {
+    markers: Vec<Value>,
+}
+
+/// One well-formed marker, normalised (BPM rounded to 0.01), or None.
+fn tempo_marker(v: &Value) -> Option<(f64, Value)> {
+    let time = v.get("time")?.as_f64()?;
+    if !time.is_finite() || !(0.0..=86_400.0).contains(&time) {
+        return None;
+    }
+    match v.get("kind")?.as_str()? {
+        "auto" => Some((time, json!({"time": time, "kind": "auto"}))),
+        "manual" => {
+            let bpm = v.get("bpm")?.as_f64()?;
+            let num = v.get("num")?.as_i64()?;
+            let den = v.get("den")?.as_i64()?;
+            if !bpm.is_finite() || !(1..=32).contains(&num) || ![2, 4, 8, 16].contains(&den) {
+                return None;
+            }
+            let bpm = (bpm.clamp(20.0, 400.0) * 100.0).round() / 100.0;
+            Some((
+                time,
+                json!({"time": time, "kind": "manual", "bpm": bpm, "num": num, "den": den}),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Replace the song's tempo map (whole map; the client sends the latest state). Malformed markers are dropped,
+/// the rest sorted with one marker per time, and the first is at 0 (an auto marker is added when none is).
+async fn set_tempo_markers(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(r): Json<TempoMarkersReq>,
+) -> AppResult<Json<Value>> {
+    if r.markers.len() > MAX_TEMPO_MARKERS {
+        return Err(AppError::bad_request(
+            "too_many_markers",
+            "too many tempo markers",
+        ));
+    }
+    let mut parsed: Vec<(f64, Value)> = r.markers.iter().filter_map(tempo_marker).collect();
+    parsed.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut markers: Vec<Value> = Vec::with_capacity(parsed.len() + 1);
+    let mut last: Option<f64> = None;
+    for (time, mut m) in parsed {
+        if last.is_none() {
+            if time < MIN_MARKER_GAP {
+                m["time"] = json!(0.0);
+                markers.push(m);
+                last = Some(0.0);
+                continue;
+            }
+            markers.push(default_tempo_markers()[0].clone());
+            last = Some(0.0);
+        }
+        if time - last.unwrap_or(0.0) < MIN_MARKER_GAP {
+            continue;
+        }
+        markers.push(m);
+        last = Some(time);
+    }
+    if markers.is_empty() {
+        markers.push(default_tempo_markers()[0].clone());
+    }
+    let markers = Value::Array(markers);
+    let n = sqlx::query(
+        "UPDATE songs SET tempo_markers = $3::jsonb, updated_at = now() WHERE id = $1 AND user_id = $2",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(markers.to_string())
+    .execute(&st.pool)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(AppError::not_found());
+    }
+    Ok(Json(json!({ "markers": markers })))
 }
 
 async fn remove(

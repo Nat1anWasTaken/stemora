@@ -21,6 +21,10 @@ const buttonVariants = cva(
         cell: "flex-col items-start border-border bg-secondary/60 text-foreground hover:bg-secondary aria-pressed:border-primary/60 aria-pressed:bg-primary/10",
         play: "bg-primary text-primary-foreground glow-primary hover:bg-primary/90",
         link: "text-primary underline-offset-4 hover:underline",
+        /* Opens a picker for the input it is joined to (the input uses `attached`) */
+        addon: "rounded-l-none border-input border-l-0 text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted dark:bg-input/30",
+        /* Pill showing a value that opens its editor (tempo marker on phones) */
+        chip: "rounded-full border-border bg-secondary/60 font-semibold tabular-nums text-foreground hover:bg-secondary",
       },
       size: {
         default:
@@ -29,6 +33,7 @@ const buttonVariants = cva(
         sm: "h-9 gap-1.5 rounded-[min(var(--radius-md),12px)] px-3 text-sm in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-12 gap-2 px-4 text-base has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         icon: "size-10",
+        addon: "h-8 w-7",
         cell: "h-14 justify-center gap-0 rounded-2xl px-4",
         "icon-xs":
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
