@@ -244,7 +244,7 @@ export function Player({ detail }: { detail: SongDetail }) {
             {tab === "practice" && chartToolbar}
           </WorkspaceToolbar>
           {tab === "mixer" && (
-            <Swap key="mixer" className="flex-col gap-2 overflow-y-auto overscroll-contain">
+            <Swap key="mixer" className="-mx-4 flex-col gap-2 overflow-y-auto overscroll-contain px-4">
               <section aria-label="Mixer" className="flex flex-1 flex-col">
                 <ul className="flex flex-1 flex-col justify-evenly">{stems}</ul>
               </section>

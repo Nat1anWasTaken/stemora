@@ -1,3 +1,5 @@
+import { useRef } from "react"
+import { useEdgeFade } from "@/hooks/use-edge-fade"
 import { useIsDesktop } from "@/hooks/use-media"
 import { currentPreset, STEM_LABEL, STEM_NAMES, type Preset } from "@/player/mixer"
 import { usePlayer } from "@/player/store"
@@ -27,12 +29,14 @@ export function PresetChips() {
   const mixer = usePlayer((s) => s.mixer)
   const preset = usePlayer((s) => s.preset)
   const desktop = useIsDesktop()
+  const row = useRef<HTMLDivElement>(null)
+  useEdgeFade(row)
   const cur = currentPreset(mixer)
   const is = (p: Preset) => cur.kind === p.kind && ("stem" in p ? "stem" in cur && cur.stem === p.stem : true)
   if (!desktop) return null
   return (
-    <div className="fade-x -mx-4 overflow-x-auto scrollbar-none md:mx-0" role="group" aria-label="Mix presets">
-      <div className="flex gap-2 px-4 md:px-0">
+    <div ref={row} className="fade-x -mx-4 overflow-x-auto scrollbar-none md:mx-0" role="group" aria-label="Mix presets">
+      <div className="flex w-max gap-2 px-4 md:px-0">
         <Chip active={is({ kind: "all" })} onClick={() => preset({ kind: "all" })}>All</Chip>
         {STEM_NAMES.map((n) => (
           <Chip key={`s-${n}`} active={is({ kind: "solo", stem: n })} onClick={() => preset({ kind: "solo", stem: n })}>{STEM_LABEL[n]}</Chip>

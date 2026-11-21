@@ -231,8 +231,14 @@
   user-select: none;
   -webkit-user-select: none;
 }
+/* Edge fade for horizontal scrollers. With useEdgeFade, the fade drops on an edge the scroller is resting against,
+   so the first and last item are never dimmed when there is nothing more to scroll to. */
 @utility fade-x {
-  mask-image: linear-gradient(90deg, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent);
+  --fade-start: 1.25rem;
+  --fade-end: 1.25rem;
+  mask-image: linear-gradient(90deg, transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
+  &[data-at-start] { --fade-start: 0px; }
+  &[data-at-end] { --fade-end: 0px; }
 }
 /* Tick dial track: half-width inline padding so the first and last tick (w-3) can scroll to the centre line */
 @utility dial-track { padding-inline: calc(50% - 0.375rem); }
