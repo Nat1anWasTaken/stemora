@@ -704,6 +704,44 @@ async fn songs_full_flow() {
         .await;
     assert_eq!(p.body["title"], "Renamed");
 
+    // drum-notation line breaks: whole-set replace, sorted and deduplicated, owner only
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.body["drum_breaks"], json!([]));
+    let b = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/drum-breaks"),
+            Some(&bob),
+            None,
+            Some(json!({"bars":[8, 4, 8, 0, -1, 16, 1000000]})),
+        )
+        .await;
+    assert_eq!(b.status, StatusCode::OK, "{:?}", b.body);
+    assert_eq!(b.body["bars"], json!([4, 8, 16]));
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.body["drum_breaks"], json!([4, 8, 16]));
+    let b = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/drum-breaks"),
+            Some(&admin),
+            None,
+            Some(json!({"bars":[2]})),
+        )
+        .await;
+    assert_eq!(b.status, StatusCode::NOT_FOUND);
+    let many: Vec<i64> = (1..=2001).collect();
+    let b = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/drum-breaks"),
+            Some(&bob),
+            None,
+            Some(json!({ "bars": many })),
+        )
+        .await;
+    assert_eq!(b.status, StatusCode::BAD_REQUEST);
+
     // reprocess
     app.storage
         .put(&storage::stem_key(uid, sid, "vocals", "m4a"), 1000);

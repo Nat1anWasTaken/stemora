@@ -52,6 +52,12 @@
   --color-other: var(--stem-other);
   --color-stem: var(--stem-color);
 
+  /* drum notation sheet; light or dark on its own via [data-notation-theme] */
+  --color-notation: var(--notation);
+  --color-notation-foreground: var(--notation-foreground);
+  --color-notation-muted: var(--notation-muted);
+  --color-notation-highlight: var(--notation-highlight);
+
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -107,8 +113,21 @@
   --stem-other: oklch(0.77 0.12 245);
   --stem-color: var(--primary);
 
+  --notation: oklch(0.175 0.022 255 / 70%);
+  --notation-foreground: var(--foreground);
+  --notation-muted: var(--muted-foreground);
+  --notation-highlight: var(--stem-drums);
+
   --sheet-top: oklch(0.2 0.05 215);
   --sheet-bottom: oklch(0.12 0.015 260);
+}
+
+/* Paper-white drum notation inside the dark app */
+[data-notation-theme="light"] {
+  --notation: oklch(0.985 0.004 85);
+  --notation-foreground: oklch(0.2 0.012 255);
+  --notation-muted: oklch(0.46 0.015 255);
+  --notation-highlight: oklch(0.6 0.16 55);
 }
 
 [data-stem="vocals"] { --stem-color: var(--stem-vocals); }
@@ -303,10 +322,21 @@ html[data-nav="none"]::view-transition-new(root) { animation: none; }
   [data-refreshing] & { animation: ptr-spin 700ms linear infinite; }
 }
 
-/* alphaTab drum notation: notes being played light up in the drums colour (no cursor) */
+/* alphaTab drum notation: notes being played (or picked while paused) light up (no cursor) */
 @utility drum-notation {
-  & .at-highlight * { fill: var(--color-drums); stroke: var(--color-drums); }
+  & .at-highlight *, & .at-selected * { fill: var(--color-notation-highlight); stroke: var(--color-notation-highlight); }
   & .at-surface { cursor: pointer; }
+}
+/* Notation drawn wider than the view (fixed bars per row on a phone): width from JS, pinch scale while zooming */
+@utility notation-canvas {
+  width: var(--notation-width, auto);
+  min-width: 100%;
+  transform: scale(var(--pinch, 1));
+  transform-origin: var(--pinch-x, 0) var(--pinch-y, 0);
+}
+/* Native one-finger scrolling both ways; two-finger pinch is handled in JS instead of zooming the page */
+@utility touch-pan {
+  touch-action: pan-x pan-y;
 }
 
 /* Press feedback for custom tappables (Button has its own in its variants) */

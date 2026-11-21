@@ -85,6 +85,7 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `POST /api/songs/{id}/upload/parts` `{part_numbers:number[]}` -> `{urls:{part_number:number,url:string}[]}` (multipart only)
 - `POST /api/songs/{id}/complete` `{parts?:{part_number:number,etag:string}[]}` -> Song. Completes multipart if needed, HEADs the object (size must match and be within cap), then moves the song to `pending` and starts it at once if the user has a free slot (job created, Modal spawned; status `queued`). Idempotent.
 - `GET /api/songs/{id}` -> SongDetail (stems/peaks_url only when ready; presigned URLs valid 1h)
+- `PUT /api/songs/{id}/drum-breaks` `{bars:number[]}` -> `{bars:number[]}`. Replaces the song's drum-notation line breaks: indices of the bars that start a new row. The server keeps indices 1..99999, sorted and deduplicated (others are dropped); more than 2000 -> 400 `too_many_breaks`. SongDetail carries them as `drum_breaks`.
 - `PATCH /api/songs/{id}` `{title}` -> Song; `DELETE /api/songs/{id}` -> 204 (removes R2 prefix `users/{uid}/songs/{sid}/`, DB rows)
 - `POST /api/songs/{id}/reprocess` `{model}` -> Song (needs original still present; deletes old stems; joins the back of the queue as `pending`, started at once when a slot is free; 429 `queue_full`)
 - `GET /api/songs/{id}/stems/{name}/download?format=m4a|flac` -> 302 to presigned GET with `Content-Disposition: attachment; filename="{title} - {name}.{ext}"`

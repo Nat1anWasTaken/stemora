@@ -52,6 +52,8 @@ export function mockApi(): Plugin {
   const invites: { id: string; created_at: string; expires_at: string; used_at: string | null; used_by_email: string | null; status: "pending" | "used" | "expired" }[] = []
   const now = Date.now()
   const iso = (ms: number) => new Date(ms).toISOString()
+  /** Drum-notation line breaks per song id (PUT /api/songs/{id}/drum-breaks). */
+  const drumBreaks = new Map<string, number[]>()
   const songs: MockSong[] = [
     { id: randomUUID(), title: "Mock Song - Four Stems", status: "ready", duration_s: 20, size_bytes: 3.1 * MIB, model: "htdemucs", progress: 100, stage: "done", error: null, source_url: null, download: null, created_at: iso(now - 3600e3) },
     { id: randomUUID(), title: "Rainy Day Blues (live)", status: "processing", duration_s: null, size_bytes: 8.4 * MIB, model: "scnet_xl_ihf", progress: 0, stage: "separating", error: null, source_url: null, download: null, created_at: iso(now - 60e3), simStart: now - 5e3 },
@@ -299,8 +301,15 @@ export function mockApi(): Plugin {
             if (!sub && method === "GET") {
               const p = publicSong(s)
               return json(res, 200, s.status === "ready"
-                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json" }
-                : { song: p, stems: [], peaks_url: null, analysis_url: null })
+                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: drumBreaks.get(s.id) ?? [] }
+                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: drumBreaks.get(s.id) ?? [] })
+            }
+            if (sub === "drum-breaks" && method === "PUT") {
+              const b = await readBody(req)
+              const bars = [...new Set((b.bars as number[]).filter((n) => Number.isInteger(n) && n >= 1 && n < 100000))].sort((x, y) => x - y)
+              if (bars.length > 2000) return err(res, 400, "too_many_breaks", "too many line breaks")
+              drumBreaks.set(s.id, bars)
+              return json(res, 200, { bars })
             }
             if (!sub && method === "PATCH") { const b = await readBody(req); s.title = String(b.title); return json(res, 200, publicSong(s)) }
             if (!sub && method === "DELETE") { songs.splice(songs.indexOf(s), 1); pump(); return json(res, 204) }
