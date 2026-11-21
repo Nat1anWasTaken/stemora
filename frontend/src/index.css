@@ -303,6 +303,12 @@ html[data-nav="none"]::view-transition-new(root) { animation: none; }
   [data-refreshing] & { animation: ptr-spin 700ms linear infinite; }
 }
 
+/* alphaTab drum notation: notes being played light up in the drums colour (no cursor) */
+@utility drum-notation {
+  & .at-highlight * { fill: var(--color-drums); stroke: var(--color-drums); }
+  & .at-surface { cursor: pointer; }
+}
+
 /* Press feedback for custom tappables (Button has its own in its variants) */
 @utility pressable {
   transition-property: transform, color, background-color, border-color, opacity;

@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# copied in by the alphaTab Vite plugin
+public/font
+public/soundfont

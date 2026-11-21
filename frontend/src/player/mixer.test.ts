@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { applyPreset, clampLoop, currentPreset, defaultMixer, effectiveGain, loopedPosition, toggleIn } from "@/player/mixer"
 import { parseMixer } from "@/player/mixerStorage"
-import { buildBars, buildCells, buildDrumBeats, describeDrumBeat, lastAtOrBefore, parseAnalysis, splitChord, stepTimes, transposeChord } from "@/player/analysis"
+import { buildBars, buildCells, lastAtOrBefore, parseAnalysis, splitChord, transposeChord } from "@/player/analysis"
 import { binPeaks, computePeaks, parsePeaks } from "@/player/peaks"
 import { speedFor, tempoMarking, tempoRange, tempoValue } from "@/player/tempo"
 
@@ -146,33 +146,6 @@ describe("analysis", () => {
     expect(transposeChord("F#m", 1)).toBe("Gm")
     expect(transposeChord("Eb", 12)).toBe("Eb")
     expect(transposeChord("N", 5)).toBe("N")
-  })
-
-  it("parses drums leniently", () => {
-    expect(a!.drums).toBeNull()
-    const base = { version: 1, beats: [0, 0.5, 1], downbeats: [0], chords: [] }
-    expect(parseAnalysis({ ...base, drums: "x" })!.drums).toBeNull()
-    expect(parseAnalysis({ ...base, drums: { kick: [[5, 0], [0, 12], [0.5, 0], "x"] } })!.drums).toBeNull()
-    const d = parseAnalysis({ ...base, drums: { kick: [[0, 0], [9, 0]], hihat: [[1, 6]], bogus: [[0, 0]] } })!.drums!
-    expect(d.kick).toEqual([[0, 0]])
-    expect(d.hihat).toEqual([[1, 6]])
-    expect(d.snare).toEqual([])
-  })
-
-  it("builds drum beats with 16th and triplet grids", () => {
-    const d = parseAnalysis({
-      version: 1, beats: [0, 0.5, 1], downbeats: [0], chords: [],
-      drums: { kick: [[0, 0], [1, 0]], hihat: [[0, 0], [0, 6], [1, 4], [1, 8]], snare: [[2, 9]] },
-    })!
-    const beats = buildDrumBeats(d)
-    expect(beats.map((b) => b.grid)).toEqual([4, 3, 4])
-    expect(beats[0].hits).toEqual([["hihat", "kick"], [], ["hihat"], []])
-    expect(beats[1].hits).toEqual([["kick"], ["hihat"], ["hihat"]])
-    expect(beats[2].hits[3]).toEqual(["snare"])
-    expect(beats[2].end).toBe(1.5)
-    expect(stepTimes(beats[0])).toEqual([0, 0.125, 0.25, 0.375])
-    expect(describeDrumBeat(beats[0])).toBe("kick, hi-hat ×2")
-    expect(describeDrumBeat(buildDrumBeats(a!)[0])).toBe("rest")
   })
 })
 
