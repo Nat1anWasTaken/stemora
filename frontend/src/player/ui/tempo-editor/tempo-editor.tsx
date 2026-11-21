@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { effectiveGain, STEM_NAMES } from "@/player/mixer"
 import { getBuffers, getPosition, usePlayer } from "@/player/store"
 import { markerIndexAt, moveMarker, snapTime, type TempoMarker } from "@/player/tempo-map"
@@ -30,8 +31,9 @@ type Gesture =
  * real waveforms on the beat grid. Desktop works like a DAW (wheel scrolls, Ctrl/⌘+wheel zooms at the pointer, drag
  * markers, double-click to add, keys in `onKey`). `centered` (phones) keeps the cursor in the middle: drag the song
  * under it, pinch to zoom around it, and edit markers with the toolbar.
+ * Its tools render into `toolbar`, the player's shared workspace toolbar, so every view keeps them in one place.
  */
-export function TempoEditor({ centered }: { centered: boolean }) {
+export function TempoEditor({ centered, toolbar }: { centered: boolean; toolbar: HTMLElement | null }) {
   const wrap = useRef<HTMLDivElement>(null)
   const base = useRef<HTMLCanvasElement>(null)
   const over = useRef<HTMLCanvasElement>(null)
@@ -499,8 +501,8 @@ export function TempoEditor({ centered }: { centered: boolean }) {
   }
 
   return (
-    <section aria-label="Tempo map" className="flex min-h-0 flex-1 flex-col gap-2">
-      {!centered && <DesktopToolbar c={controls} />}
+    <section aria-label="Tempo map" className="flex min-h-0 flex-1 flex-col">
+      {toolbar && createPortal(centered ? <MobileToolbar c={controls} onMoveHere={moveHere} /> : <DesktopToolbar c={controls} />, toolbar)}
       <div ref={wrap} className="no-gestures relative min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-surface/70">
         <canvas ref={base} className="absolute inset-0 size-full" aria-hidden />
         <canvas
@@ -510,7 +512,6 @@ export function TempoEditor({ centered }: { centered: boolean }) {
           aria-label="Tempo map and waveforms. Drag to move through the song; markers set the beat grid."
         />
       </div>
-      {centered && <MobileToolbar c={controls} onMoveHere={moveHere} />}
     </section>
   )
 }

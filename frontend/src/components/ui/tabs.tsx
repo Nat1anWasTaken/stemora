@@ -34,6 +34,10 @@ const tabsListVariants = cva(
         line: "gap-1 bg-transparent",
         /* Pill segmented control (player chart switch): 44px tall on touch, compact on desktop */
         segmented: "rounded-full border border-border bg-secondary/60 p-1 group-data-horizontal/tabs:h-11 md:group-data-horizontal/tabs:h-9",
+        /* Player view switch: the same frame as the workspace toolbar beside it (h-12, rounded-2xl, surface) */
+        workspace: "w-full rounded-2xl border border-border bg-surface/70 p-1.5 group-data-horizontal/tabs:h-12",
+        /* Switch inside a toolbar (chart, marker kind): quieter than the view switch, 44px on touch */
+        pill: "rounded-full bg-secondary/60 p-0.5 group-data-horizontal/tabs:h-9 pointer-coarse:group-data-horizontal/tabs:h-11",
       },
     },
     defaultVariants: {
@@ -66,6 +70,8 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
         "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-active:bg-transparent dark:group-data-[variant=line]/tabs-list:data-active:border-transparent dark:group-data-[variant=line]/tabs-list:data-active:bg-transparent",
         "data-active:bg-background data-active:text-foreground dark:data-active:border-input dark:data-active:bg-input/30 dark:data-active:text-foreground",
         "group-data-[variant=segmented]/tabs-list:h-full group-data-[variant=segmented]/tabs-list:rounded-full group-data-[variant=segmented]/tabs-list:px-3 group-data-[variant=segmented]/tabs-list:data-active:border-transparent group-data-[variant=segmented]/tabs-list:data-active:bg-primary group-data-[variant=segmented]/tabs-list:data-active:text-primary-foreground group-data-[variant=segmented]/tabs-list:data-active:shadow-none dark:group-data-[variant=segmented]/tabs-list:data-active:border-transparent dark:group-data-[variant=segmented]/tabs-list:data-active:bg-primary dark:group-data-[variant=segmented]/tabs-list:data-active:text-primary-foreground",
+        "group-data-[variant=workspace]/tabs-list:h-full group-data-[variant=workspace]/tabs-list:rounded-xl group-data-[variant=workspace]/tabs-list:px-3 group-data-[variant=workspace]/tabs-list:data-active:border-transparent group-data-[variant=workspace]/tabs-list:data-active:bg-primary group-data-[variant=workspace]/tabs-list:data-active:text-primary-foreground dark:group-data-[variant=workspace]/tabs-list:data-active:border-transparent dark:group-data-[variant=workspace]/tabs-list:data-active:bg-primary dark:group-data-[variant=workspace]/tabs-list:data-active:text-primary-foreground",
+        "group-data-[variant=pill]/tabs-list:h-full group-data-[variant=pill]/tabs-list:rounded-full group-data-[variant=pill]/tabs-list:px-3 group-data-[variant=pill]/tabs-list:data-active:border-border group-data-[variant=pill]/tabs-list:data-active:bg-card group-data-[variant=pill]/tabs-list:data-active:text-foreground dark:group-data-[variant=pill]/tabs-list:data-active:border-border dark:group-data-[variant=pill]/tabs-list:data-active:bg-card dark:group-data-[variant=pill]/tabs-list:data-active:text-foreground",
         "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         className
       )}

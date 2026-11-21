@@ -12,6 +12,7 @@ import { BARS_PER_ROW, type NotationPrefs, type NotationTheme } from "@/player/d
 import type { Precision, QBar } from "@/player/drums/quantize"
 import { getPosition, usePlayer } from "@/player/store"
 import { formatBpm, usePlayheadTempo } from "@/player/ui/use-playhead-tempo"
+import { Swap, ToolbarDivider } from "@/player/ui/workspace"
 
 export type Chart = "chords" | "drums"
 const CHART_KEY = "stemora:chart"
@@ -55,7 +56,7 @@ function NotationSettings({ drums, compact }: { drums: DrumControls; compact: bo
       size="wide"
       trigger={compact
         ? <Button variant="toggle" size="icon-lg" aria-label={`Notation settings (grid: ${label})`}><span className="text-xs font-semibold tabular-nums">{value.precision === "auto" ? "A" : value.precision}</span></Button>
-        : <Button variant="toggle" size="sm" aria-label={`Notation settings (grid: ${label})`}>Grid: {label}<ChevronDown /></Button>}
+        : <Button variant="ghost" size="sm" aria-label={`Notation settings (grid: ${label})`} title="Notation settings"><span className="text-muted-foreground">Grid</span>{label}<ChevronDown /></Button>}
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
@@ -118,24 +119,25 @@ function LineBreakToggle({ drums, compact, active = true }: { drums: DrumControl
   return (
     <Button
       variant="toggle"
-      size={compact ? "icon-lg" : "sm"}
+      size={compact ? "icon-lg" : "icon-sm"}
       aria-pressed={on}
       aria-label={label}
       title={compact ? undefined : `${label} (B)`}
       disabled={!drums.bars || bar < 1 || !drums.breaksEditable}
       onClick={() => drums.onToggleBreak(bar)}
     >
-      <WrapText />{!compact && "Line break"}
+      <WrapText />
     </Button>
   )
 }
 
 /**
- * Chords | Drums switch above the chart; for drums also the notation settings, the line break toggle and the drums mute (play along over the
- * song while reading the chart). Desktop adds tempo/meter. On mobile the switch fills the row with 44px targets and the slot to its
- * right keeps the drum tools' width in both charts (tempo/meter shows there for chords), so switching never resizes or moves the switch.
+ * Practice tools for the workspace toolbar: the Chords | Drums switch, the tempo and meter under the playhead, and for
+ * drums the notation settings, the line break toggle and the drums mute (play along over the song while reading).
+ * The drum tools keep their place while the chord chart shows (hidden, inert), so switching charts never reflows
+ * the strip; on phones the tempo readout sits in that slot instead.
  */
-export function ChartHeader({ chart, onChart, desktop, drums }: {
+export function ChartToolbar({ chart, onChart, desktop, drums }: {
   chart: Chart
   onChart: (c: Chart) => void
   desktop: boolean
@@ -147,47 +149,51 @@ export function ChartHeader({ chart, onChart, desktop, drums }: {
   const { toggleMute } = usePlayer.getState()
   const isDrums = chart === "drums"
   const tempo = `${playhead.bpm ? `${formatBpm(Math.round(playhead.bpm * speed))} BPM · ` : ""}${playhead.num}/${playhead.den}`
+  const compact = !desktop
 
   const tabs = (
-    <Tabs value={chart} onValueChange={(v) => onChart(v as Chart)} className={desktop ? undefined : "min-w-0 flex-1"}>
-      <TabsList variant="segmented" aria-label="Chart" className={desktop ? undefined : "w-full"}>
-        <TabsTrigger value="chords"><LayoutGrid />Chords</TabsTrigger>
-        <TabsTrigger value="drums"><Drum />Drums</TabsTrigger>
+    <Tabs value={chart} onValueChange={(v) => onChart(v as Chart)} className={compact ? "min-w-0 flex-1" : undefined}>
+      <TabsList variant="pill" aria-label="Chart" className={compact ? "w-full" : undefined}>
+        <TabsTrigger value="chords" title={compact ? undefined : "Chords (C)"}><LayoutGrid />Chords</TabsTrigger>
+        <TabsTrigger value="drums" title={compact ? undefined : "Drums (C)"}><Drum />Drums</TabsTrigger>
       </TabsList>
     </Tabs>
   )
+  const tools = (
+    <div inert={!isDrums} className={cn("flex items-center gap-1 transition-opacity duration-200", compact && "col-start-1 row-start-1", !isDrums && "invisible opacity-0")}>
+      <NotationSettings drums={drums} compact={compact} />
+      <LineBreakToggle drums={drums} compact={compact} active={isDrums} />
+      <Button
+        variant="toggle"
+        size={compact ? "icon-lg" : "icon-sm"}
+        aria-pressed={muted}
+        aria-label="Mute drums"
+        title={compact ? undefined : "Mute drums"}
+        onClick={() => toggleMute("drums")}
+      >
+        {muted ? <VolumeX /> : <Volume2 />}
+      </Button>
+    </div>
+  )
 
-  if (!desktop) {
+  if (compact) {
     return (
-      <div className="flex shrink-0 items-center gap-2">
+      <Swap className="items-center gap-1">
         {tabs}
         <div className="grid shrink-0 items-center justify-items-end">
-          <div inert={!isDrums} className={cn("col-start-1 row-start-1 flex items-center gap-1 transition-opacity duration-200", !isDrums && "invisible opacity-0")}>
-            <NotationSettings drums={drums} compact />
-            <LineBreakToggle drums={drums} compact active={isDrums} />
-            <Button variant="toggle" size="icon-lg" aria-pressed={muted} aria-label="Mute drums" onClick={() => toggleMute("drums")}>
-              {muted ? <VolumeX /> : <Volume2 />}
-            </Button>
-          </div>
-          {!isDrums && tempo && <p className="col-start-1 row-start-1 animate-page pr-1 text-sm text-muted-foreground tabular-nums">{tempo}</p>}
+          {tools}
+          {!isDrums && <p className="col-start-1 row-start-1 animate-swap pr-2 text-sm text-muted-foreground tabular-nums">{tempo}</p>}
         </div>
-      </div>
+      </Swap>
     )
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-2">
+    <Swap className="items-center gap-1">
       {tabs}
-      {tempo && <p className="text-sm text-muted-foreground tabular-nums">{tempo}</p>}
-      <div className="ml-auto flex items-center gap-1">
-        {isDrums && <NotationSettings drums={drums} compact={false} />}
-        {isDrums && <LineBreakToggle drums={drums} compact={false} />}
-        {isDrums && (
-          <Button variant="toggle" size="sm" aria-pressed={muted} onClick={() => toggleMute("drums")}>
-            {muted ? <VolumeX /> : <Volume2 />}Mute drums
-          </Button>
-        )}
-      </div>
-    </div>
+      <ToolbarDivider />
+      <p className="px-1 text-xs text-muted-foreground tabular-nums">{tempo}</p>
+      <div className="ml-auto">{tools}</div>
+    </Swap>
   )
 }
