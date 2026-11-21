@@ -3,7 +3,7 @@ import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { stemDownloadUrl, type StemName } from "@/lib/api"
-import { effectiveGain, STEM_LABEL } from "@/player/mixer"
+import { currentPreset, effectiveGain, STEM_LABEL } from "@/player/mixer"
 import { usePlayer } from "@/player/store"
 import { cn } from "@/lib/utils"
 
@@ -37,7 +37,12 @@ export function StemRow({ name, songId, selected, onSelect }: { name: StemName; 
   ]
 
   return (
-    <li data-stem={name} className={cn("flex min-h-16 items-center gap-1 rounded-2xl pr-1 pl-1 transition-colors", selected && "md:bg-secondary/60")} onPointerDown={onSelect}>
+    <li
+      data-stem={name}
+      data-selected={selected || undefined}
+      className="relative flex min-h-14 items-center gap-1 rounded-2xl md:min-h-16 pr-1 pl-1 transition-colors before:absolute before:inset-y-4 before:left-0 before:w-0.5 before:rounded-full before:bg-stem before:opacity-0 before:transition-opacity md:self-center md:data-selected:bg-secondary/40 md:data-selected:before:opacity-100"
+      onPointerDown={onSelect}
+    >
       <Button
         variant="stem"
         size="icon-lg"
@@ -66,5 +71,23 @@ export function StemRow({ name, songId, selected, onSelect }: { name: StemName; 
       </Button>
       <ActionMenu title={STEM_LABEL[name]} entries={entries} trigger={<Button variant="ghost" size="icon-lg" aria-label={`${STEM_LABEL[name]} options`}><MoreHorizontal /></Button>} />
     </li>
+  )
+}
+
+/**
+ * The mixer's own header: its name and a reset to all stems playing (clears mute and solo). Sits above the stem rows in every view (in
+ * the tempo view it fills the height of the editor's ruler and tempo lane, so the rows line up with the lanes).
+ */
+export function MixerTools() {
+  const mixer = usePlayer((s) => s.mixer)
+  const preset = usePlayer((s) => s.preset)
+  const all = currentPreset(mixer).kind === "all"
+  return (
+    <div className="flex min-w-0 flex-1 items-center justify-between gap-2 pl-3">
+      <span className="text-sm font-semibold">Mixer</span>
+      <Button variant="ghost" size="sm" title="Clear every mute and solo" disabled={all} onClick={() => preset({ kind: "all" })}>
+        <RotateCcw />All stems
+      </Button>
+    </div>
   )
 }

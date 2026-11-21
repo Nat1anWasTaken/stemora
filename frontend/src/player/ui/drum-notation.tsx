@@ -395,7 +395,7 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
   if (!analysis?.drums || !chart) {
     return (
       <section aria-label="Drum notation" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-3xl border border-border bg-surface/70 p-6 text-sm text-muted-foreground">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface/70 p-6 text-sm text-muted-foreground">
           <Drum className="size-6" />{analysis?.drums ? "No beats" : "No drums"}
         </div>
       </section>
@@ -407,7 +407,7 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
       <div
         ref={scroller}
         className={cn(
-          "drum-notation relative min-h-0 flex-1 overscroll-contain rounded-3xl border border-border bg-notation scrollbar-none",
+          "drum-notation relative min-h-0 flex-1 overscroll-contain rounded-2xl border border-border bg-notation scrollbar-none",
           wide ? "overflow-auto" : "overflow-x-hidden overflow-y-auto",
           !desktop && "touch-pan",
         )}
