@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import * as alphaTab from "@coderline/alphatab"
 import { parseAnalysis, type Analysis } from "@/player/analysis"
 import { toAlphaTex } from "@/player/drums/alphatex"
+import { hideCoveredRests } from "@/player/drums/hide-rests"
 import { chooseGrid, quantize } from "@/player/drums/quantize"
 
 // 120 BPM, 4/4, two bars: beats every 0.5 s from 0.
@@ -105,6 +106,23 @@ describe("toAlphaTex", () => {
     const { score, diags } = parse(tex)
     expect(diags).toEqual([])
     expect(score.masterBars.map((m) => m.timeSignatureNumerator)).toEqual([1, 3, 2])
+  })
+})
+
+describe("hideCoveredRests", () => {
+  it("hides rests the other voice sounds through, keeps rests where both are silent", () => {
+    // Beat 1 kick, 2 hands, 3 kick + kick on the "and", 4 hands; then a bar with a silent last beat.
+    const tex = String.raw`\track("Drums") \instrument(percussion) \clef(neutral) \articulation(kick 36) \articulation(snare 38)
+      \voice r.4 snare.4 r.4 snare.4 | snare.4 snare.4 snare.4 r.4
+      \voice kick.4 r.4 kick.8 kick.8 r.4 | r.1`
+    const { score, diags } = parse(tex)
+    expect(diags).toEqual([])
+    hideCoveredRests(score)
+    const shown = (bar: number, voice: number) =>
+      score.tracks[0].staves[0].bars[bar].voices[voice].beats.filter((b) => b.isRest && !b.isEmpty).length
+    expect([shown(0, 0), shown(0, 1)]).toEqual([0, 0])
+    // Bar 2: nobody plays beat 4, so both rests stay (the kick's whole-bar rest is not fully covered).
+    expect([shown(1, 0), shown(1, 1)]).toEqual([1, 1])
   })
 })
 
