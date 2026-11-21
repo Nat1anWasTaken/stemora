@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react"
 import { Repeat } from "lucide-react"
+import { revealInline, useEdgeFade } from "@/hooks/use-edge-fade"
 import { useIsDesktop } from "@/hooks/use-media"
 import { formatClock } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -29,11 +30,14 @@ function Sections({ sections }: { sections: Section[] }) {
   const active = useActiveBeat(starts)
   const looping = sections.findIndex((s) => isLooped(loop, s))
   const row = useRef<HTMLDivElement>(null)
+  useEdgeFade(row)
 
   // Keep the part that is playing (or looping) in view.
   const shown = looping >= 0 ? looping : active
   useEffect(() => {
-    row.current?.querySelector<HTMLElement>(`[data-index="${shown}"]`)?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" })
+    const box = row.current
+    const chip = box?.querySelector<HTMLElement>(`[data-index="${shown}"]`)
+    if (box && chip) revealInline(box, chip)
   }, [shown])
 
   const pick = (i: number) => {
@@ -45,7 +49,7 @@ function Sections({ sections }: { sections: Section[] }) {
 
   return (
     <div ref={row} className="fade-x -mx-4 overflow-x-auto scrollbar-none md:mx-0" role="group" aria-label="Song parts">
-      <div className="flex gap-2 px-4 md:px-0">
+      <div className="flex w-max gap-2 px-4 md:px-0">
         {sections.map((s, i) => {
           const playing = active === i
           const looped = looping === i
