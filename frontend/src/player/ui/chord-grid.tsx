@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { LocateFixed, Minimize2 } from "lucide-react"
+import { LocateFixed } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { usePlayer } from "@/player/store"
 import { BarBeats, useBeats } from "@/player/ui/beats"
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
  * Expanded chord chart: one row per bar, one cell per beat, following the playhead.
  * Tap a beat to seek there, tap a bar number to loop that bar. Scrolling by hand pauses following.
  */
-export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
+export function ChordGrid() {
   const analysis = usePlayer((s) => s.analysis)
   const playing = usePlayer((s) => s.playing)
   const loop = usePlayer((s) => s.loop)
@@ -27,21 +27,9 @@ export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
     box.scrollTo({ top: Math.max(0, row.offsetTop - box.clientHeight / 4), behavior: playing ? "smooth" : "auto" })
   }, [activeBar, bars, follow, playing])
 
-  const header = onCollapse && (
-    <div className="flex shrink-0 items-center justify-between gap-2">
-      <p className="text-sm text-muted-foreground">
-        <span className="font-medium text-foreground">Chords</span>
-        {analysis?.bpm ? ` · ${Math.round(analysis.bpm)} BPM` : ""}
-        {analysis ? ` · ${analysis.beatsPerBar}/4` : ""}
-      </p>
-      <Button variant="ghost" size="sm" onClick={onCollapse}><Minimize2 />Collapse</Button>
-    </div>
-  )
-
   if (!analysis) {
     return (
-      <section aria-label="Chord chart" className="flex min-h-0 flex-1 flex-col gap-3">
-        {header}
+      <section aria-label="Chord chart" className="flex min-h-0 flex-1 flex-col">
         <div className="flex flex-1 items-center justify-center rounded-3xl border border-border bg-surface/70 p-6 text-center text-sm text-muted-foreground">
           No beat or chord analysis for this song.
         </div>
@@ -50,8 +38,7 @@ export function ChordGrid({ onCollapse }: { onCollapse?: () => void }) {
   }
 
   return (
-    <section aria-label="Chord chart" className="relative flex min-h-0 flex-1 flex-col gap-3">
-      {header}
+    <section aria-label="Chord chart" className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scroller}
         className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-none"

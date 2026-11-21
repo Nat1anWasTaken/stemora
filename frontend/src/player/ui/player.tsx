@@ -14,7 +14,9 @@ import { useSongActions } from "@/lib/queries"
 import { STEM_NAMES } from "@/player/mixer"
 import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
 import { getPosition, usePlayer } from "@/player/store"
+import { ChartHeader, loadChart, saveChart, type Chart } from "@/player/ui/chart-header"
 import { ChordGrid } from "@/player/ui/chord-grid"
+import { DrumGrid } from "@/player/ui/drum-grid"
 import { PresetChips } from "@/player/ui/preset-chips"
 import { PracticeStrip } from "@/player/ui/practice-strip"
 import { StemRow, triggerDownload } from "@/player/ui/stem-row"
@@ -78,10 +80,17 @@ export function Player({ detail }: { detail: SongDetail }) {
   const [reproc, setReproc] = useState(false)
   const select = useCallback((n: StemName) => setSelected(n), [])
   const toggleChords = useCallback(() => setTab((t) => (t === "chords" ? "practice" : "chords")), [])
+  const [chart, setChartState] = useState<Chart>(loadChart)
+  const setChart = useCallback((c: Chart) => {
+    setChartState(c)
+    saveChart(c)
+  }, [])
+  const cycleChart = useCallback(() => setChart(chart === "chords" ? "drums" : "chords"), [chart, setChart])
+  const chartView = chart === "drums" ? <DrumGrid /> : <ChordGrid />
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
-  useShortcuts(selected, select)
+  useShortcuts(selected, select, tab === "chords" ? cycleChart : undefined)
   useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)
 
@@ -153,8 +162,9 @@ export function Player({ detail }: { detail: SongDetail }) {
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 pt-4 pb-2">
           {statusPanel ?? <PracticeStrip onExpand={toggleChords} />}
           {tab === "chords" ? (
-            <div className="animate-page flex min-h-0 flex-1 flex-col">
-              <ChordGrid onCollapse={() => setTab("practice")} />
+            <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
+              <ChartHeader chart={chart} onChart={setChart} onCollapse={() => setTab("practice")} />
+              {chartView}
             </div>
           ) : (
             <section aria-label="Tracks" className="animate-page flex min-h-0 flex-1 flex-col gap-3">
@@ -188,8 +198,9 @@ export function Player({ detail }: { detail: SongDetail }) {
             </section>
           )}
           {tab === "chords" && (
-            <div className="animate-page flex min-h-0 flex-1 flex-col">
-              <ChordGrid />
+            <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
+              <ChartHeader chart={chart} onChart={setChart} />
+              {chartView}
             </div>
           )}
         </div>
@@ -202,7 +213,7 @@ export function Player({ detail }: { detail: SongDetail }) {
         <nav className="mx-auto w-full max-w-sm rounded-full border border-border bg-secondary/60 p-1 md:hidden" aria-label="Player view">
           <div className="relative flex">
             <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1/3 rounded-full bg-primary transition-transform duration-300 ease-spring", tab === "practice" && "translate-x-full", tab === "chords" && "translate-x-double")} />
-            {([["mixer", "Mixer", SlidersVertical], ["practice", "Practice", AudioWaveform], ["chords", "Chords", LayoutGrid]] as const).map(([key, label, Icon]) => (
+            {([["mixer", "Mixer", SlidersVertical], ["practice", "Practice", AudioWaveform], ["chords", "Charts", LayoutGrid]] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
                 type="button"
@@ -215,7 +226,7 @@ export function Player({ detail }: { detail: SongDetail }) {
             ))}
           </div>
         </nav>
-        <p className="hidden pb-3 text-center text-xs text-muted-foreground md:block">Space play/pause · arrows skip 10s · 1-4 select stem · M mute · S solo · L loop</p>
+        <p className="hidden pb-3 text-center text-xs text-muted-foreground md:block">Space play/pause · arrows skip 10s · 1-4 select stem · M mute · S solo · L loop{tab === "chords" ? " · C chords/drums" : ""}</p>
         <div className="h-1 md:hidden" />
         </div>
       </footer>

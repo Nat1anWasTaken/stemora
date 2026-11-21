@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { getPosition } from "@/player/store"
 
-/** Playhead position in seconds, refreshed every animation frame (re-renders only when it moves by >=0.1s). */
-export function usePosition(active = true): number {
+/** Playhead position in seconds, refreshed every animation frame (re-renders only when it moves by >= `step` s). */
+export function usePosition(active = true, step = 0.1): number {
   const [pos, setPos] = useState(() => getPosition())
   useEffect(() => {
     if (!active) return
@@ -10,7 +10,7 @@ export function usePosition(active = true): number {
     let last = -1
     const tick = () => {
       const p = getPosition()
-      if (Math.abs(p - last) >= 0.1 || p < last) {
+      if (Math.abs(p - last) >= step || p < last) {
         last = p
         setPos(p)
       }
@@ -18,6 +18,6 @@ export function usePosition(active = true): number {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [active])
+  }, [active, step])
   return pos
 }
