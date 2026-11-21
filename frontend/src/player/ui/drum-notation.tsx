@@ -152,17 +152,24 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
     let raf = 0
     let api: AlphaTabApi | null = null
 
-    // Keep the highlighted notes a quarter of the way down (and, when the sheet is wider than the view, in view sideways).
-    const scrollToHighlight = (smooth: boolean) => {
+    /**
+     * Keep the row being played a quarter of the way down (and, when the sheet is wider than the view, the beat in view
+     * sideways). We follow the row (staff system), not the highlighted notes: hands sit above the staff and the kick
+     * below it, so following whichever note is lit would bob the view up and down within a row.
+     */
+    const scrollToPlayhead = (smooth: boolean) => {
       const box = scroller.current
-      const el = host.current?.querySelector(".at-highlight, .at-selected")
-      if (!follow.current || !box || !el) return
-      const r = el.getBoundingClientRect()
+      const surface = host.current?.querySelector(".at-surface") ?? host.current
+      const beat = api?.tickCache?.findBeat(TRACK_0, api.tickPosition)?.beat
+      const bounds = beat && api?.boundsLookup?.findBeat(beat)
+      if (!follow.current || !box || !surface || !bounds) return
+      const row = bounds.barBounds.masterBarBounds.staffSystemBounds?.realBounds ?? bounds.barBounds.masterBarBounds.realBounds
       const b = box.getBoundingClientRect()
-      const top = Math.max(0, r.top - b.top + box.scrollTop - box.clientHeight / 4)
-      const left = r.left - b.left + box.scrollLeft
+      const s = surface.getBoundingClientRect()
+      const top = Math.max(0, Math.round(s.top - b.top + box.scrollTop + row.y - box.clientHeight / 4))
+      const left = s.left - b.left + box.scrollLeft + bounds.realBounds.x
       const inView = left >= box.scrollLeft + 16 && left <= box.scrollLeft + box.clientWidth - 48
-      const target = { top: Math.abs(top - box.scrollTop) > 24 ? top : box.scrollTop, left: inView ? box.scrollLeft : Math.max(0, left - box.clientWidth / 4) }
+      const target = { top: Math.abs(top - box.scrollTop) > 1 ? top : box.scrollTop, left: inView ? box.scrollLeft : Math.max(0, left - box.clientWidth / 4) }
       if (target.top !== box.scrollTop || target.left !== box.scrollLeft) box.scrollTo({ ...target, behavior: smooth ? "smooth" : "auto" })
     }
 
@@ -269,7 +276,7 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
               marked.push(node)
             }
           }
-          if (moved && marked.length) requestAnimationFrame(() => scrollToHighlight(false))
+          if (moved && marked.length) requestAnimationFrame(() => scrollToPlayhead(false))
         }
 
         self.renderFinished.on(() => {
@@ -282,10 +289,10 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
           if (a && scroller.current && host.current) {
             anchor.current = null
             settlePinch(scroller.current, host.current, a)
-          } else scrollToHighlight(false)
+          } else scrollToPlayhead(false)
           resume()
         })
-        self.playedBeatChanged.on(() => requestAnimationFrame(() => scrollToHighlight(usePlayer.getState().playing)))
+        self.playedBeatChanged.on(() => requestAnimationFrame(() => scrollToPlayhead(usePlayer.getState().playing)))
         self.error.on((e) => {
           if (cancelled) return
           console.error("Drum notation failed", e)
