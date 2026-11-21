@@ -1,14 +1,9 @@
 import type { BeatGrid } from "@/player/tempo-map"
 
 export type ChordSegment = { start: number; end: number; label: string }
-/** Drum kinds a chart writes differently (docs/contract.md); `hihat` is the closed hi-hat. */
-export const DRUM_KINDS = [
-  "crash", "china", "splash", "ride", "hihat", "hihat_open", "tambourine", "cowbell",
-  "tom_high", "tom_mid", "snare", "sidestick", "tom_floor", "kick", "hihat_pedal",
-] as const
+/** The model's drum classes (cymbal = crash/ride/splash/china, hihat = open/closed/pedal, tom = all toms). */
+export const DRUM_KINDS = ["cymbal", "hihat", "tom", "snare", "kick"] as const
 export type DrumKind = (typeof DRUM_KINDS)[number]
-/** Kinds in files from the first (5-class) drum model, read as the kind they were drawn as. */
-const LEGACY_KINDS: Record<string, DrumKind> = { tom: "tom_mid", cymbal: "crash" }
 /** Per kind: onset times in seconds, sorted (see docs/contract.md). */
 export type DrumHits = Record<DrumKind, number[]>
 /** Song structure labels from the worker (docs/contract.md); "inst" is an instrumental part. */
@@ -112,20 +107,17 @@ const SLOTS = 12
 
 /**
  * Lenient: keeps well-formed hits only; null when nothing is left (field missing, or no drums detected).
- * Accepts onset times (current) and the first release's `[beat index, slot in twelfths]` pairs, and folds the
- * 5-class files' `tom` / `cymbal` into `tom_mid` / `crash`. `drum_velocities` is not read yet.
+ * Accepts onset times (current) and the first release's `[beat index, slot in twelfths]` pairs.
  */
 function parseDrums(json: unknown, beats: number[]): DrumHits | null {
   if (!json || typeof json !== "object") return null
   const j = json as Record<string, unknown>
   const beatLen = (b: number) => (beats[b + 1] ?? beats[b] + (b > 0 ? beats[b] - beats[b - 1] : 0.5)) - beats[b]
   let total = 0
-  const out = Object.fromEntries(DRUM_KINDS.map((k) => [k, []])) as unknown as DrumHits
-  const known: readonly string[] = DRUM_KINDS
-  for (const [key, value] of Object.entries(j)) {
-    const kind = known.includes(key) ? (key as DrumKind) : Object.hasOwn(LEGACY_KINDS, key) ? LEGACY_KINDS[key] : null
-    if (!kind || !Array.isArray(value)) continue
-    const hits = (value as unknown[])
+  const out = {} as DrumHits
+  for (const kind of DRUM_KINDS) {
+    const list = Array.isArray(j[kind]) ? (j[kind] as unknown[]) : []
+    out[kind] = list
       .flatMap((h): number[] => {
         if (isNum(h)) return h >= 0 ? [h] : []
         if (!Array.isArray(h) || h.length !== 2) return []
@@ -133,8 +125,8 @@ function parseDrums(json: unknown, beats: number[]): DrumHits | null {
         if (!Number.isInteger(b) || !Number.isInteger(slot) || (b as number) < 0 || (b as number) >= beats.length || (slot as number) < 0 || (slot as number) >= SLOTS) return []
         return [beats[b as number] + ((slot as number) / SLOTS) * beatLen(b as number)]
       })
-    out[kind] = [...out[kind], ...hits].sort((x, y) => x - y)
-    total += hits.length
+      .sort((x, y) => x - y)
+    total += out[kind].length
   }
   return total > 0 ? out : null
 }

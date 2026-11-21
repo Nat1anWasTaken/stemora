@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router"
 import { ArrowDownUp, LayoutGrid, List, ListOrdered, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
+import { ActionMenu } from "@/components/app/action-menu"
 import { SongItem, type LibraryView } from "@/components/app/song-item"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SearchInput } from "@/components/ui/search-input"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { SongSort } from "@/lib/api"
@@ -131,20 +131,17 @@ export function LibraryPage() {
             autoComplete="off"
             enterKeyHint="search"
           />
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="outline" aria-label="Sort songs" />}>
-              <ArrowDownUp />
-              <span className="hidden sm:inline">{SORTS.find((o) => o.value === sort)?.label}</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={sort} onValueChange={(v) => isSort(v) && setSort(v)}>
-                  {SORTS.map((o) => <DropdownMenuRadioItem key={o.value} value={o.value}>{o.label}</DropdownMenuRadioItem>)}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ActionMenu
+            title="Sort by"
+            label="Sort by"
+            entries={[{ key: "sort", radio: { value: sort, onValueChange: (v) => isSort(v) && setSort(v), options: SORTS } }]}
+            trigger={
+              <Button variant="outline" aria-label="Sort songs">
+                <ArrowDownUp />
+                <span className="hidden sm:inline">{SORTS.find((o) => o.value === sort)?.label}</span>
+              </Button>
+            }
+          />
           <div className="flex shrink-0 gap-1 rounded-lg border border-border p-0.5" role="group" aria-label="Layout">
             <Button variant="toggle" size="icon-sm" aria-pressed={view === "grid"} aria-label="Grid view" onClick={() => setView("grid")}><LayoutGrid /></Button>
             <Button variant="toggle" size="icon-sm" aria-pressed={view === "list"} aria-label="List view" onClick={() => setView("list")}><List /></Button>

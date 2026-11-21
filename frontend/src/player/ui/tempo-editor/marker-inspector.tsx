@@ -2,10 +2,9 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type R
 import {
   ChevronDown, ChevronLeft, ChevronRight, Crosshair, LocateFixed, Maximize2, Minus, Plus, Redo2, Sparkles, Trash2, Undo2, ZoomIn, ZoomOut,
 } from "lucide-react"
+import { ResponsivePanel } from "@/components/app/responsive-panel"
 import { Button } from "@/components/ui/button"
-import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { usePlayer } from "@/player/store"
@@ -153,14 +152,9 @@ export function TimeSignatureField({ value, onCommit, picker = true }: { value: 
         {...d.props}
       />
       {picker && (
-        <Popover>
-          <PopoverTrigger render={<Button variant="addon" size="addon" aria-label="Pick a time signature" />}>
-            <ChevronDown />
-          </PopoverTrigger>
-          <PopoverContent className="w-80">
-            <TimeSignaturePicker value={value} onPick={onCommit} />
-          </PopoverContent>
-        </Popover>
+        <ResponsivePanel title="Time signature" size="wide" trigger={<Button variant="addon" size="addon" aria-label="Pick a time signature"><ChevronDown /></Button>}>
+          <TimeSignaturePicker value={value} onPick={onCommit} />
+        </ResponsivePanel>
       )}
     </div>
   )
@@ -241,7 +235,7 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
       <Button variant="ghost" size="icon-lg" aria-label="Previous marker" onClick={() => c.onLocate(-1)}><ChevronLeft /></Button>
       {m && (
         <MarkerDrawer index={i} marker={m}>
-          <Button variant="chip" className="h-11 min-w-0 flex-1" aria-label={`Edit marker ${i + 1}: ${flagLabel(m)}`}>
+          <Button variant="chip" className="min-w-0 flex-1" aria-label={`Edit marker ${i + 1}: ${flagLabel(m)}`}>
             <span className={cn("size-2 shrink-0 rounded-full", m.kind === "manual" ? "bg-primary" : "bg-muted-foreground")} />
             <span className="truncate">{flagLabel(m)}</span>
           </Button>
@@ -255,47 +249,43 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
   )
 }
 
-/** Phone marker editor in a bottom drawer: kind, BPM (−/+ by 1 and 0.1), meter, nudge, detected tempo, delete. */
+/** Marker editor in a panel (a bottom sheet on phones): kind, BPM (−/+ by 1 and 0.1), meter, nudge, detected tempo, delete. */
 function MarkerDrawer({ index, marker: m, children }: { index: number; marker: TempoMarker; children: React.ReactElement }) {
   const analysis = usePlayer((s) => s.analysis)
   const [open, setOpen] = useState(false)
   const nudge = (dir: -1 | 1) => nudgeMarker(index, dir, 0.005)
   return (
-    <Drawer open={open} onOpenChange={setOpen} showSwipeHandle>
-      <DrawerTrigger render={children} />
-      <DrawerContent>
-        <div className="flex flex-col gap-5 px-5 pt-3 pb-safe">
-          <div className="relative flex min-h-9 items-center justify-center">
-            <DrawerTitle>{markerClock(m.time)}</DrawerTitle>
-            <Button variant="destructive" size="icon-lg" aria-label="Delete marker" className="absolute right-0" disabled={index === 0} onClick={() => {
-              if (deleteMarker(index)) setOpen(false)
-            }}><Trash2 /></Button>
-          </div>
-          <div className="flex justify-center"><KindSwitch marker={m} index={index} /></div>
-          {m.kind === "manual" && (
-            <>
-              <Row>
-                <Button variant="secondary" size="icon-lg" aria-label="BPM −1" onClick={() => setBpm(index, m.bpm - 1)}><Minus /></Button>
-                <Button variant="ghost" size="icon-lg" aria-label="BPM −0.1" onClick={() => setBpm(index, m.bpm - 0.1)}>−.1</Button>
-                <BpmField bpm={m.bpm} onCommit={(bpm) => setBpm(index, bpm)} large />
-                <Button variant="ghost" size="icon-lg" aria-label="BPM +0.1" onClick={() => setBpm(index, m.bpm + 0.1)}>+.1</Button>
-                <Button variant="secondary" size="icon-lg" aria-label="BPM +1" onClick={() => setBpm(index, m.bpm + 1)}><Plus /></Button>
-              </Row>
-              <div className="flex flex-col items-center gap-3">
-                <TimeSignatureField value={m} picker={false} onCommit={(s) => replaceMarker(index, { ...m, ...s })} />
-                <TimeSignaturePicker value={m} onPick={(s) => replaceMarker(index, { ...m, ...s })} />
-              </div>
-            </>
-          )}
+    <ResponsivePanel
+      title={markerClock(m.time)}
+      open={open}
+      onOpenChange={setOpen}
+      trigger={children}
+      action={<Button variant="destructive" size="icon-lg" aria-label="Delete marker" disabled={index === 0} onClick={() => {
+        if (deleteMarker(index)) setOpen(false)
+      }}><Trash2 /></Button>}
+    >
+      <div className="flex justify-center"><KindSwitch marker={m} index={index} /></div>
+      {m.kind === "manual" && (
+        <>
           <Row>
-            <Button variant="secondary" size="icon-lg" aria-label="Nudge earlier" disabled={index === 0} onClick={() => nudge(-1)}><ChevronLeft /></Button>
-            <Button variant="secondary" size="icon-lg" aria-label="Nudge later" disabled={index === 0} onClick={() => nudge(1)}><ChevronRight /></Button>
-            {m.kind === "manual" && <Button variant="secondary" size="icon-lg" aria-label="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(index)}><Sparkles /></Button>}
+            <Button variant="secondary" size="icon-lg" aria-label="BPM −1" onClick={() => setBpm(index, m.bpm - 1)}><Minus /></Button>
+            <Button variant="ghost" size="icon-lg" aria-label="BPM −0.1" onClick={() => setBpm(index, m.bpm - 0.1)}>−.1</Button>
+            <BpmField bpm={m.bpm} onCommit={(bpm) => setBpm(index, bpm)} large />
+            <Button variant="ghost" size="icon-lg" aria-label="BPM +0.1" onClick={() => setBpm(index, m.bpm + 0.1)}>+.1</Button>
+            <Button variant="secondary" size="icon-lg" aria-label="BPM +1" onClick={() => setBpm(index, m.bpm + 1)}><Plus /></Button>
           </Row>
-          <div className="h-2" />
-        </div>
-      </DrawerContent>
-    </Drawer>
+          <div className="flex flex-col items-center gap-3">
+            <TimeSignatureField value={m} picker={false} onCommit={(s) => replaceMarker(index, { ...m, ...s })} />
+            <TimeSignaturePicker value={m} onPick={(s) => replaceMarker(index, { ...m, ...s })} />
+          </div>
+        </>
+      )}
+      <Row>
+        <Button variant="secondary" size="icon-lg" aria-label="Nudge earlier" disabled={index === 0} onClick={() => nudge(-1)}><ChevronLeft /></Button>
+        <Button variant="secondary" size="icon-lg" aria-label="Nudge later" disabled={index === 0} onClick={() => nudge(1)}><ChevronRight /></Button>
+        {m.kind === "manual" && <Button variant="secondary" size="icon-lg" aria-label="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(index)}><Sparkles /></Button>}
+      </Row>
+    </ResponsivePanel>
   )
 }
 
