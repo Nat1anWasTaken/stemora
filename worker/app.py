@@ -41,21 +41,13 @@ def _download_btc_weights():
     urllib.request.urlretrieve(url, "/opt/btc/btc_model_large_voca.pt")
 
 
-def _download_adt_str():
-    """ADT_STR weights from Hugging Face at a pinned revision, sha256-checked; then load once so a broken
-    install fails the build."""
-    import hashlib
-    import os
-    import urllib.request
-    import adt_str
-    from adt_str.model import load
-    os.makedirs(os.path.dirname(adt_str.WEIGHTS), exist_ok=True)
-    urllib.request.urlretrieve(adt_str.WEIGHTS_URL, adt_str.WEIGHTS)
-    with open(adt_str.WEIGHTS, "rb") as f:
-        digest = hashlib.file_digest(f, "sha256").hexdigest()
-    if digest != adt_str.WEIGHTS_SHA256:
-        raise RuntimeError(f"ADT_STR weights sha256 {digest} != {adt_str.WEIGHTS_SHA256}")
-    load(adt_str.WEIGHTS, "cpu")
+ADTOF_COMMIT = "85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9"
+
+
+def _check_adtof():
+    """The weights ship inside the package; load them once so a broken install fails the build."""
+    import drums
+    drums.load_model("cpu")
 
 
 def _download_songformer():
@@ -79,19 +71,19 @@ image = (
         "librosa==0.10.2.post1", "soxr", "rotary-embedding-torch", "einops", "pretty_midi==0.2.10",
     )
     .pip_install("https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip", extra_options="--no-deps")
+    # ADTOF drum transcription, PyTorch port (CC BY-NC-SA 4.0 via the original ADTOF weights).
+    .pip_install(f"https://github.com/xavriley/ADTOF-pytorch/archive/{ADTOF_COMMIT}.zip", extra_options="--no-deps")
     .env({"TORCH_HOME": TORCH_HOME})
     .run_function(_download_weights)
     .run_function(_download_beat_model)
     .run_function(_download_btc_weights)
     .add_local_python_source("scnet", copy=True)
     .run_function(_download_scnet_weights)
-    # ADT_STR drum transcription (CC BY-SA 4.0), re-implemented in adt_str/.
-    .pip_install("safetensors==0.5.3")
-    .add_local_python_source("adt_str", "drums", copy=True)
-    .run_function(_download_adt_str)
+    .add_local_python_source("drums", copy=True)
+    .run_function(_check_adtof)
     # SongFormer song sections. Code vendored in songformer/ (CC-BY-4.0 head, MIT MuQ / MusicFM code);
     # the MuQ weights are CC BY-NC 4.0 (non-commercial).
-    .pip_install("transformers==4.51.1", "x-transformers==2.4.14", "easydict==1.13")
+    .pip_install("transformers==4.51.1", "x-transformers==2.4.14", "safetensors==0.5.3", "easydict==1.13")
     .env({"HF_HOME": "/opt/hf", "SONGFORMER_DIR": "/opt/songformer"})
     .add_local_python_source("songformer", copy=True)
     .run_function(_download_songformer)
@@ -200,7 +192,7 @@ def analysis_test(song_path: str, drums_path: str = ""):
         with open(drums_path, "rb") as f:
             drums = f.read()
     res = analyse_test.remote(audio, os.path.basename(song_path), drums, os.path.basename(drums_path))
-    print(json.dumps({k: v for k, v in res.items() if k not in ("beats", "downbeats", "drums", "drum_velocities")}, indent=1))
+    print(json.dumps({k: v for k, v in res.items() if k not in ("beats", "downbeats", "drums")}, indent=1))
     if "drums" in res:
         print("drum hits:", {k: len(v) for k, v in res["drums"].items()})
         print("first 4 s:", {k: [t for t in v if t < 4] for k, v in res["drums"].items()})

@@ -38,7 +38,7 @@ const REST_OCTAVE = 4
 const scaleFor = (desktop: boolean, zoom: number) => (desktop ? 1 : 0.8) * zoom
 
 /**
- * Hands stem up, feet stem down; the feet voice's rests sit low and quiet instead of above the staff, and rests the
+ * Hands stem up, feet stem down; the kick voice's rests sit low and quiet instead of above the staff, and rests the
  * other voice already fills are hidden.
  */
 function styleDrumScore(at: AlphaTab, score: model.Score) {
