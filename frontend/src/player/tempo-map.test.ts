@@ -5,7 +5,7 @@ import { toAlphaTex } from "@/player/drums/alphatex"
 import { quantize } from "@/player/drums/quantize"
 import {
   addSubdivision, buildGrid, cycleLevel, defaultMarkers, defaultPattern, detectedTempo, insertMarker, isLocked, markerClicks, MAX_SUBDIVISIONS,
-  moveMarker, normalizeMarkers, parseMarker, parseTimeSignature, patternFor, removeMarker, removeSubdivision, setLevel, snapTime, storedPattern,
+  moveMarker, normalizeMarkers, parseMarker, parseTimeSignature, patternFor, removeMarker, removeSubdivision, canDeleteMarker, isImplicitStart, markerNumber, visibleMarkerCount, setLevel, snapTime, storedPattern,
   tempoAt, updateMarker, type ManualMarker, type TempoMarker,
 } from "@/player/tempo-map"
 
@@ -75,6 +75,30 @@ describe("snapping and ripple", () => {
     const m = [auto(0), manual(1, 120), manual(3, 100), auto(4.2)]
     expect(times(removeMarker(m, 2))).toEqual([0, 1, 4]) // 3.2 s after 1 s rounds to 6 beats of 0.5 s
     expect(removeMarker(m, 0)).toBeNull()
+  })
+
+  it("treats an auto marker at 0:00 as the song's default, not a marker", () => {
+    const fresh = defaultMarkers()
+    expect(isImplicitStart(fresh, 0)).toBe(true)
+    expect(visibleMarkerCount(fresh)).toBe(0)
+    expect(canDeleteMarker(fresh, 0)).toBe(false)
+    const m = [auto(0), manual(1, 120), auto(3)]
+    expect(visibleMarkerCount(m)).toBe(2)
+    expect(m.map((_, i) => markerNumber(m, i))).toEqual([0, 1, 2])
+    const started = [manual(0, 100), auto(2)]
+    expect(isImplicitStart(started, 0)).toBe(false)
+    expect(visibleMarkerCount(started)).toBe(2)
+    expect(markerNumber(started, 0)).toBe(1)
+  })
+
+  it("puts a manual marker added at 0:00 in place of the implicit start, and deleting it hands the start back", () => {
+    const m = [auto(0), auto(2)]
+    const r = insertMarker(m, manual(0.005, 90))!
+    expect(r.index).toBe(0)
+    expect(r.markers[0]).toEqual(manual(0, 90))
+    expect(times(r.markers)).toEqual([0, 2])
+    expect(canDeleteMarker(r.markers, 0)).toBe(true)
+    expect(removeMarker(r.markers, 0)).toEqual(m)
   })
 })
 

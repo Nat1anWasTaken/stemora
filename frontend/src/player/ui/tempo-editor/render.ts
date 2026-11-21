@@ -1,7 +1,7 @@
 import { STEM_NAMES } from "@/player/mixer"
 import type { Peaks } from "@/player/peaks"
 import { lastAtOrBefore } from "@/player/analysis"
-import type { BeatGrid, TempoMarker } from "@/player/tempo-map"
+import { isImplicitStart, visibleMarkerCount, type BeatGrid, type TempoMarker } from "@/player/tempo-map"
 import { formatBpm } from "@/player/ui/use-playhead-tempo"
 import { rangeOf, type Wave } from "@/player/waveform-data"
 import { timeToX, xToTime, type Viewport } from "@/player/ui/tempo-editor/viewport"
@@ -46,6 +46,9 @@ export type Scene = {
 export type FlagBox = { index: number; x0: number; x1: number }
 
 export const flagLabel = (m: TempoMarker) => (m.kind === "manual" ? `${formatBpm(m.bpm)}  ${m.num}/${m.den}` : "Auto")
+
+/** What the tempo lane says while the song has no markers of its own. */
+const EMPTY_HINT = "Detected beats"
 
 const laneHeight = (height: number) => Math.max(1, (height - HEADER_H) / STEM_NAMES.length)
 
@@ -237,9 +240,14 @@ function drawMarkers(ctx: CanvasRenderingContext2D, s: Scene, c: Colors): FlagBo
   ctx.font = FONT
   ctx.textBaseline = "middle"
   ctx.textAlign = "left"
-  const order = markers.map((_, i) => i).filter((i) => i !== s.selected)
-  if (s.selected !== null && markers[s.selected]) order.push(s.selected)
+  // The auto marker at 0:00 is the song's default, not a marker the user placed: no flag for it.
+  const order = markers.map((_, i) => i).filter((i) => i !== s.selected && !isImplicitStart(markers, i))
+  if (s.selected !== null && markers[s.selected] && !isImplicitStart(markers, s.selected)) order.push(s.selected)
   const y = RULER_H + (TEMPO_H - FLAG_H) / 2
+  if (visibleMarkerCount(markers) === 0) {
+    ctx.fillStyle = c.muted
+    ctx.fillText(EMPTY_HINT, Math.max(0, timeToX(vp, 0)) + 8, y + FLAG_H / 2 + 0.5)
+  }
   for (const i of order) {
     const m = markers[i]
     const x = Math.round(timeToX(vp, m.time)) + 0.5

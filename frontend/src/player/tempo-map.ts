@@ -5,6 +5,10 @@ import { lastAtOrBefore, type Analysis } from "@/player/analysis"
  * in the time signature's denominator note, so 6/8 at 120 is 120 eighths a minute); an auto marker hands the beats
  * back to the detected ones. Every marker starts a new bar. The first marker sits at 0:00 and always exists.
  *
+ * While that first marker is auto it is the song's default, not something the user placed: the UI does not show it
+ * as a marker (see `isImplicitStart`). Making it manual (adding a marker at 0:00) shows it; deleting it makes it
+ * auto again.
+ *
  * A marker right after a manual marker is locked to that marker's grid: it sits a whole number of beats after it, so
  * changing or moving the manual marker moves it too (and whatever is locked to it in turn). A marker after an auto
  * marker is free.
@@ -151,12 +155,29 @@ export function snapTime(markers: TempoMarker[], t: number): number {
   return prev.time + Math.max(1, Math.round((t - prev.time) / len)) * len
 }
 
+/** Whether the marker at `index` is the auto marker at 0:00 every song has: the default, shown as no marker at all. */
+export const isImplicitStart = (markers: TempoMarker[], index: number) => index === 0 && markers[0]?.kind === "auto"
+
+/** How many markers the user sees (the implicit start is not one). */
+export const visibleMarkerCount = (markers: TempoMarker[]) => markers.length - (isImplicitStart(markers, 0) ? 1 : 0)
+
+/** 1-based number of the marker at `index` as the user sees it, or 0 for the implicit start. */
+export const markerNumber = (markers: TempoMarker[], index: number) => (isImplicitStart(markers, 0) ? index : index + 1)
+
+/** Whether the marker at `index` can be deleted: any but the first; the first only when manual (it turns auto again). */
+export const canDeleteMarker = (markers: TempoMarker[], index: number) => index > 0 ? index < markers.length : markers[0]?.kind === "manual"
+
 /** Whether the marker at `index` is locked to a manual marker's grid (moves a beat at a time). */
 export const isLocked = (markers: TempoMarker[], index: number) => index > 0 && markers[index - 1].kind === "manual"
 
 /** Adds `marker` at its (snapped) time; returns the new list and its index, or null if it does not fit. */
 export function insertMarker(markers: TempoMarker[], marker: TempoMarker, duration = Infinity): { markers: TempoMarker[]; index: number } | null {
   const time = snapTime(markers, marker.time)
+  // A manual marker at 0:00 takes the place of the implicit start.
+  if (time < MIN_GAP && marker.kind === "manual" && isImplicitStart(markers, 0)) {
+    const out = updateMarker(markers, 0, { ...marker, time: 0 }, duration)
+    return out ? { markers: out, index: 0 } : null
+  }
   const index = lastAtOrBefore(markers.map((m) => m.time), time) + 1
   if (index === 0) return null
   const anchors = toAnchors(markers)
@@ -188,9 +209,11 @@ export function updateMarker(markers: TempoMarker[], index: number, next: TempoM
   return fromAnchors(anchors, duration)
 }
 
-/** Removes the marker at `index` (never the first); the next marker locks to the grid before it, if any. */
+/** Removes the marker at `index` (the first only turns auto); the next marker locks to the grid before it, if any. */
 export function removeMarker(markers: TempoMarker[], index: number, duration = Infinity): TempoMarker[] | null {
-  if (index <= 0 || index >= markers.length) return null
+  // The first marker cannot go; deleting a manual one hands the start back to the detected beats.
+  if (index === 0) return markers[0]?.kind === "manual" ? updateMarker(markers, 0, { time: 0, kind: "auto" }, duration) : null
+  if (index < 0 || index >= markers.length) return null
   const anchors = toAnchors(markers)
   anchors.splice(index, 1)
   if (anchors[index]) anchors[index].beats = "relock"
