@@ -230,6 +230,9 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
         resume()
         self.midiLoaded.on(resume)
         self.playerReady.on(resume)
+        // scoreLoaded fires before alphaTab generates the score's MIDI, and that generation hands the sync points set
+        // here to the player. Do not call updateSyncPoints() here: with no MIDI loaded yet its re-seek reads the
+        // player's (still empty) tempo list and throws once the playhead is past 0, so the score never draws.
         self.scoreLoaded.on((score) => {
           if (cancelled) return
           const next = pending.current
@@ -239,7 +242,6 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
           }
           styleDrumScore(lib, score)
           applyBreaks(lib, score, live.current.breaks)
-          self.updateSyncPoints()
         })
 
         // While paused alphaTab highlights nothing: mark the beat under the playhead ourselves.
