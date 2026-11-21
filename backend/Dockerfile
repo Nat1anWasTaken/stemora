@@ -9,7 +9,10 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
 
 COPY migrations ./migrations
 COPY src ./src
-RUN cargo build --release --locked
+# The real sources can be older than the placeholder build above (a fresh git checkout keeps checkout-time
+# mtimes), and newer cargo versions keep fingerprints outside the paths removed above, so cargo would ship
+# the empty placeholder binary. Touch them so the crate is always rebuilt.
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked
 
 # Not distroless: link imports run yt-dlp (Python) with ffmpeg for HLS/DASH sites and deno for
 # YouTube's JS challenges. Bump YTDLP_VERSION and rebuild when sites change.
