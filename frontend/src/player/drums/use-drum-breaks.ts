@@ -25,6 +25,8 @@ export function useDrumBreaks(songId: string, detail: Pick<SongDetail, "drum_bre
   const initial = detail.drum_break_times ?? []
   const [times, setTimes] = useState(initial)
   const legacy = useRef(initial.length ? [] : (detail.drum_breaks ?? []))
+  /** Older breaks still waiting to be saved as times: edits wait too, or they would save an incomplete set. */
+  const [pending, setPending] = useState(() => !initial.length && !!detail.drum_breaks?.length)
   const [saver] = useState(() =>
     createSyncedSaver<number[]>({
       initial,
@@ -69,6 +71,7 @@ export function useDrumBreaks(songId: string, detail: Pick<SongDetail, "drum_bre
       .setDrumBreaks(songId, t)
       .then((r) => {
         legacy.current = []
+        setPending(false)
         saver.reset(r.times)
         show(r.times)
       })
@@ -116,11 +119,11 @@ export function useDrumBreaks(songId: string, detail: Pick<SongDetail, "drum_bre
   const breaks = useMemo(() => breakBars(times, grid.bars), [times, grid])
   const toggle = useCallback((bar: number) => {
     const start = usePlayer.getState().grid.bars[bar]?.start
-    if (bar < 1 || start === undefined) return
+    if (bar < 1 || start === undefined || legacy.current.length) return
     const cur = saver.value
     const on = breakBars(cur, usePlayer.getState().grid.bars).includes(bar)
     commit(on ? cur.filter((t) => Math.abs(t - start) > 0.002) : [...cur, start].sort((a, b) => a - b))
   }, [saver, commit])
 
-  return { breaks, toggle }
+  return { breaks, toggle, editable: !pending }
 }

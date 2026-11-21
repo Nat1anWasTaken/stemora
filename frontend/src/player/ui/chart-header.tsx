@@ -41,6 +41,8 @@ export type DrumControls = {
   bars: QBar[] | null
   breaks: number[]
   onToggleBreak: (bar: number) => void
+  /** False while older breaks are still being converted (edits would be lost). */
+  breaksEditable: boolean
 }
 
 /** Drum notation settings: grid (Auto or a fixed note value, optionally with triplets), bars per row and sheet theme. */
@@ -120,7 +122,7 @@ function LineBreakToggle({ drums, compact, active = true }: { drums: DrumControl
       aria-pressed={on}
       aria-label={label}
       title={compact ? undefined : `${label} (B)`}
-      disabled={!drums.bars || bar < 1}
+      disabled={!drums.bars || bar < 1 || !drums.breaksEditable}
       onClick={() => drums.onToggleBreak(bar)}
     >
       <WrapText />{!compact && "Line break"}
