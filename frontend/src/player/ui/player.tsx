@@ -21,8 +21,8 @@ import { barIndexAt, useDrumChart } from "@/player/drums/chart"
 import { loadNotationPrefs, saveNotationPrefs, type NotationPrefs } from "@/player/drums/notation-prefs"
 import { loadPrecision, savePrecision, type DrumPrecision } from "@/player/drums/precision"
 import { useDrumBreaks } from "@/player/drums/use-drum-breaks"
-import { PresetChips } from "@/player/ui/preset-chips"
 import { PracticeStrip } from "@/player/ui/practice-strip"
+import { SectionBar } from "@/player/ui/section-bar"
 import { StemRow, triggerDownload } from "@/player/ui/stem-row"
 import { SeekBar, Transport } from "@/player/ui/transport"
 import { useSheetDrag } from "@/player/ui/use-sheet-drag"
@@ -213,7 +213,7 @@ export function Player({ detail }: { detail: SongDetail }) {
                   <Waveform />
                 </div>
               </div>
-              <PresetChips />
+              <SectionBar />
             </section>
           )}
         </div>
@@ -225,7 +225,7 @@ export function Player({ detail }: { detail: SongDetail }) {
               <ul className="flex flex-1 flex-col justify-evenly gap-1">
                 {STEM_NAMES.map((n) => <StemRow key={n} name={n} songId={song.id} selected={selected === n} onSelect={() => select(n)} />)}
               </ul>
-              <PresetChips />
+              <SectionBar />
             </section>
           )}
           {tab === "practice" && (

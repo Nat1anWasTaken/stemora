@@ -3,7 +3,7 @@
 Stem separation on Modal with Demucs (`htdemucs`) or SCNet (`scnet_xl_ihf`, the "High quality" option). Interface: `../docs/contract.md`.
 
 - `app.py` Modal app `stemora`: image, GPU function `separate`, `spawn` web endpoint, `local_test` entrypoint
-- `analysis.py` beats/bars/chords (Beat This!, BTC); `drums.py` drum hits (ADTOF) on the drums stem, snapped to the beat grid
+- `analysis.py` beats/bars/chords (Beat This!, BTC); `drums.py` drum hits (ADTOF) on the drums stem; `sections.py` song parts (SongFormer, vendored in `songformer/`) snapped to the bar grid
 - `runner.py` job orchestration; `pipeline.py` probe/decode/separate/encode/peaks/upload; `scnet/` vendored SCNet network + checkpoint registry (MIT, from ZFTurbo/Music-Source-Separation-Training); `webhook.py` payloads, retries, heartbeat; `schema.py` request validation
 
 ## Setup
@@ -60,3 +60,4 @@ curl -X POST $URL -H "Authorization: Bearer $SECRET" -H 'content-type: applicati
 - Weights are baked into the image (Demucs in `TORCH_HOME=/opt/torch`, SCNet in `/opt/scnet`, sha256-checked at build).
 - 4 min song on an L4, separation only: htdemucs 14 s, scnet_xl_ihf 43 s; encoding adds ~27 s to each. (The retired htdemucs_ft took 33 s.)
 - Drum transcription uses [ADTOF](https://github.com/MZehren/ADTOF) (Zehren, Alunno, Bientinesi) through the PyTorch port [ADTOF-pytorch](https://github.com/xavriley/ADTOF-pytorch) (pinned commit in `app.py`, weights bundled in the package). ADTOF and its weights are licensed CC BY-NC-SA 4.0: non-commercial use only, with attribution. The port loads the weights with `strict=False`; `drums.load_model` raises if any are missing, and the image build runs it once.
+- Song parts use [SongFormer](https://github.com/ASLP-lab/SongFormer) (Hao et al., CC-BY-4.0) with the [MuQ](https://github.com/tencent-ailab/MuQ) and [MusicFM](https://github.com/minzwon/musicfm) encoders (code MIT, vendored in `songformer/` for inference only). Weights download from Hugging Face at pinned revisions during the image build; containers run with Hugging Face offline. The MuQ weights are licensed CC BY-NC 4.0: non-commercial use only.

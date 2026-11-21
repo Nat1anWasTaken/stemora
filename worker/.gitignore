@@ -4,3 +4,9 @@ __pycache__/
 .pytest_cache/
 out/
 *.egg-info/
+# local test audio (copyrighted; never commit)
+*.mp3
+*.flac
+*.wav
+*.m4a
+*.ogg

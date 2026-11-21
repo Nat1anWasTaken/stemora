@@ -4,6 +4,11 @@ export const DRUM_KINDS = ["cymbal", "hihat", "tom", "snare", "kick"] as const
 export type DrumKind = (typeof DRUM_KINDS)[number]
 /** Per kind: onset times in seconds, sorted (see docs/contract.md). */
 export type DrumHits = Record<DrumKind, number[]>
+/** Song structure labels from the worker (docs/contract.md); "inst" is an instrumental part. */
+export const SECTION_KINDS = ["intro", "verse", "prechorus", "chorus", "bridge", "inst", "outro", "silence"] as const
+export type SectionKind = (typeof SECTION_KINDS)[number]
+/** One part of the song; `name` is the display name, numbered when the kind repeats ("Chorus 2"). */
+export type Section = { start: number; end: number; kind: SectionKind; name: string }
 export type Analysis = {
   bpm: number | null
   /** Estimated song key, e.g. "Eb" or "Dm"; null for older analyses. */
@@ -13,6 +18,8 @@ export type Analysis = {
   downbeats: number[]
   chords: ChordSegment[]
   drums: DrumHits | null
+  /** Song parts in order, contiguous; empty for older analyses or when detection failed. */
+  sections: Section[]
 }
 /**
  * One beat of the song as shown in the chord strip and chart. `chord` is set where a chord starts and repeated on
@@ -42,7 +49,56 @@ export function parseAnalysis(json: unknown): Analysis | null {
     downbeats: j.downbeats.filter(isNum),
     chords,
     drums: parseDrums(j.drums, beats),
+    sections: parseSections(j.sections),
   }
+}
+
+const SECTION_NAME: Record<SectionKind, string> = {
+  intro: "Intro",
+  verse: "Verse",
+  prechorus: "Pre-chorus",
+  chorus: "Chorus",
+  bridge: "Bridge",
+  inst: "Instrumental",
+  outro: "Outro",
+  silence: "Silence",
+}
+
+/** Lenient: keeps well-formed sections with a known label, in time order; repeated kinds get a number. */
+export function parseSections(json: unknown): Section[] {
+  if (!Array.isArray(json)) return []
+  const kinds: readonly string[] = SECTION_KINDS
+  const list = json
+    .flatMap((x): Omit<Section, "name">[] => {
+      const s = x as { start?: unknown; end?: unknown; label?: unknown } | null
+      return s && isNum(s.start) && isNum(s.end) && s.end > s.start && typeof s.label === "string" && kinds.includes(s.label)
+        ? [{ start: s.start, end: s.end, kind: s.label as SectionKind }]
+        : []
+    })
+    .sort((a, b) => a.start - b.start)
+  const total = new Map<SectionKind, number>()
+  for (const s of list) total.set(s.kind, (total.get(s.kind) ?? 0) + 1)
+  const seen = new Map<SectionKind, number>()
+  return list.map((s) => {
+    const n = (seen.get(s.kind) ?? 0) + 1
+    seen.set(s.kind, n)
+    return { ...s, name: (total.get(s.kind) ?? 0) > 1 ? `${SECTION_NAME[s.kind]} ${n}` : SECTION_NAME[s.kind] }
+  })
+}
+
+/**
+ * The section that starts inside each bar, keyed by the bar's start time. A section start that is not on a bar line
+ * (no downbeat near it) is shown on the bar it falls in.
+ */
+export function sectionsByBar(sections: Section[], bars: { start: number; end: number }[]): Map<number, Section> {
+  const out = new Map<number, Section>()
+  if (bars.length === 0) return out
+  const starts = bars.map((b) => b.start)
+  for (const s of sections) {
+    const i = Math.max(0, lastAtOrBefore(starts, s.start + 0.05))
+    if (!out.has(bars[i].start)) out.set(bars[i].start, s)
+  }
+  return out
 }
 
 const SLOTS = 12
