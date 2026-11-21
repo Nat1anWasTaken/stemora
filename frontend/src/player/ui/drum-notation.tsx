@@ -220,7 +220,9 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
           // We report song time, so alphaTab must not rescale it.
           playbackRate: 1,
           masterVolume: 1,
-          seekTo: (ms) => usePlayer.getState().seek(ms / 1000),
+          // alphaTab asks to seek to 0 whenever it (re)loads the score's MIDI, which would throw the playhead back to
+          // the start when the chart opens. Our transport owns the position (taps seek via beatMouseDown below).
+          seekTo: () => {},
           // Our transport owns play state; alphaTab only mirrors it.
           play: () => {},
           pause: () => {},

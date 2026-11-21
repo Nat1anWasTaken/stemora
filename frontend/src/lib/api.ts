@@ -60,8 +60,10 @@ export type SongDetail = {
   stems: Stem[]
   peaks_url: string | null
   analysis_url: string | null
-  /** Bars that start a new row in the drum notation (sorted). Missing from older backends. */
+  /** Older line breaks as bar indices (sorted); only read to convert them to `drum_break_times`. */
   drum_breaks?: number[]
+  /** Starts (seconds) of the bars that begin a new row in the drum notation, sorted. Missing from older backends. */
+  drum_break_times?: number[]
   /** The song's tempo map, sorted, the first at 0 (see docs/contract.md). Missing from older backends. */
   tempo_markers?: TempoMarkerJson[]
 }
@@ -161,7 +163,7 @@ export const api = {
     request<Song>(`/songs/${id}/complete`, { method: "POST", body: parts ? { parts } : {} }),
   rename: (id: string, title: string) => request<Song>(`/songs/${id}`, { method: "PATCH", body: { title } }),
   remove: (id: string) => request<void>(`/songs/${id}`, { method: "DELETE" }),
-  setDrumBreaks: (id: string, bars: number[]) => request<{ bars: number[] }>(`/songs/${id}/drum-breaks`, { method: "PUT", body: { bars } }),
+  setDrumBreaks: (id: string, times: number[]) => request<{ times: number[] }>(`/songs/${id}/drum-breaks`, { method: "PUT", body: { times } }),
   setTempoMarkers: (id: string, markers: TempoMarkerJson[]) =>
     request<{ markers: TempoMarkerJson[] }>(`/songs/${id}/tempo-markers`, { method: "PUT", body: { markers } }),
   reprocess: (id: string, model: Model) => request<Song>(`/songs/${id}/reprocess`, { method: "POST", body: { model } }),

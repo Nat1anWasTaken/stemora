@@ -690,11 +690,13 @@ async fn detail(
 ) -> AppResult<Json<Value>> {
     owned_song(&st.pool, u.id, id).await?;
     let song = live_view(&st, id).await?;
-    let (drum_breaks, tempo_markers): (Vec<i32>, String) =
-        sqlx::query_as("SELECT drum_breaks, tempo_markers::text FROM songs WHERE id = $1")
-            .bind(id)
-            .fetch_one(&st.pool)
-            .await?;
+    let (drum_breaks, drum_break_times, tempo_markers): (Vec<i32>, Vec<f64>, String) =
+        sqlx::query_as(
+            "SELECT drum_breaks, drum_break_times, tempo_markers::text FROM songs WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&st.pool)
+        .await?;
     let tempo_markers: Value =
         serde_json::from_str(&tempo_markers).unwrap_or_else(|_| default_tempo_markers());
     let (mut stems, mut peaks_url, mut analysis_url) = (Vec::new(), None, None);
@@ -716,7 +718,7 @@ async fn detail(
         );
     }
     Ok(Json(
-        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks, "tempo_markers": tempo_markers}),
+        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks, "drum_break_times": drum_break_times, "tempo_markers": tempo_markers}),
     ))
 }
 
@@ -754,45 +756,75 @@ async fn rename(
 const MAX_DRUM_BREAKS: usize = 2000;
 const MAX_BAR_INDEX: i32 = 100_000;
 
+/// Line breaks closer than this (seconds) are one break.
+const MIN_BREAK_GAP: f64 = 0.001;
+
 #[derive(Deserialize)]
 struct DrumBreaksReq {
-    bars: Vec<i64>,
+    /// Bar start times in seconds (current clients).
+    times: Option<Vec<f64>>,
+    /// Bar indices (clients from before the tempo map).
+    bars: Option<Vec<i64>>,
 }
 
-/// Replace the song's drum-notation line breaks (whole set; the client sends the latest state).
+/// Replace the song's drum-notation line breaks (whole set; the client sends the latest state). Current clients send
+/// `times`, which also clears the bar indices older clients stored; `bars` still works as before.
 async fn set_drum_breaks(
     State(st): State<AppState>,
     AuthUser(u): AuthUser,
     Path(id): Path<Uuid>,
     Json(r): Json<DrumBreaksReq>,
 ) -> AppResult<Json<Value>> {
-    let mut bars: Vec<i32> = r
-        .bars
-        .into_iter()
-        .filter(|&b| (1..i64::from(MAX_BAR_INDEX)).contains(&b))
-        .map(|b| b as i32)
-        .collect();
-    bars.sort_unstable();
-    bars.dedup();
-    if bars.len() > MAX_DRUM_BREAKS {
-        return Err(AppError::bad_request(
-            "too_many_breaks",
-            "too many line breaks",
-        ));
-    }
-    let n = sqlx::query(
-        "UPDATE songs SET drum_breaks = $3, updated_at = now() WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(u.id)
-    .bind(&bars)
-    .execute(&st.pool)
-    .await?
-    .rows_affected();
-    if n == 0 {
+    let too_many = || AppError::bad_request("too_many_breaks", "too many line breaks");
+    let (query, body) = if let Some(times) = r.times {
+        let mut times: Vec<f64> = times
+            .into_iter()
+            .filter(|t| t.is_finite() && *t > 0.0 && *t <= 86_400.0)
+            .map(|t| (t * 1_000_000.0).round() / 1_000_000.0)
+            .collect();
+        times.sort_by(f64::total_cmp);
+        times.dedup_by(|b, a| *b - *a < MIN_BREAK_GAP);
+        if times.len() > MAX_DRUM_BREAKS {
+            return Err(too_many());
+        }
+        let n = sqlx::query(
+            "UPDATE songs SET drum_break_times = $3, drum_breaks = '{}', updated_at = now() WHERE id = $1 AND user_id = $2",
+        )
+        .bind(id)
+        .bind(u.id)
+        .bind(&times)
+        .execute(&st.pool)
+        .await?
+        .rows_affected();
+        (n, json!({ "times": times }))
+    } else {
+        let mut bars: Vec<i32> = r
+            .bars
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&b| (1..i64::from(MAX_BAR_INDEX)).contains(&b))
+            .map(|b| b as i32)
+            .collect();
+        bars.sort_unstable();
+        bars.dedup();
+        if bars.len() > MAX_DRUM_BREAKS {
+            return Err(too_many());
+        }
+        let n = sqlx::query(
+            "UPDATE songs SET drum_breaks = $3, updated_at = now() WHERE id = $1 AND user_id = $2",
+        )
+        .bind(id)
+        .bind(u.id)
+        .bind(&bars)
+        .execute(&st.pool)
+        .await?
+        .rows_affected();
+        (n, json!({ "bars": bars }))
+    };
+    if query == 0 {
         return Err(AppError::not_found());
     }
-    Ok(Json(json!({ "bars": bars })))
+    Ok(Json(body))
 }
 
 /// Most markers one tempo map may hold.

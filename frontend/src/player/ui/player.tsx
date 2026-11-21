@@ -110,7 +110,7 @@ export function Player({ detail }: { detail: SongDetail }) {
     return next
   }), [])
   const drumChart = useDrumChart(precision)
-  const { breaks, toggle: toggleBreak } = useDrumBreaks(song.id, detail.drum_breaks)
+  const { breaks, toggle: toggleBreak } = useDrumBreaks(song.id, detail)
   useTempoMarkers(song.id, detail.tempo_markers)
   const toggleBreakAtPlayhead = useCallback(() => {
     if (!drumChart) return

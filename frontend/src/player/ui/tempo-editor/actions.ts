@@ -11,6 +11,8 @@ import {
 const st = () => usePlayer.getState()
 const commit = (next: TempoMarker[] | null, from: TempoMarker[]) => {
   if (!next) return false
+  // An edit that changes nothing (same BPM typed again) is not an undo step.
+  if (JSON.stringify(next) === JSON.stringify(from)) return true
   st().setMarkers(next, { from })
   return true
 }

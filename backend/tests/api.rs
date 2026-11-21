@@ -742,6 +742,33 @@ async fn songs_full_flow() {
         .await;
     assert_eq!(b.status, StatusCode::BAD_REQUEST);
 
+    // line breaks by time: sorted, deduplicated, and they replace the bar indices
+    assert_eq!(d.body["drum_break_times"], json!([]));
+    let b = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/drum-breaks"),
+            Some(&bob),
+            None,
+            Some(json!({"times":[12.5, 4.25, 12.5004, 0.0, -1.0, 1e9]})),
+        )
+        .await;
+    assert_eq!(b.status, StatusCode::OK, "{:?}", b.body);
+    assert_eq!(b.body["times"], json!([4.25, 12.5]));
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.body["drum_break_times"], json!([4.25, 12.5]));
+    assert_eq!(d.body["drum_breaks"], json!([]));
+    let b = app
+        .req(
+            Method::PUT,
+            &format!("/api/songs/{id}/drum-breaks"),
+            Some(&admin),
+            None,
+            Some(json!({"times":[1.0]})),
+        )
+        .await;
+    assert_eq!(b.status, StatusCode::NOT_FOUND);
+
     // tempo map: starts with one auto marker; whole-map replace, normalised, owner only
     assert_eq!(
         d.body["tempo_markers"],

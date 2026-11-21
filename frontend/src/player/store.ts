@@ -68,6 +68,8 @@ type PlayerState = {
   setSemitones: (n: number) => void
   /** Whether `markers` is a preview (mid-drag) rather than a state to keep. */
   markersDraft: boolean
+  /** Counts the user's committed tempo map changes (edits, undo, redo), not loading or previews. */
+  markerEdits: number
   /**
    * Shows a new tempo map. `from` (the state before the edit, e.g. before a drag began) goes on the undo stack;
    * `draft` marks a preview that is neither saved nor put in the history.
@@ -96,7 +98,13 @@ export const usePlayer = create<PlayerState>((set, get) => {
     set({ grid })
     engine?.setClicks(gridClicks(grid))
   }
-  const history = () => set({ canUndo: past.length > 0, canRedo: future.length > 0 })
+  /** A new tempo map and its grid in one update, so subscribers never see one without the other. */
+  const showMarkers = (markers: TempoMarker[], draft: boolean) => {
+    const { analysis, duration, markerEdits } = get()
+    const grid = buildGrid(markers, analysis, duration)
+    set({ markers, grid, markersDraft: draft, markerEdits: draft ? markerEdits : markerEdits + 1, canUndo: past.length > 0, canRedo: future.length > 0 })
+    engine?.setClicks(gridClicks(grid))
+  }
 
   return {
     songId: null,
@@ -119,6 +127,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
     canUndo: false,
     canRedo: false,
     markersDraft: false,
+    markerEdits: 0,
 
     async load(detail) {
       get().unload()
@@ -234,25 +243,19 @@ export const usePlayer = create<PlayerState>((set, get) => {
         past = [...past, opts.from].slice(-HISTORY)
         future = []
       }
-      set({ markers, markersDraft: !!opts.draft })
-      applyGrid()
-      history()
+      showMarkers(markers, !!opts.draft)
     },
     undo() {
       const prev = past.pop()
       if (!prev) return
       future.push(get().markers)
-      set({ markers: prev, markersDraft: false })
-      applyGrid()
-      history()
+      showMarkers(prev, false)
     },
     redo() {
       const next = future.pop()
       if (!next) return
       past.push(get().markers)
-      set({ markers: next, markersDraft: false })
-      applyGrid()
-      history()
+      showMarkers(next, false)
     },
   }
 })
