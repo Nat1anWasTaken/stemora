@@ -91,3 +91,23 @@ export function locateMarker(dir: -1 | 1): number | null {
   seek(markers[i].time)
   return i
 }
+
+/** Shows `bpm` on manual marker `i` as a preview: heard and drawn, but not saved or put in the history yet. */
+export function previewBpm(i: number, bpm: number): boolean {
+  const { markers, duration } = st()
+  const m = markers[i]
+  if (m?.kind !== "manual") return false
+  const next = updateMarker(markers, i, { ...m, bpm: clampBpm(bpm) }, duration)
+  if (!next) return false
+  st().setMarkers(next, { draft: true })
+  return true
+}
+
+/**
+ * Keeps the previewed tempo map as one undo step from `from`. Does nothing once the preview is gone
+ * (an undo or another edit already replaced it).
+ */
+export function commitPreview(from: TempoMarker[]) {
+  const { markers, markersDraft } = st()
+  if (markersDraft) st().setMarkers(markers, { from })
+}
