@@ -50,6 +50,13 @@ def _check_adtof():
     drums.load_model("cpu")
 
 
+def _download_songformer():
+    """Weights from Hugging Face at pinned revisions; then load once so a broken install fails the build."""
+    import songformer
+    songformer.download()
+    songformer.load("cpu")
+
+
 def _download_beat_model():
     from beat_this.inference import Audio2Beats
     Audio2Beats(checkpoint_path="final0", device="cpu", dbn=False)
@@ -74,7 +81,14 @@ image = (
     .run_function(_download_scnet_weights)
     .add_local_python_source("drums", copy=True)
     .run_function(_check_adtof)
-    .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "btc")
+    # SongFormer song sections. Code vendored in songformer/ (CC-BY-4.0 head, MIT MuQ / MusicFM code);
+    # the MuQ weights are CC BY-NC 4.0 (non-commercial).
+    .pip_install("transformers==4.51.1", "x-transformers==2.4.14", "safetensors==0.5.3", "easydict==1.13")
+    .env({"HF_HOME": "/opt/hf", "SONGFORMER_DIR": "/opt/songformer"})
+    .add_local_python_source("songformer", copy=True)
+    .run_function(_download_songformer)
+    .env({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
+    .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "btc", "sections")
 )
 
 # GPU types in order of preference (comma-separated); Modal schedules on the first one with
@@ -184,5 +198,9 @@ def analysis_test(song_path: str, drums_path: str = ""):
         print("first 4 s:", {k: [t for t in v if t < 4] for k, v in res["drums"].items()})
     elif drums_path:
         print("drum hits: none (no drums detected, or transcription failed: see the container log)")
+    if res.get("sections"):
+        print("sections:", " | ".join(f"{s['start']:.1f}-{s['end']:.1f} {s['label']}" for s in res["sections"]))
+    else:
+        print("sections: none (detection failed: see the container log)")
     print("beats:", res["beats"][:12], "... n =", len(res["beats"]))
     print("downbeats:", res["downbeats"][:6], "... n =", len(res["downbeats"]))

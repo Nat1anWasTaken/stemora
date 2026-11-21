@@ -299,3 +299,36 @@ def test_drums_format_hits():
     assert out == {"kick": [0.5, 1.0, 2.0], "snare": [1.5, 2.5, 3.5], "hihat": [0.25, 0.75, 9.99], "tom": [], "cymbal": []}
     assert D.format_hits({"kick": np.arange(7) * 0.5}, 10.0) is None  # fewer than MIN_HITS
     assert D.format_hits({}, 10.0) is None
+
+
+def test_songformer_postprocess_segments():
+    from songformer import LABELS, NUM_CLASSES
+    from songformer.postprocess import FRAME_RATE, segments
+    T = int(60 * FRAME_RATE)
+    fn = np.full((T, NUM_CLASSES), -np.inf)
+    fn[:, list(LABELS)] = 0.0
+    edge = int(20 * FRAME_RATE)
+    fn[:edge, 1] = 5.0  # verse
+    fn[edge:, 2] = 5.0  # chorus
+    bd = -6.0 + np.random.default_rng(0).normal(0, 0.1, T)  # real activations are never flat
+    bd[edge] = 4.0
+    out = segments(fn, bd, LABELS)
+    assert out[0][0] == 0.0 and out[-1] == (len(bd) / FRAME_RATE, "end")
+    changes = [(t, lab) for i, (t, lab) in enumerate(out[:-1]) if i == 0 or out[i - 1][1] != lab]
+    assert [lab for _, lab in changes] == ["verse", "chorus"] and abs(changes[1][0] - 20.0) < 0.2
+
+
+def test_sections_tidy_snaps_and_folds():
+    import sections as S
+    downbeats = np.arange(0.4, 60.0, 2.0)  # 2 s bars from 0.4 s
+    raw = [(0.0, "silence"), (0.5, "intro"), (8.3, "verse"), (24.6, "chorus"), (25.4, "verse"),
+           (26.7, "chorus"), (40.2, "prechorus"), (40.5, "bogus"), (50.0, "outro"), (60.0, "end")]
+    out = S.tidy(raw, downbeats, 60.0)
+    assert out[0] == {"start": 0.0, "end": 8.4, "label": "intro"}  # leading 0.5 s of silence folded in
+    # On downbeats; the verse sliver is folded away, the unknown label dropped (prechorus runs on).
+    assert [s["label"] for s in out] == ["intro", "verse", "chorus", "prechorus", "outro"]
+    assert [s["start"] for s in out] == [0.0, 8.4, 26.4, 40.4, 50.4]
+    assert all(a["end"] == b["start"] for a, b in zip(out, out[1:])) and out[-1]["end"] == 60.0
+    # Boundaries far from any downbeat stay where the model put them.
+    assert [s["start"] for s in S.tidy([(0.0, "verse"), (30.0, "chorus"), (40.0, "end")], [], 40.0)] == [0.0, 30.0]
+    assert S.tidy([(0.0, "bogus"), (5.0, "end")], downbeats, 5.0) == []
