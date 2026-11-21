@@ -15,6 +15,7 @@ import {
 import { formatBpm } from "@/player/ui/use-playhead-tempo"
 import { flagLabel } from "@/player/ui/tempo-editor/render"
 import { Swap, ToolbarDivider } from "@/player/ui/workspace"
+import { TapTempoButton } from "@/player/ui/tempo-editor/tap-tempo-button"
 import { applyDetectedTempo, deleteMarker, nudgeMarker, replaceMarker, setBpm, setKind } from "@/player/ui/tempo-editor/actions"
 
 /** A text field that edits a value on Enter or blur and goes back to it on Escape or invalid input. */
@@ -237,6 +238,7 @@ export function DesktopToolbar({ c }: { c: EditorControls }) {
         <>
           {/* Keyed by marker so a draft never carries over to (and commits into) the next marker during playback. */}
           <BpmField key={`bpm-${i}`} bpm={m.bpm} inputRef={c.bpmRef} onCommit={(bpm) => setBpm(i, bpm)} />
+          <TapTempoButton key={`tap-${i}`} index={i} />
           <TimeSignatureField key={`ts-${i}`} value={m} onCommit={(s) => replaceMarker(i, { ...m, ...s })} />
           <Button variant="ghost" size="icon-sm" aria-label="Detected tempo" title="Detected tempo" disabled={!analysis} onClick={() => applyDetectedTempo(i)}><Sparkles /></Button>
         </>
@@ -283,7 +285,7 @@ export function MobileToolbar({ c, onMoveHere }: { c: EditorControls; onMoveHere
   )
 }
 
-/** Marker editor in a panel (a bottom sheet on phones): kind, BPM (−/+ by 1 and 0.1), meter, nudge, detected tempo, delete. */
+/** Marker editor in a panel (a bottom sheet on phones): kind, BPM (−/+ by 1 and 0.1, tap tempo), meter, nudge, detected tempo, delete. */
 function MarkerDrawer({ index, marker: m, children }: { index: number; marker: TempoMarker; children: React.ReactElement }) {
   const analysis = usePlayer((s) => s.analysis)
   const implicit = usePlayer((s) => isImplicitStart(s.markers, index))
@@ -320,6 +322,7 @@ function MarkerDrawer({ index, marker: m, children }: { index: number; marker: T
             <Button variant="ghost" size="icon-lg" aria-label="BPM +0.1" onClick={() => setBpm(index, m.bpm + 0.1)}>+.1</Button>
             <Button variant="secondary" size="icon-lg" aria-label="BPM +1" onClick={() => setBpm(index, m.bpm + 1)}><Plus /></Button>
           </Row>
+          <div className="flex justify-center"><TapTempoButton key={`tap-${index}`} index={index} large /></div>
           <div className="flex flex-col items-center gap-3">
             <TimeSignatureField key={`ts-${index}`} value={m} picker={false} onCommit={(s) => replaceMarker(index, { ...m, ...s })} />
             <TimeSignaturePicker value={m} onPick={(s) => replaceMarker(index, { ...m, ...s })} />
