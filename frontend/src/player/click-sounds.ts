@@ -12,7 +12,10 @@ export type ClickSound = {
   play: (ctx: BaseAudioContext, when: number, level: ClickVolume, dest: AudioNode) => AudioScheduledSourceNode
 }
 
-/** A short sine blip: higher on accents. */
+/** Peak gain of a click per level: soft clicks sit well under normal ones. */
+const LOUDNESS: Record<ClickVolume, number> = { accent: 1, normal: 1, soft: 0.3 }
+
+/** A short sine blip: higher on accents, quieter on soft clicks. */
 const classic: ClickSound = {
   id: "classic",
   label: "Classic",
@@ -21,7 +24,7 @@ const classic: ClickSound = {
     const env = ctx.createGain()
     osc.frequency.value = level === "accent" ? 1600 : 1000
     env.gain.setValueAtTime(0.0001, when)
-    env.gain.exponentialRampToValueAtTime(1, when + 0.002)
+    env.gain.exponentialRampToValueAtTime(LOUDNESS[level], when + 0.002)
     env.gain.exponentialRampToValueAtTime(0.0001, when + 0.05)
     osc.connect(env).connect(dest)
     osc.start(when)
