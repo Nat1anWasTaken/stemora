@@ -128,7 +128,8 @@ export function DrumNotation({ chart, prefs, breaks, onZoom }: {
     const color = (name: string) => lib.model.Color.fromJson(tokenColor(el, name))!
     const fg = color("--notation-foreground")
     const muted = color("--notation-muted")
-    Object.assign(display.resources, { mainGlyphColor: fg, secondaryGlyphColor: muted, staffLineColor: muted, barSeparatorColor: muted, barNumberColor: muted, scoreInfoColor: fg })
+    // Both voices (hands and kick) are equally important on a drum chart, so neither is greyed out.
+    Object.assign(display.resources, { mainGlyphColor: fg, secondaryGlyphColor: fg, staffLineColor: muted, barSeparatorColor: muted, barNumberColor: muted, scoreInfoColor: fg })
     // A phone with a fixed number of bars per row draws the rows at a readable size and scrolls sideways.
     if (!d && p.barsPerRow > 0) el.style.setProperty("--notation-width", `${Math.round((p.barsPerRow * BAR_WIDTH + ROW_EXTRA) * scale)}px`)
     else el.style.removeProperty("--notation-width")
