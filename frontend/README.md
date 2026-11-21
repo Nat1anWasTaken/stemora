@@ -34,8 +34,11 @@ React 19, TypeScript (strict), Vite, Tailwind CSS v4, shadcn/ui on Base UI, Reac
 ## Mobile player
 Two tabs that fit the screen without scrolling the page: **Mixer** (four stem rows with mute, volume, solo and a menu, plus an "All stems" reset) and **Practice** (metronome, 15 s loop sections, waveform). The transport row opens two sheets (popovers on desktop) with a swipeable tick dial: **Metronome** (click on/off and the song's tempo, in BPM when the analysis has one, else percent, 50-150 %) and **Song key** (±12 semitones; shows the analysed key and transposes the chord strip and chart). The full preset-chip row is shown only on desktop. Swipe the grab bar or header down to close the player (`use-sheet-drag.ts`).
 
+## Drum notation
+The Drums chart (`src/player/ui/drum-notation.tsx`) draws the quantised drum hits with alphaTab in two voices (hands stems up, kick stems down) and highlights the notes being played; while paused, the beat under the playhead stays marked, so tapping a note picks it. The settings popover holds the grid, triplets, bars per row and a light/dark sheet (per browser, `drums/notation-prefs.ts`). The line break button (desktop: B) starts a new row at the current bar; breaks belong to the song and are saved on the server (`PUT /api/songs/{id}/drum-breaks`) behind an optimistic update (`drums/use-drum-breaks.ts`). On a phone with a fixed bars-per-row the sheet keeps a readable width and scrolls both ways; pinch to zoom (`use-pinch-zoom.ts`). If drawing fails or stalls, a Retry button rebuilds alphaTab (and refetches its font).
+
 ## Shortcuts (desktop player)
-Space play/pause, Left/Right skip 10 s (Shift: 30 s), 1-4 pick a stem, M mute it, S solo it, L cycle loop (set A, set B, clear), Home restart.
+Space play/pause, Left/Right skip 10 s (Shift: 30 s), 1-4 pick a stem, M mute it, S solo it, L cycle loop (set A, set B, clear), C switch chords/drums, B line break in the drum notation, Home restart.
 
 ## Deployment
 `Dockerfile` builds the SPA and serves it with nginx (`nginx.conf`): history fallback, gzip, long cache for `/assets`, no-cache for `sw.js`, and `location /api/` proxied to `http://backend:8080` (1 MB body limit; files go directly to R2). The R2 bucket CORS must allow `PUT` from the site origin and **expose the `ETag` header**, otherwise multipart uploads cannot complete.

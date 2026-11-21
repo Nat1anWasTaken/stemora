@@ -55,7 +55,14 @@ export type SongQuery = { q?: string; sort?: SongSort; status?: SongStatus[]; cu
 /** One page of the library. */
 export type SongPage = { songs: Song[]; next_cursor: string | null; total: number }
 export type Stem = { name: StemName; url: string; size_bytes: number }
-export type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null }
+export type SongDetail = {
+  song: Song
+  stems: Stem[]
+  peaks_url: string | null
+  analysis_url: string | null
+  /** Bars that start a new row in the drum notation (sorted). Missing from older backends. */
+  drum_breaks?: number[]
+}
 export type Usage = { used_bytes: number; quota_bytes: number }
 export type Upload =
   | { mode: "single"; url: string; headers: Record<string, string> }
@@ -150,6 +157,7 @@ export const api = {
     request<Song>(`/songs/${id}/complete`, { method: "POST", body: parts ? { parts } : {} }),
   rename: (id: string, title: string) => request<Song>(`/songs/${id}`, { method: "PATCH", body: { title } }),
   remove: (id: string) => request<void>(`/songs/${id}`, { method: "DELETE" }),
+  setDrumBreaks: (id: string, bars: number[]) => request<{ bars: number[] }>(`/songs/${id}/drum-breaks`, { method: "PUT", body: { bars } }),
   reprocess: (id: string, model: Model) => request<Song>(`/songs/${id}/reprocess`, { method: "POST", body: { model } }),
   usage: () => request<Usage>("/me/usage"),
 }

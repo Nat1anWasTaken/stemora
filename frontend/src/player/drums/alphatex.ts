@@ -4,10 +4,10 @@ import type { QBar, QBeat } from "@/player/drums/quantize"
 /** GP7 percussion articulation ids (as alphaTab numbers them). The model's merged classes get the most common line. */
 const ARTICULATIONS: Record<DrumKind, number> = { kick: 36, snare: 38, hihat: 42, tom: 47, cymbal: 49 }
 /**
- * One voice for the whole kit, as most drum charts are written: a second (kick) voice would need rests on every
- * beat without a kick, and alphaTab places those above the staff.
+ * Two voices, as drum charts are written: hands (cymbals, toms, snare) with stems up, feet (kick) with stems down.
+ * The stem directions and the kick voice's rests are set on the loaded score (see `styleDrumScore`).
  */
-const VOICES: DrumKind[][] = [["cymbal", "hihat", "tom", "snare", "kick"]]
+export const VOICES: DrumKind[][] = [["cymbal", "hihat", "tom", "snare"], ["kick"]]
 
 export type FlatSyncPoint = { barIndex: number; barPosition: number; barOccurence: number; millisecondOffset: number }
 

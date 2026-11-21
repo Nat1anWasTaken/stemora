@@ -58,9 +58,14 @@ describe("quantize", () => {
 function parse(tex: string) {
   const imp = new alphaTab.importer.AlphaTexImporter()
   imp.initFromString(tex, new alphaTab.Settings())
-  const score = imp.readScore()
+  let score: alphaTab.model.Score | null = null
+  try {
+    score = imp.readScore()
+  } catch {
+    // the diagnostics below say why
+  }
   const diags = [...(imp.lexerDiagnostics ?? []), ...(imp.parserDiagnostics ?? []), ...(imp.semanticDiagnostics ?? [])].map((d) => d.message)
-  return { score, diags }
+  return { score: score!, diags }
 }
 
 describe("toAlphaTex", () => {
@@ -101,4 +106,76 @@ describe("toAlphaTex", () => {
     expect(diags).toEqual([])
     expect(score.masterBars.map((m) => m.timeSignatureNumerator)).toEqual([1, 3, 2])
   })
+})
+
+describe("long bars", () => {
+  it("cuts stretches without downbeats into bars of the song's meter", () => {
+    const beats = Array.from({ length: 40 }, (_, i) => i * 0.5)
+    const a = parseAnalysis({ version: 1, bpm: 120, beats_per_bar: 4, beats, downbeats: [], chords: [], drums: { kick: beats } })!
+    const bars = quantize(a, "auto", true, 20)
+    expect(bars.map((b) => b.beats.length)).toEqual(Array(10).fill(4))
+    const { score, diags } = parse(toAlphaTex(bars, 120).tex)
+    expect(diags).toEqual([])
+    expect(score.masterBars).toHaveLength(10)
+  })
+})
+
+describe("toAlphaTex fuzz", () => {
+  // Small seeded PRNG (mulberry32) so failures reproduce.
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const KINDS = ["kick", "snare", "hihat", "tom", "cymbal"] as const
+
+  for (let seed = 1; seed <= 60; seed++) {
+    it(`parses random songs cleanly (seed ${seed})`, () => {
+      const r = rng(seed)
+      // Drifting tempo, a pickup, meters of 1..7 beats, sometimes no downbeats at all.
+      const beats: number[] = []
+      let t = r() * 0.8
+      const n = 8 + Math.floor(r() * 60)
+      for (let i = 0; i < n; i++) {
+        beats.push(t)
+        t += 0.3 + r() * 0.4
+      }
+      const downbeats: number[] = []
+      if (r() > 0.1) {
+        let i = Math.floor(r() * 4)
+        while (i < beats.length) {
+          downbeats.push(beats[i])
+          i += 1 + Math.floor(r() * 7)
+        }
+      }
+      const end = t + r()
+      const drums: Record<string, number[]> = {}
+      for (const k of KINDS) {
+        const hits: number[] = []
+        const density = r() * 3
+        for (let x = r() * 0.5; x < end + 0.5; x += 0.02 + r() * (1 / (density + 0.1))) hits.push(x - 0.2)
+        if (r() > 0.2) drums[k] = hits
+      }
+      const a = parseAnalysis({ version: 1, bpm: r() > 0.2 ? 60 + r() * 120 : null, beats_per_bar: 4, beats, downbeats, chords: [], drums })
+      if (!a?.drums) return
+      for (const precision of ["auto", "8", "16", "32"] as const) {
+        for (const triplets of [true, false]) {
+          const bars = quantize(a, precision, triplets, end)
+          const { tex, syncPoints } = toAlphaTex(bars, a.bpm)
+          const { score, diags } = parse(tex)
+          expect(diags, `${precision} ${triplets}`).toEqual([])
+          expect(score.masterBars).toHaveLength(bars.length)
+          for (const bar of score.tracks[0].staves[0].bars) {
+            const expected = score.masterBars[bar.index].calculateDuration()
+            for (const voice of bar.voices) {
+              if (voice.isEmpty) continue
+              expect(voice.beats.reduce((s, b) => s + b.playbackDuration, 0), `${precision} ${triplets} bar ${bar.index}`).toBe(expected)
+            }
+          }
+          for (let i = 1; i < syncPoints.length; i++) expect(syncPoints[i].millisecondOffset).toBeGreaterThanOrEqual(syncPoints[i - 1].millisecondOffset)
+        }
+      }
+    })
+  }
 })

@@ -3,8 +3,11 @@ import { STEM_NAMES } from "@/player/mixer"
 import { usePlayer } from "@/player/store"
 import type { StemName } from "@/lib/api"
 
-/** Desktop keyboard shortcuts. `selected` is the stem that M / S act on (change it with 1-4); C switches the open chart. */
-export function useShortcuts(selected: StemName, select: (n: StemName) => void, cycleChart?: () => void) {
+/**
+ * Desktop keyboard shortcuts. `selected` is the stem that M / S act on (change it with 1-4); C switches the open chart;
+ * B toggles a line break before the bar at the playhead in the drum notation.
+ */
+export function useShortcuts(selected: StemName, select: (n: StemName) => void, cycleChart?: () => void, toggleBreak?: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -46,6 +49,10 @@ export function useShortcuts(selected: StemName, select: (n: StemName) => void, 
         case "C":
           cycleChart?.()
           break
+        case "b":
+        case "B":
+          toggleBreak?.()
+          break
         case "Home":
           st.seek(0)
           break
@@ -55,5 +62,5 @@ export function useShortcuts(selected: StemName, select: (n: StemName) => void, 
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selected, select, cycleChart])
+  }, [selected, select, cycleChart, toggleBreak])
 }

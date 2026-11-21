@@ -27,7 +27,7 @@ export function SongPage() {
     )
   }
   const { song } = data
-  if (song.status === "ready" && data.stems.length > 0) return <Player detail={data} />
+  if (song.status === "ready" && data.stems.length > 0) return <Player key={song.id} detail={data} />
   const importing = song.status === "importing"
 
   return (

@@ -6,6 +6,9 @@ export type Precision = "auto" | "8" | "16" | "32"
 export type QBeat = { time: number; end: number; grid: number; steps: DrumKind[][] }
 export type QBar = { bar: number; start: number; end: number; beats: QBeat[] }
 
+/** Longest bar written as one bar (in beats); longer stretches are cut into bars of the song's meter. */
+const MAX_BAR_BEATS = 16
+
 const STRAIGHT: Record<Exclude<Precision, "auto">, number> = { "8": 2, "16": 4, "32": 8 }
 /** Auto accepts a grid when every hit lies within this share of a step (and at most AUTO_MAX_S seconds) of one. */
 const AUTO_SHARE = 0.2
@@ -84,9 +87,19 @@ export function quantize(a: Analysis, precision: Precision, triplets: boolean, d
     if (!at.includes(kind)) at.push(kind)
   }
   let first = 0
-  return buildBars(buildCells(a), duration).map((bar) => {
-    const out = { bar: bar.bar, start: bar.start, end: bar.end, beats: qbeats.slice(first, first + bar.cells.length) }
+  const chunk = Math.min(MAX_BAR_BEATS, Math.max(1, a.beatsPerBar || 4))
+  return buildBars(buildCells(a), duration).flatMap((bar) => {
+    const all = qbeats.slice(first, first + bar.cells.length)
     first += bar.cells.length
+    if (all.length === 0) return []
+    if (all.length <= MAX_BAR_BEATS) return [{ bar: bar.bar, start: bar.start, end: bar.end, beats: all }]
+    // Stretches without downbeats would make one huge bar, which notation cannot hold (alphaTab allows up to 32/4):
+    // cut them into bars of the song's meter.
+    const out: QBar[] = []
+    for (let i = 0; i < all.length; i += chunk) {
+      const beats = all.slice(i, i + chunk)
+      out.push({ bar: bar.bar, start: beats[0].time, end: beats[beats.length - 1].end, beats })
+    }
     return out
   })
 }

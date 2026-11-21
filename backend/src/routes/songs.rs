@@ -1,7 +1,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/songs/{id}/complete", post(complete))
         .route("/songs/{id}/reprocess", post(reprocess))
         .route("/songs/{id}/cancel", post(cancel))
+        .route("/songs/{id}/drum-breaks", put(set_drum_breaks))
         .route("/songs/{id}/stems/{name}/download", get(download))
 }
 
@@ -688,6 +689,10 @@ async fn detail(
 ) -> AppResult<Json<Value>> {
     owned_song(&st.pool, u.id, id).await?;
     let song = live_view(&st, id).await?;
+    let drum_breaks: Vec<i32> = sqlx::query_scalar("SELECT drum_breaks FROM songs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&st.pool)
+        .await?;
     let (mut stems, mut peaks_url, mut analysis_url) = (Vec::new(), None, None);
     if song.status == SongStatus::Ready.as_str() {
         let rows: Vec<StemRow> = sqlx::query_as("SELECT * FROM stems WHERE song_id = $1")
@@ -707,7 +712,7 @@ async fn detail(
         );
     }
     Ok(Json(
-        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url}),
+        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks}),
     ))
 }
 
@@ -739,6 +744,51 @@ async fn rename(
         return Err(AppError::not_found());
     }
     Ok(Json(live_view(&st, id).await?))
+}
+
+/// Most line breaks one song may hold, and the highest bar index accepted.
+const MAX_DRUM_BREAKS: usize = 2000;
+const MAX_BAR_INDEX: i32 = 100_000;
+
+#[derive(Deserialize)]
+struct DrumBreaksReq {
+    bars: Vec<i64>,
+}
+
+/// Replace the song's drum-notation line breaks (whole set; the client sends the latest state).
+async fn set_drum_breaks(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(r): Json<DrumBreaksReq>,
+) -> AppResult<Json<Value>> {
+    let mut bars: Vec<i32> = r
+        .bars
+        .into_iter()
+        .filter(|&b| (1..i64::from(MAX_BAR_INDEX)).contains(&b))
+        .map(|b| b as i32)
+        .collect();
+    bars.sort_unstable();
+    bars.dedup();
+    if bars.len() > MAX_DRUM_BREAKS {
+        return Err(AppError::bad_request(
+            "too_many_breaks",
+            "too many line breaks",
+        ));
+    }
+    let n = sqlx::query(
+        "UPDATE songs SET drum_breaks = $3, updated_at = now() WHERE id = $1 AND user_id = $2",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(&bars)
+    .execute(&st.pool)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(AppError::not_found());
+    }
+    Ok(Json(json!({ "bars": bars })))
 }
 
 async fn remove(

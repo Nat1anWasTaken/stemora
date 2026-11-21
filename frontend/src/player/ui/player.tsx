@@ -14,10 +14,13 @@ import { useSongActions } from "@/lib/queries"
 import { STEM_NAMES } from "@/player/mixer"
 import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
 import { getPosition, usePlayer } from "@/player/store"
-import { ChartHeader, loadChart, saveChart, type Chart } from "@/player/ui/chart-header"
+import { ChartHeader, loadChart, saveChart, type Chart, type DrumControls } from "@/player/ui/chart-header"
 import { ChordGrid } from "@/player/ui/chord-grid"
 import { DrumNotation } from "@/player/ui/drum-notation"
+import { barIndexAt, useDrumChart } from "@/player/drums/chart"
+import { loadNotationPrefs, saveNotationPrefs, type NotationPrefs } from "@/player/drums/notation-prefs"
 import { loadPrecision, savePrecision, type DrumPrecision } from "@/player/drums/precision"
+import { useDrumBreaks } from "@/player/drums/use-drum-breaks"
 import { PresetChips } from "@/player/ui/preset-chips"
 import { PracticeStrip } from "@/player/ui/practice-strip"
 import { StemRow, triggerDownload } from "@/player/ui/stem-row"
@@ -92,11 +95,39 @@ export function Player({ detail }: { detail: SongDetail }) {
     setPrecisionState(p)
     savePrecision(p)
   }, [])
-  const chartView = chart === "drums" ? <DrumNotation precision={precision} /> : <ChordGrid />
+  const [notationPrefs, setNotationPrefsState] = useState<NotationPrefs>(loadNotationPrefs)
+  const setNotationPrefs = useCallback((p: NotationPrefs) => {
+    setNotationPrefsState(p)
+    saveNotationPrefs(p)
+  }, [])
+  const setZoom = useCallback((zoom: number) => setNotationPrefsState((p) => {
+    const next = { ...p, zoom }
+    saveNotationPrefs(next)
+    return next
+  }), [])
+  const drumChart = useDrumChart(precision)
+  const { breaks, toggle: toggleBreak } = useDrumBreaks(song.id, detail.drum_breaks)
+  const toggleBreakAtPlayhead = useCallback(() => {
+    if (!drumChart) return
+    const bar = barIndexAt(drumChart.bars, getPosition())
+    if (bar > 0) toggleBreak(bar)
+  }, [drumChart, toggleBreak])
+  const drums: DrumControls = {
+    precision,
+    onPrecision: setPrecision,
+    prefs: notationPrefs,
+    onPrefs: setNotationPrefs,
+    bars: drumChart?.bars ?? null,
+    breaks,
+    onToggleBreak: toggleBreak,
+  }
+  const chartView = chart === "drums"
+    ? <DrumNotation chart={drumChart} prefs={notationPrefs} breaks={breaks} onZoom={setZoom} />
+    : <ChordGrid />
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
-  useShortcuts(selected, select, tab === "chords" ? cycleChart : undefined)
+  useShortcuts(selected, select, tab === "chords" ? cycleChart : undefined, tab === "chords" && chart === "drums" ? toggleBreakAtPlayhead : undefined)
   useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)
 
@@ -169,7 +200,7 @@ export function Player({ detail }: { detail: SongDetail }) {
           {statusPanel ?? <PracticeStrip onExpand={toggleChords} />}
           {tab === "chords" ? (
             <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <ChartHeader chart={chart} onChart={setChart} onCollapse={() => setTab("practice")} precision={precision} onPrecision={setPrecision} />
+              <ChartHeader chart={chart} onChart={setChart} onCollapse={() => setTab("practice")} drums={drums} />
               {chartView}
             </div>
           ) : (
@@ -205,7 +236,7 @@ export function Player({ detail }: { detail: SongDetail }) {
           )}
           {tab === "chords" && (
             <div className="animate-page flex min-h-0 flex-1 flex-col gap-3">
-              <ChartHeader chart={chart} onChart={setChart} precision={precision} onPrecision={setPrecision} />
+              <ChartHeader chart={chart} onChart={setChart} drums={drums} />
               {chartView}
             </div>
           )}
@@ -232,7 +263,7 @@ export function Player({ detail }: { detail: SongDetail }) {
             ))}
           </div>
         </nav>
-        <p className="hidden pb-3 text-center text-xs text-muted-foreground md:block">Space play/pause · arrows skip 10s · 1-4 select stem · M mute · S solo · L loop{tab === "chords" ? " · C chords/drums" : ""}</p>
+        <p className="hidden pb-3 text-center text-xs text-muted-foreground md:block">Space play/pause · arrows skip 10s · 1-4 select stem · M mute · S solo · L loop{tab === "chords" ? " · C chords/drums" : ""}{tab === "chords" && chart === "drums" ? " · B line break" : ""}</p>
         <div className="h-1 md:hidden" />
         </div>
       </footer>
