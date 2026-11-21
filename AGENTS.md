@@ -14,4 +14,6 @@ Self-hosted Moises alternative: upload a song, split it into stems (vocals/drums
 - Use semantic theme tokens (`bg-card`, `text-muted-foreground`, `bg-stem`, `text-vocals`, ...) defined in `frontend/src/index.css`. Never use palette colours or arbitrary values.
 - Need a gradient, safe-area inset or other CSS that utilities cannot express? Add an `@utility` or token in `frontend/src/index.css` and use that class.
 - Components in `src/components/ui` own their look: add a variant there rather than restyling from call sites.
+- Overlays must work on phones: use `ActionMenu` (actions or a single choice) or `ResponsivePanel` (a panel of controls) from `src/components/app`. They render a dropdown/popover on desktop and a bottom drawer on mobile. Lint (`no-restricted-imports`) blocks importing `popover`, `dropdown-menu` or `drawer` anywhere else. Centred `Dialog`/`AlertDialog` are fine.
+- Never set a height or size on `Button`/`Toggle` (`size-*`, `h-*`, `min-h-*`): pick a size variant. The variants keep touch targets at 44px on touch screens (`pointer-coarse:`), and a `shadcn/no-restyle` contract enforces this.
 - Develop without the backend: `pnpm --dir frontend dev:mock` (login `dev@stemora.test` / `password`).

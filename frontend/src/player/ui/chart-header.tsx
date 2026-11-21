@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react"
 import { ChevronDown, Drum, LayoutGrid, Minimize2, Moon, Sun, Volume2, VolumeX, WrapText } from "lucide-react"
+import { ResponsivePanel } from "@/components/app/responsive-panel"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PRECISION_LABELS, PRECISIONS, type DrumPrecision } from "@/player/drums/precision"
@@ -47,50 +47,47 @@ function NotationSettings({ drums, compact }: { drums: DrumControls; compact: bo
   const { precision: value, onPrecision: onChange, prefs, onPrefs } = drums
   const label = PRECISION_LABELS[value.precision]
   return (
-    <Popover>
-      <PopoverTrigger
-        render={compact
-          ? <Button variant="toggle" size="icon-lg" aria-label={`Notation settings (grid: ${label})`} />
-          : <Button variant="toggle" size="sm" aria-label={`Notation settings (grid: ${label})`} />}
-      >
-        {compact ? <span className="text-xs font-semibold tabular-nums">{value.precision === "auto" ? "A" : value.precision}</span> : <>Grid: {label}<ChevronDown /></>}
-      </PopoverTrigger>
-      <PopoverContent className="w-80">
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">Notation grid</p>
-            <Tabs value={value.precision} onValueChange={(v) => onChange({ ...value, precision: v as Precision })}>
-              <TabsList variant="segmented" aria-label="Notation grid" className="w-full">
-                {PRECISIONS.map((p) => <TabsTrigger key={p} value={p}>{PRECISION_LABELS[p]}</TabsTrigger>)}
-              </TabsList>
-            </Tabs>
-            <p className="text-xs text-muted-foreground">Auto picks the simplest note values that fit each beat.</p>
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="drum-triplets">Triplets</Label>
-            <Switch id="drum-triplets" checked={value.triplets} onCheckedChange={(v) => onChange({ ...value, triplets: v })} />
-          </div>
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">Bars per row</p>
-            <Tabs value={String(prefs.barsPerRow)} onValueChange={(v) => onPrefs({ ...prefs, barsPerRow: Number(v) })}>
-              <TabsList variant="segmented" aria-label="Bars per row" className="w-full">
-                {BARS_PER_ROW.map((n) => <TabsTrigger key={n} value={String(n)}>{n === 0 ? "Auto" : n}</TabsTrigger>)}
-              </TabsList>
-            </Tabs>
-            <p className="text-xs text-muted-foreground">Start a new row at any bar with the line break button{compact ? "" : " (B)"}.</p>
-          </div>
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">Sheet</p>
-            <Tabs value={prefs.theme} onValueChange={(v) => onPrefs({ ...prefs, theme: v as NotationTheme })}>
-              <TabsList variant="segmented" aria-label="Sheet colours" className="w-full">
-                <TabsTrigger value="dark"><Moon />Dark</TabsTrigger>
-                <TabsTrigger value="light"><Sun />Light</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
+    <ResponsivePanel
+      title="Notation"
+      size="wide"
+      trigger={compact
+        ? <Button variant="toggle" size="icon-lg" aria-label={`Notation settings (grid: ${label})`}><span className="text-xs font-semibold tabular-nums">{value.precision === "auto" ? "A" : value.precision}</span></Button>
+        : <Button variant="toggle" size="sm" aria-label={`Notation settings (grid: ${label})`}>Grid: {label}<ChevronDown /></Button>}
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">Grid</p>
+          <Tabs value={value.precision} onValueChange={(v) => onChange({ ...value, precision: v as Precision })}>
+            <TabsList variant="segmented" aria-label="Notation grid" className="w-full">
+              {PRECISIONS.map((p) => <TabsTrigger key={p} value={p}>{PRECISION_LABELS[p]}</TabsTrigger>)}
+            </TabsList>
+          </Tabs>
+          <p className="text-xs text-muted-foreground">Auto picks the simplest note values that fit each beat.</p>
         </div>
-      </PopoverContent>
-    </Popover>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="drum-triplets">Triplets</Label>
+          <Switch id="drum-triplets" checked={value.triplets} onCheckedChange={(v) => onChange({ ...value, triplets: v })} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">Bars per row</p>
+          <Tabs value={String(prefs.barsPerRow)} onValueChange={(v) => onPrefs({ ...prefs, barsPerRow: Number(v) })}>
+            <TabsList variant="segmented" aria-label="Bars per row" className="w-full">
+              {BARS_PER_ROW.map((n) => <TabsTrigger key={n} value={String(n)}>{n === 0 ? "Auto" : n}</TabsTrigger>)}
+            </TabsList>
+          </Tabs>
+          <p className="text-xs text-muted-foreground">Start a new row at any bar with the line break button{compact ? "" : " (B)"}.</p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">Sheet</p>
+          <Tabs value={prefs.theme} onValueChange={(v) => onPrefs({ ...prefs, theme: v as NotationTheme })}>
+            <TabsList variant="segmented" aria-label="Sheet colours" className="w-full">
+              <TabsTrigger value="dark"><Moon />Dark</TabsTrigger>
+              <TabsTrigger value="light"><Sun />Light</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </div>
+    </ResponsivePanel>
   )
 }
 
