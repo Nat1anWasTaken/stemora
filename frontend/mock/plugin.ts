@@ -56,7 +56,7 @@ export function mockApi(): Plugin {
   const iso = (ms: number) => new Date(ms).toISOString()
   /** A manual marker's click pattern as the server keeps it: 1..32 beats of 1..8 known levels. */
   const validClicks = (c: unknown) =>
-    Array.isArray(c) && c.length >= 1 && c.length <= 32 && c.every((col) => Array.isArray(col) && col.length >= 1 && col.length <= 8 && col.every((l) => l === "accent" || l === "normal" || l === "muted"))
+    Array.isArray(c) && c.length >= 1 && c.length <= 32 && c.every((col) => Array.isArray(col) && col.length >= 1 && col.length <= 8 && col.every((l) => l === "accent" || l === "normal" || l === "soft" || l === "muted"))
   /** Tempo maps per song id (PUT /api/songs/{id}/tempo-markers). */
   const tempoMarkers = new Map<string, { time: number }[]>()
   /** Drum-notation line breaks (bar start times) per song id (PUT /api/songs/{id}/drum-breaks). */

@@ -177,7 +177,7 @@ describe("click patterns", () => {
   })
 
   it("cycles levels and stores only patterns that differ from the default", () => {
-    expect([cycleLevel("accent"), cycleLevel("normal"), cycleLevel("muted")]).toEqual(["normal", "muted", "accent"])
+    expect([cycleLevel("accent"), cycleLevel("normal"), cycleLevel("soft"), cycleLevel("muted")]).toEqual(["normal", "soft", "muted", "accent"])
     expect(setLevel(defaultPattern(2), 1, 0, "muted")).toEqual([["accent"], ["muted"]])
     expect(storedPattern(defaultPattern(4))).toBeUndefined()
     expect(storedPattern([["normal"]])).toEqual([["normal"]])

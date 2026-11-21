@@ -63,7 +63,7 @@ type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysi
 type TempoMarker = { time: number /* seconds */; kind: "auto" }
                  | { time: number; kind: "manual"; bpm: number /* 20..400, 0.01 steps, in `den` notes: 6/8 at 120 = 120 eighths a minute */;
                      num: number /* 1..32 */; den: 2 | 4 | 8 | 16;
-                     clicks?: ("accent"|"normal"|"muted")[][] /* metronome pattern: per beat of the bar (1..32), its 1..8 evenly spaced clicks, the beat first; absent = beat 1 accented, one click a beat */ }
+                     clicks?: ("accent"|"normal"|"soft"|"muted")[][] /* metronome pattern: per beat of the bar (1..32), its 1..8 evenly spaced clicks, the beat first; absent = beat 1 accented, one click a beat */ }
 type Usage = { used_bytes: number; quota_bytes: number }
 ```
 Auth:

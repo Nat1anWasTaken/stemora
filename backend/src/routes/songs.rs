@@ -855,7 +855,7 @@ fn click_pattern_ok(v: &Value) -> bool {
                 (1..=MAX_SUBDIVISIONS).contains(&subs.len())
                     && subs
                         .iter()
-                        .all(|l| matches!(l.as_str(), Some("accent" | "normal" | "muted")))
+                        .all(|l| matches!(l.as_str(), Some("accent" | "normal" | "soft" | "muted")))
             })
         })
 }
@@ -1056,7 +1056,7 @@ mod tests {
             m["clicks"] = clicks;
             tempo_marker(&m).unwrap().1
         };
-        let ok = json!([["accent", "muted"], ["normal"]]);
+        let ok = json!([["accent", "muted"], ["normal", "soft"]]);
         assert_eq!(with(ok.clone())["clicks"], ok);
         assert!(with(json!([["loud"]])).get("clicks").is_none());
         assert!(with(json!([[]])).get("clicks").is_none());

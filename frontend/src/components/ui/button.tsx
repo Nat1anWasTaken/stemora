@@ -25,9 +25,9 @@ const buttonVariants = cva(
         addon: "rounded-l-none border-input border-l-0 text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted dark:bg-input/30",
         /* Pill showing a value that opens its editor (tempo marker on phones) */
         chip: "rounded-full border-border bg-secondary/60 font-semibold tabular-nums text-foreground hover:bg-secondary",
-        /* One click of a metronome pattern, drawn as a dot by `data-level`: accent filled, normal a ring, muted a faint speck; `data-playing` marks the click sounding now */
+        /* One click of a metronome pattern, drawn as a dot by `data-level`: accent filled, normal a ring, soft a smaller thin ring, muted a faint speck; `data-playing` marks the click sounding now */
         click:
-          "rounded-full hover:bg-muted/60 after:block after:rounded-full after:transition-all after:duration-150 after:ease-spring data-[level=accent]:after:bg-primary data-[level=normal]:after:border-[3px] data-[level=normal]:after:border-muted-foreground data-[level=muted]:after:scale-40 data-[level=muted]:after:bg-muted-foreground/40 data-playing:after:scale-125 data-playing:after:ring-4 data-playing:after:ring-primary/35 data-[level=normal]:data-playing:after:border-foreground",
+          "rounded-full hover:bg-muted/60 after:block after:rounded-full after:transition-all after:duration-150 after:ease-spring data-[level=accent]:after:bg-primary data-[level=normal]:after:border-[3px] data-[level=normal]:after:border-muted-foreground data-[level=soft]:after:scale-70 data-[level=soft]:after:border-2 data-[level=soft]:after:border-muted-foreground data-[level=muted]:after:scale-40 data-[level=muted]:after:bg-muted-foreground/40 data-playing:after:scale-125 data-playing:after:ring-4 data-playing:after:ring-primary/35 data-[level=normal]:data-playing:after:border-foreground data-[level=soft]:data-playing:after:scale-100 data-[level=soft]:data-playing:after:border-foreground",
       },
       size: {
         default:

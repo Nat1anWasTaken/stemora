@@ -11,9 +11,9 @@ import { lastAtOrBefore, type Analysis } from "@/player/analysis"
  */
 export type AutoMarker = { time: number; kind: "auto" }
 /**
- * How loud one metronome click is. `muted` keeps its place in the pattern but makes no sound.
+ * How loud one metronome click is, loudest first. `muted` keeps its place in the pattern but makes no sound.
  */
-export type ClickLevel = "accent" | "normal" | "muted"
+export type ClickLevel = "accent" | "normal" | "soft" | "muted"
 /**
  * A manual marker's click pattern: one column per beat of the bar, each a list of the beat's evenly spaced clicks
  * (index 0 is the beat itself, the rest are its subdivisions). Absent means the default: beat 1 accented, one click a beat.
@@ -58,7 +58,7 @@ export function parseMarker(json: unknown): TempoMarker | null {
 
 // --- Click patterns ----------------------------------------------------------------------------------------------
 
-const LEVELS: readonly ClickLevel[] = ["accent", "normal", "muted"]
+const LEVELS: readonly ClickLevel[] = ["accent", "normal", "soft", "muted"]
 
 /** A well-formed click pattern from JSON (1..MAX_NUM beats of 1..MAX_SUBDIVISIONS known levels), or null. */
 export function parsePattern(json: unknown): ClickPattern | null {
@@ -75,7 +75,7 @@ export const defaultPattern = (num: number): ClickPattern => Array.from({ length
 export const patternFor = (m: ManualMarker): ClickPattern =>
   Array.from({ length: m.num }, (_, i) => (m.clicks?.[i] ? [...m.clicks[i]] : defaultColumn(i)))
 
-/** accent → normal → muted → accent. */
+/** accent → normal → soft → muted → accent. */
 export const cycleLevel = (l: ClickLevel): ClickLevel => LEVELS[(LEVELS.indexOf(l) + 1) % LEVELS.length]
 
 /** Sets the level of one click. */
