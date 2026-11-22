@@ -9,6 +9,9 @@ import { defineConfig, globalIgnores } from "eslint/config"
 const overlayMessage =
   "Phones need a bottom sheet: use ActionMenu (a list of actions or a single choice) or ResponsivePanel (a panel of controls) from src/components/app instead of the Popover/DropdownMenu/Drawer primitives."
 
+const shortcutMessage =
+  "Keyboard shortcuts are commands: register them with useCommands (src/hooks/use-commands.ts) so they show up in the command palette. Keys a focused widget handles itself belong in its onKeyDown."
+
 const designMessage =
   "Stemora design rules: use semantic tokens (bg-card, text-muted-foreground, bg-stem, ...) and component variants. Tokens and custom utilities (@utility) live in src/index.css; add one there instead of using raw values."
 
@@ -46,6 +49,13 @@ export default defineConfig([
       "shadcn/no-inline-styles": "error",
       "shadcn/no-unknown-classes": "error",
       "shadcn/require-static-classes": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.property.name='addEventListener'][arguments.0.value=/^key(down|up|press)$/]",
+          message: shortcutMessage,
+        },
+      ],
       "no-restricted-imports": [
         "error",
         {
@@ -59,6 +69,11 @@ export default defineConfig([
     // The responsive wrappers are the only app code that may use the overlay primitives directly
     files: ["src/components/ui/**", "src/components/app/action-menu.tsx", "src/components/app/responsive-panel.tsx"],
     rules: { "no-restricted-imports": "off" },
+  },
+  {
+    // The command palette owns the app's one keyboard listener
+    files: ["src/components/app/command-palette.tsx"],
+    rules: { "no-restricted-syntax": "off" },
   },
   {
     // Component sources own their styling (shadcn convention)

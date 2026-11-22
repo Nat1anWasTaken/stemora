@@ -16,4 +16,5 @@ Self-hosted Moises alternative: upload a song, split it into stems (vocals/drums
 - Components in `src/components/ui` own their look: add a variant there rather than restyling from call sites.
 - Overlays must work on phones: use `ActionMenu` (actions or a single choice) or `ResponsivePanel` (a panel of controls) from `src/components/app`. They render a dropdown/popover on desktop and a bottom drawer on mobile. Lint (`no-restricted-imports`) blocks importing `popover`, `dropdown-menu` or `drawer` anywhere else. Centred `Dialog`/`AlertDialog` are fine.
 - Never set a height or size on `Button`/`Toggle` (`size-*`, `h-*`, `min-h-*`): pick a size variant. The variants keep touch targets at 44px on touch screens (`pointer-coarse:`), and a `shadcn/no-restyle` contract enforces this.
+- Keyboard shortcuts are commands: register them with `useCommands` (`src/hooks/use-commands.ts`) so they appear in the command palette (Ctrl/⌘+K). Never add a window `keydown` listener (lint blocks it); a focused widget's own keys go in its `onKeyDown`.
 - Develop without the backend: `pnpm --dir frontend dev:mock` (login `dev@stemora.test` / `password`).

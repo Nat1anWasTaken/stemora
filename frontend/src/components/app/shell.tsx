@@ -1,13 +1,16 @@
-import { Library, ListOrdered, LogOut, Plus, RotateCw, UserRound, Users, WifiOff } from "lucide-react"
+import { Library, ListOrdered, LogOut, Plus, RotateCw, Search, UserRound, Users, WifiOff } from "lucide-react"
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
+import { PALETTE_SHORTCUT, toggleCommandPalette } from "@/components/app/command-palette"
 import { Logo } from "@/components/app/logo"
 import { PageTransition } from "@/components/app/page-transition"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { useCommands } from "@/hooks/use-commands"
 import { api } from "@/lib/api"
+import { formatShortcut, type Command } from "@/lib/commands"
 import { formatBytes } from "@/lib/format"
 import { keys, useMe, useUsage } from "@/lib/queries"
 import { useQueue } from "@/lib/queue"
@@ -79,11 +82,25 @@ export function AppShell() {
     qc.setQueryData(keys.me, null)
     nav("/login", { replace: true })
   }
+  const go = (id: string, title: string, to: string, keywords: string[] = []): Command => ({ id: `nav.${id}`, title, group: "Go to", keywords, run: () => nav(to) })
+  useCommands(() => [
+    go("library", "Library", "/", ["songs", "home"]),
+    go("upload", "Upload song", "/upload", ["add", "import", "link", "file"]),
+    go("queue", "Queue", "/queue", ["processing", "jobs"]),
+    ...(admin ? [go("invites", "Invites", "/admin/invites", ["users", "admin"])] : []),
+    go("account", "Account", "/account", ["settings", "storage", "install", "update"]),
+    { id: "app.sign-out", title: "Sign out", group: "General", keywords: ["log out", "logout"], run: () => void logout() },
+  ])
   return (
     <div className="min-h-app md:flex">
       <aside className="hidden w-64 shrink-0 flex-col gap-6 border-r border-sidebar-border bg-sidebar p-4 md:sticky md:top-0 md:flex md:h-app">
         <Logo className="px-2 pt-2" />
         <Button size="lg" render={<NavLink to="/upload" />}><Plus />Upload song</Button>
+        <Button variant="search" onClick={toggleCommandPalette} aria-label="Search commands" aria-keyshortcuts="Control+K Meta+K">
+          <Search />
+          <span className="flex-1 text-left">Search commands</span>
+          <kbd className="text-xs">{formatShortcut(PALETTE_SHORTCUT)}</kbd>
+        </Button>
         <nav className="flex flex-col gap-1" aria-label="Main">
           <NavLink to="/" end className={linkClass}><Library className="size-5" />Library</NavLink>
           <NavLink to="/queue" className={linkClass}><ListOrdered className="size-5" />Queue<QueueCount count={count} /></NavLink>

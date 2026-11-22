@@ -21,6 +21,8 @@ const buttonVariants = cva(
         cell: "flex-col items-start border-border bg-secondary/60 text-foreground hover:bg-secondary aria-pressed:border-primary/60 aria-pressed:bg-primary/10",
         play: "bg-primary text-primary-foreground glow-primary hover:bg-primary/90",
         link: "text-primary underline-offset-4 hover:underline",
+        /* Looks like a search field; opens the command palette */
+        search: "justify-start border-border bg-background font-normal text-muted-foreground hover:bg-muted hover:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         /* Opens a picker for the input it is joined to (the input uses `attached`) */
         addon: "rounded-l-none border-input border-l-0 text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted dark:bg-input/30",
         /* Pill showing a value that opens its editor (tempo marker on phones) */
