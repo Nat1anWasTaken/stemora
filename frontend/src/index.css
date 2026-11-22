@@ -211,6 +211,8 @@
 @utility pl-safe { padding-left: env(safe-area-inset-left); }
 @utility pr-safe { padding-right: env(safe-area-inset-right); }
 @utility pb-nav { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }
+/* The command palette sits near the top on phones so the on-screen keyboard never covers it. */
+@utility top-safe-dialog { top: calc(env(safe-area-inset-top) + 1rem); }
 @utility bottom-nav { bottom: calc(env(safe-area-inset-bottom) + 0.75rem); }
 
 /* Full-height app shell using dynamic viewport units */

@@ -26,7 +26,7 @@ import { SectionBar } from "@/player/ui/section-bar"
 import { MixerTools, StemRow, triggerDownload } from "@/player/ui/stem-row"
 import { SeekBar, Transport } from "@/player/ui/transport"
 import { useSheetDrag } from "@/player/ui/use-sheet-drag"
-import { useShortcuts } from "@/player/ui/use-shortcuts"
+import { usePlayerCommands } from "@/player/ui/use-player-commands"
 import { TempoEditor } from "@/player/ui/tempo-editor/tempo-editor"
 import { Swap, WorkspaceToolbar } from "@/player/ui/workspace"
 import { useTempoMarkers } from "@/player/use-tempo-markers"
@@ -136,7 +136,6 @@ export function Player({ detail }: { detail: SongDetail }) {
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
-  useShortcuts(selected, select, practice ? cycleChart : undefined, practice && chart === "drums" ? toggleBreakAtPlayhead : undefined, desktop ? toggleView : undefined)
   useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)
 
@@ -167,6 +166,8 @@ export function Player({ detail }: { detail: SongDetail }) {
     { key: "sep", separator: true },
     { key: "delete", label: "Delete song", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(true) },
   ]
+
+  usePlayerCommands({ selected, select, desktop, view, toggleView, tab, setTab, practice, chart, cycleChart, toggleBreak: toggleBreakAtPlayhead, close, menu: entries })
 
   // Loading/error state, floating over the bottom of the view until the stems are ready.
   const statusPanel = status === "loading" || status === "idle" ? (

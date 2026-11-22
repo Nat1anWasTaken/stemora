@@ -4,6 +4,8 @@ import { effectiveGain, STEM_NAMES } from "@/player/mixer"
 import { getBuffers, getPosition, usePlayer } from "@/player/store"
 import { canDeleteMarker, markerIndexAt, moveMarker, snapTime, type TempoMarker } from "@/player/tempo-map"
 import { waveOf, type Wave } from "@/player/waveform-data"
+import { useCommands } from "@/hooks/use-commands"
+import type { Command } from "@/lib/commands"
 import { addMarker, deleteMarker, locateMarker, moveMarkerTo, nudgeMarker } from "@/player/ui/tempo-editor/actions"
 import { DesktopToolbar, MobileToolbar, type EditorControls } from "@/player/ui/tempo-editor/marker-inspector"
 import { drawOverlay, drawScene, LOOP_H, readColors, RULER_H, TEMPO_H, type Colors, type FlagBox } from "@/player/ui/tempo-editor/render"
@@ -451,39 +453,38 @@ export function TempoEditor({ centered, toolbar }: { centered: boolean; toolbar:
     if (i !== false) setPinned(i)
   }, [])
 
-  // Desktop keys (the transport's own keys are in use-shortcuts).
-  useEffect(() => {
-    if (centered) return
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null
-      if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.isContentEditable || t?.closest('[role="dialog"],[role="menu"]')) return
-      const st = usePlayer.getState()
-      if (st.status !== "ready") return
-      const mod = e.metaKey || e.ctrlKey
-      const i = live.current.pinned ?? markerIndexAt(st.markers, getPosition())
-      const k = e.key.toLowerCase()
-      let handled = true
-      if (mod && k === "z") (e.shiftKey ? st.redo : st.undo)()
-      else if (mod && k === "y") st.redo()
-      else if (mod && (e.key === "ArrowLeft" || e.key === "ArrowRight")) nudgeMarker(i, e.key === "ArrowLeft" ? -1 : 1, e.shiftKey ? 0.01 : 0.001)
-      else if (mod || e.altKey) handled = false
-      else if (k === "g") view.current?.zoom(1 / 1.6)
-      else if (k === "h") view.current?.zoom(1.6)
-      else if (k === "f" && e.shiftKey) view.current?.fit()
-      else if (k === "f") setFollowing((f) => !f)
-      else if (k === "t") add()
-      else if ((e.key === "Delete" || e.key === "Backspace") && canDeleteMarker(st.markers, i)) {
-        if (deleteMarker(i)) setPinned(null)
-      } else if (e.key === "Enter" && st.markers[i]?.kind === "manual") bpmRef.current?.focus()
-      else if (e.key === "Escape") setPinned(null)
-      else if (k === "n" && e.shiftKey) locate(1)
-      else if (k === "b" && e.shiftKey) locate(-1)
-      else handled = false
-      if (handled) e.preventDefault()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [centered, add, locate])
+  // Desktop keys and palette commands (the transport's are in use-player-commands).
+  const markerIndex = () => live.current.pinned ?? markerIndexAt(usePlayer.getState().markers, getPosition())
+  const ready = () => usePlayer.getState().status === "ready"
+  const G = "Tempo editor"
+  const nudge = (dir: -1 | 1, step: number): Command => ({
+    id: `tempo.nudge-${dir < 0 ? "left" : "right"}${step > 0.001 ? "-10" : ""}`,
+    title: `Nudge marker ${dir < 0 ? "earlier" : "later"} (${step * 1000} ms, a beat when locked)`,
+    group: G,
+    keywords: ["move", "marker"],
+    shortcut: `${step > 0.001 ? "Mod+Shift" : "Mod"}+${dir < 0 ? "ArrowLeft" : "ArrowRight"}`,
+    repeat: true,
+    enabled: ready,
+    run: () => nudgeMarker(markerIndex(), dir, step),
+  })
+  useCommands(!centered && (() => [
+    { id: "tempo.undo", title: "Undo tempo edit", group: G, shortcut: "Mod+Z", repeat: true, enabled: () => ready() && usePlayer.getState().canUndo, run: () => usePlayer.getState().undo() },
+    { id: "tempo.redo", title: "Redo tempo edit", group: G, shortcut: ["Mod+Shift+Z", "Mod+Y"], repeat: true, enabled: () => ready() && usePlayer.getState().canRedo, run: () => usePlayer.getState().redo() },
+    { id: "tempo.add-marker", title: "Add tempo marker at the playhead", group: G, keywords: ["new", "bpm"], shortcut: "T", enabled: ready, run: add },
+    { id: "tempo.edit-bpm", title: "Edit marker BPM", group: G, keywords: ["tempo"], shortcut: "Enter", enabled: () => ready() && usePlayer.getState().markers[markerIndex()]?.kind === "manual", run: () => bpmRef.current?.focus() },
+    { id: "tempo.delete-marker", title: "Delete tempo marker", group: G, keywords: ["remove"], shortcut: ["Delete", "Backspace"], enabled: () => ready() && canDeleteMarker(usePlayer.getState().markers, markerIndex()), run: () => { if (deleteMarker(markerIndex())) setPinned(null) } },
+    { id: "tempo.next-marker", title: "Next tempo marker", group: G, keywords: ["go to", "locate"], shortcut: "Shift+N", enabled: ready, run: () => locate(1) },
+    { id: "tempo.previous-marker", title: "Previous tempo marker", group: G, keywords: ["go to", "locate"], shortcut: "Shift+B", enabled: ready, run: () => locate(-1) },
+    { id: "tempo.release", title: "Release marker selection", group: G, keywords: ["deselect", "unpin"], shortcut: "Escape", enabled: () => live.current.pinned !== null, run: () => setPinned(null) },
+    nudge(-1, 0.001),
+    nudge(1, 0.001),
+    nudge(-1, 0.01),
+    nudge(1, 0.01),
+    { id: "tempo.zoom-out", title: "Zoom out", group: G, shortcut: "G", repeat: true, enabled: ready, run: () => view.current?.zoom(1 / 1.6) },
+    { id: "tempo.zoom-in", title: "Zoom in", group: G, shortcut: "H", repeat: true, enabled: ready, run: () => view.current?.zoom(1.6) },
+    { id: "tempo.fit", title: "Show the whole song", group: G, keywords: ["zoom", "fit"], shortcut: "Shift+F", enabled: ready, run: () => view.current?.fit() },
+    { id: "tempo.follow", title: following ? "Stop following playback" : "Follow playback", group: G, keywords: ["scroll", "playhead"], shortcut: "F", enabled: ready, run: () => setFollowing((f) => !f) },
+  ]), "view")
 
   const controls: EditorControls = useMemo(() => ({
     active,

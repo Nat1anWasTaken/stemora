@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import "./index.css"
 import { PwaManager } from "@/components/app/pwa"
+import { CommandPalette } from "@/components/app/command-palette"
 import { AppErrorBoundary } from "@/components/app/error-boundary"
 import { NavDirection } from "@/components/app/page-transition"
 import { AppShell, RequireAuth } from "@/components/app/shell"
@@ -32,6 +33,7 @@ createRoot(document.getElementById("root")!).render(
       <AppErrorBoundary>
         <BrowserRouter>
           <NavDirection />
+          <CommandPalette />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/bootstrap" element={<BootstrapPage />} />
