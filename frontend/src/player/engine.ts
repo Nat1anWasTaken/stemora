@@ -25,12 +25,6 @@ export type StemSource = { name: StemName; url: string }
 /** How far ahead clicks are put on the audio clock, and how often the scheduler looks. */
 const CLICK_AHEAD = 0.15
 const CLICK_EVERY = 25
-/**
- * How far ahead clicks are put while the page is hidden. Phones keep the audio clock running in the background (see
- * keepAlive) but throttle or freeze page timers, so a short lookahead would leave the metronome silent; this runs it
- * from the audio clock alone for a long stretch. Any change (seek, pause, tempo) still silences and re-plans them.
- */
-const CLICK_AHEAD_HIDDEN = 120
 
 type StemNode = { name: StemName; buffer: AudioBuffer; gain: GainNode; source: AudioBufferSourceNode | null }
 
@@ -66,7 +60,11 @@ export class StemEngine {
   private soundReady: Promise<void> | null = null
   private soundDone: () => boolean = () => false
   private metroGain: GainNode | null = null
-  private onVisibility = () => this.pumpClicks()
+  /**
+   * The metronome is silent while the page is hidden: phones keep the audio clock running in the background (see
+   * keepAlive) but throttle or freeze page timers, which would make the clicks stutter. It picks up again on return.
+   */
+  private onVisibility = () => this.rescheduleClicks()
   duration = 0
   onEnded: (() => void) | null = null
   /** Called if the stretcher fails to start after loadShifter reported it available. */
@@ -438,8 +436,8 @@ export class StemEngine {
   /** Puts the clicks heard between `metroUntil` and a little ahead of now on the audio clock. */
   private pumpClicks() {
     const ctx = this.ctx
-    if (!ctx || !this.playing || !this.metroOn || !this.soundLoaded()) return
-    const until = ctx.currentTime + (document.hidden ? CLICK_AHEAD_HIDDEN : CLICK_AHEAD)
+    if (!ctx || !this.playing || !this.metroOn || document.hidden || !this.soundLoaded()) return
+    const until = ctx.currentTime + CLICK_AHEAD
     if (until <= this.metroUntil) return
     const from = Math.max(this.metroUntil, this.startedAt)
     const raw = (t: number) => this.offset + (t - this.startedAt) * this.speed
