@@ -21,7 +21,8 @@ const MIN_AMP = 0.5
 const MAX_AMP = 8
 
 type Gesture =
-  | { kind: "marker"; index: number; from: TempoMarker[]; x0: number; moved: boolean; last: TempoMarker[] | null }
+  // `grab`: how far (px) right of the marker line the press landed, so the marker keeps that offset to the pointer.
+  | { kind: "marker"; index: number; from: TempoMarker[]; x0: number; grab: number; moved: boolean; last: TempoMarker[] | null }
   | { kind: "loop"; anchor: number; a: number; b: number; x0: number }
   | { kind: "edge"; which: "a" | "b"; a: number; b: number }
   | { kind: "seek" }
@@ -211,7 +212,7 @@ export function TempoEditor({ centered, toolbar }: { centered: boolean; toolbar:
           window.setTimeout(() => bpmRef.current?.focus(), 0)
           return
         }
-        if (flag > 0) gesture = { kind: "marker", index: flag, from: st.markers, x0: x, moved: false, last: null }
+        if (flag > 0) gesture = { kind: "marker", index: flag, from: st.markers, x0: x, grab: x - timeToX(vp, st.markers[flag].time), moved: false, last: null }
         return
       }
       if (y >= RULER_H && y < RULER_H + TEMPO_H) {
@@ -254,7 +255,8 @@ export function TempoEditor({ centered, toolbar }: { centered: boolean; toolbar:
         if (!gesture.moved && Math.abs(x - gesture.x0) < SLOP) return
         gesture.moved = true
         ov.style.cursor = "grabbing"
-        const next = moveMarker(gesture.from, gesture.index, t, dur())
+        // Relative to where it was grabbed: pressing the flag away from its line must not snap the marker to the pointer.
+        const next = moveMarker(gesture.from, gesture.index, clampT(xToTime(vp, x - gesture.grab)), dur())
         if (next) {
           gesture.last = next
           st.setMarkers(next, { draft: true })
