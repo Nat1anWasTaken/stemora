@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router"
-import { AudioWaveform, ChevronDown, Download, LayoutGrid, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
+import { AudioWaveform, ChevronDown, Download, FileMusic, LayoutGrid, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
@@ -12,6 +12,7 @@ import { useThemeColor } from "@/hooks/use-theme-color"
 import { HQ_MODEL, isHighQuality, stemDownloadUrl, type SongDetail } from "@/lib/api"
 import { formatClock } from "@/lib/format"
 import { useSongActions } from "@/lib/queries"
+import { tempoMidi } from "@/player/midi"
 import { STEM_NAMES } from "@/player/mixer"
 import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
 import { getPosition, usePlayer } from "@/player/store"
@@ -158,9 +159,20 @@ export function Player({ detail }: { detail: SongDetail }) {
     STEM_NAMES.forEach((n, i) => setTimeout(() => triggerDownload(stemDownloadUrl(song.id, n, format)), i * 700))
   }
 
+  const hasGrid = usePlayer((s) => s.grid.beats.length > 0)
+  const exportTempo = () => {
+    const { grid, duration, analysis } = usePlayer.getState()
+    const bytes = tempoMidi(grid, duration, { title: song.title, sections: analysis?.sections })
+    if (!bytes) return
+    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/midi" }))
+    triggerDownload(url, `${song.title.replace(/[\\/:*?"<>|]/g, "-")} - tempo.mid`)
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
   const entries: MenuEntry[] = [
     { key: "dl-m4a", label: "Download all stems (M4A)", icon: <Download />, onSelect: () => downloadAll("m4a") },
     { key: "dl-flac", label: "Download all stems (FLAC)", icon: <Download />, onSelect: () => downloadAll("flac") },
+    { key: "dl-tempo", label: "Export tempo map (MIDI)", icon: <FileMusic />, disabled: !hasGrid, onSelect: exportTempo },
     ...(song.model !== HQ_MODEL ? [{ key: "hq", label: "Reprocess in high quality", icon: <Sparkles />, onSelect: () => setReproc(true) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     { key: "sep", separator: true },
