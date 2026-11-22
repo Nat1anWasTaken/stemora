@@ -3,7 +3,7 @@ import { LocateFixed, Music } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { sectionsByBar } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
-import { BarBeats, useBeats } from "@/player/ui/beats"
+import { BarBeats, useBeats, useSections } from "@/player/ui/beats"
 import { cn } from "@/lib/utils"
 
 /**
@@ -12,12 +12,12 @@ import { cn } from "@/lib/utils"
  * song part starts carries its name.
  */
 export function ChordGrid() {
-  const sections = usePlayer((s) => s.analysis?.sections)
+  const sections = useSections()
   const playing = usePlayer((s) => s.playing)
   const loop = usePlayer((s) => s.loop)
   const { seek, setLoop, clearLoop } = usePlayer.getState()
   const { cells, bars, active } = useBeats()
-  const partAt = useMemo(() => sectionsByBar(sections ?? [], bars), [sections, bars])
+  const partAt = useMemo(() => sectionsByBar(sections, bars), [sections, bars])
   // The grid can shrink (a tempo map undo) a frame before `active` catches up, so check it against the current cells.
   const current = active >= 0 && active < cells.length ? cells[active] : null
   const activeBar = current?.bar ?? null

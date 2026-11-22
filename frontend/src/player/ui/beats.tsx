@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { buildBars, buildCells, lastAtOrBefore, splitChord, transposeChord, type Bar } from "@/player/analysis"
+import { buildBars, buildCells, lastAtOrBefore, snapSections, splitChord, transposeChord, type Bar, type Section } from "@/player/analysis"
 import { getPosition, usePlayer } from "@/player/store"
 import { cn } from "@/lib/utils"
 
@@ -20,6 +20,13 @@ export function useBeats() {
   const times = useMemo(() => cells.map((c) => c.time), [cells])
   const active = useActiveBeat(times)
   return { cells, bars, times, active }
+}
+
+/** The song's parts, with their boundaries on the bar lines of the beat grid (tempo map) as it is now. */
+export function useSections(): Section[] {
+  const sections = usePlayer((s) => s.analysis?.sections)
+  const grid = usePlayer((s) => s.grid)
+  return useMemo(() => snapSections(sections ?? [], grid), [sections, grid])
 }
 
 /** Beat index under the playhead (-1 before the first beat), checked every frame so it changes exactly on the beat. */

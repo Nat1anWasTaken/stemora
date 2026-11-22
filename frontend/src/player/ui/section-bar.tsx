@@ -6,7 +6,7 @@ import { formatClock } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Section } from "@/player/analysis"
 import { usePlayer } from "@/player/store"
-import { useActiveBeat } from "@/player/ui/beats"
+import { useActiveBeat, useSections } from "@/player/ui/beats"
 import { PresetChips } from "@/player/ui/preset-chips"
 
 const isLooped = (loop: { a: number; b: number } | null, s: Section) => !!loop && Math.abs(loop.a - s.start) < 0.05 && Math.abs(loop.b - s.end) < 0.05
@@ -17,8 +17,8 @@ const isLooped = (loop: { a: number; b: number } | null, s: Section) => !!loop &
  * Songs without detected parts keep the mix presets in this row.
  */
 export function SectionBar() {
-  const sections = usePlayer((s) => s.analysis?.sections)
-  if (!sections?.length) return <PresetChips />
+  const sections = useSections()
+  if (!sections.length) return <PresetChips />
   return <Sections sections={sections} />
 }
 
