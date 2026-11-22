@@ -25,6 +25,12 @@ export type StemSource = { name: StemName; url: string }
 /** How far ahead clicks are put on the audio clock, and how often the scheduler looks. */
 const CLICK_AHEAD = 0.15
 const CLICK_EVERY = 25
+/**
+ * Lookahead while the page is hidden. Desktop browsers keep page timers running in background tabs but may slow them
+ * to about once a second, so this covers a throttled tick with room to spare. Runtimes that freeze timers instead
+ * (Safari on iOS) are caught by the stall check in pumpClicks.
+ */
+const CLICK_AHEAD_HIDDEN = 1.5
 
 type StemNode = { name: StemName; buffer: AudioBuffer; gain: GainNode; source: AudioBufferSourceNode | null }
 
@@ -61,10 +67,16 @@ export class StemEngine {
   private soundDone: () => boolean = () => false
   private metroGain: GainNode | null = null
   /**
-   * The metronome is silent while the page is hidden: phones keep the audio clock running in the background (see
-   * keepAlive) but throttle or freeze page timers, which would make the clicks stutter. It picks up again on return.
+   * Set when a hidden page's timers fell behind the clicks already planned. Some runtimes (Safari on iOS) keep the
+   * audio clock running in the background (see keepAlive) but freeze or heavily throttle page timers, which would make
+   * the clicks stutter; there the metronome stays silent until the page is visible again. Desktop browsers keep up, so
+   * it keeps clicking. Decided from how the timers actually behave rather than from the user agent.
    */
-  private onVisibility = () => this.rescheduleClicks()
+  private timersStalled = false
+  private onVisibility = () => {
+    this.timersStalled = false
+    this.rescheduleClicks()
+  }
   duration = 0
   onEnded: (() => void) | null = null
   /** Called if the stretcher fails to start after loadShifter reported it available. */
@@ -436,8 +448,16 @@ export class StemEngine {
   /** Puts the clicks heard between `metroUntil` and a little ahead of now on the audio clock. */
   private pumpClicks() {
     const ctx = this.ctx
-    if (!ctx || !this.playing || !this.metroOn || document.hidden || !this.soundLoaded()) return
-    const until = ctx.currentTime + CLICK_AHEAD
+    if (!ctx || !this.playing || !this.metroOn || !this.soundLoaded()) return
+    if (document.hidden) {
+      if (this.timersStalled) return
+      // The planned clicks ran out before this tick came: timers can't keep up in the background here.
+      if (ctx.currentTime > this.metroUntil) {
+        this.timersStalled = true
+        return
+      }
+    }
+    const until = ctx.currentTime + (document.hidden ? CLICK_AHEAD_HIDDEN : CLICK_AHEAD)
     if (until <= this.metroUntil) return
     const from = Math.max(this.metroUntil, this.startedAt)
     const raw = (t: number) => this.offset + (t - this.startedAt) * this.speed
