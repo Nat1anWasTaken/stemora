@@ -60,6 +60,11 @@ export class StemEngine {
   private soundReady: Promise<void> | null = null
   private soundDone: () => boolean = () => false
   private metroGain: GainNode | null = null
+  /**
+   * The metronome is silent while the page is hidden: phones keep the audio clock running in the background (see
+   * keepAlive) but throttle or freeze page timers, which would make the clicks stutter. It picks up again on return.
+   */
+  private onVisibility = () => this.rescheduleClicks()
   duration = 0
   onEnded: (() => void) | null = null
   /** Called if the stretcher fails to start after loadShifter reported it available. */
@@ -84,6 +89,7 @@ export class StemEngine {
       this.metroGain = this.ctx.createGain()
       this.metroGain.gain.value = 0.5
       this.metroGain.connect(this.master)
+      document.addEventListener("visibilitychange", this.onVisibility)
     }
     return this.ctx
   }
@@ -430,7 +436,7 @@ export class StemEngine {
   /** Puts the clicks heard between `metroUntil` and a little ahead of now on the audio clock. */
   private pumpClicks() {
     const ctx = this.ctx
-    if (!ctx || !this.playing || !this.metroOn || !this.soundLoaded()) return
+    if (!ctx || !this.playing || !this.metroOn || document.hidden || !this.soundLoaded()) return
     const until = ctx.currentTime + CLICK_AHEAD
     if (until <= this.metroUntil) return
     const from = Math.max(this.metroUntil, this.startedAt)
@@ -478,6 +484,7 @@ export class StemEngine {
   }
 
   dispose() {
+    document.removeEventListener("visibilitychange", this.onVisibility)
     this.stopSources()
     this.stopMetronome()
     this.playing = false
