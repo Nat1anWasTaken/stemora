@@ -9,10 +9,11 @@ import { cn } from "@/lib/utils"
 
 const ICONS = { vocals: Mic, drums: Drum, bass: Guitar, other: Music } as const
 
-export function triggerDownload(url: string) {
+/** Downloads `url`; `filename` names it (same-origin and blob URLs only, the server's name otherwise). */
+export function triggerDownload(url: string, filename = "") {
   const a = document.createElement("a")
   a.href = url
-  a.download = ""
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   a.remove()
