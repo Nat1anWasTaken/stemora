@@ -89,6 +89,30 @@ export function parseSections(json: unknown): Section[] {
 }
 
 /**
+ * The parts with each boundary moved to the nearest bar line of the beat grid (the tempo map as it is now, edits
+ * included), so jumps and loops land on a bar. The song's start stays where it is, and the pickup's first beat is not
+ * a bar line. A part whose boundaries meet on one bar line drops out, and its neighbours close the gap. Without bars
+ * the parts are returned as they are.
+ */
+export function snapSections(sections: Section[], grid: BeatGrid): Section[] {
+  const lines = grid.bars.filter((b) => b.bar > 0).map((b) => b.start)
+  if (sections.length === 0 || lines.length === 0) return sections
+  const nearest = (t: number) => {
+    const i = lastAtOrBefore(lines, t)
+    if (i < 0) return lines[0]
+    if (i + 1 >= lines.length) return lines[i]
+    return t - lines[i] <= lines[i + 1] - t ? lines[i] : lines[i + 1]
+  }
+  const starts: number[] = []
+  sections.forEach((s, i) => starts.push(i === 0 ? s.start : Math.max(starts[i - 1], nearest(s.start))))
+  return sections.flatMap((s, i) => {
+    const start = starts[i]
+    const end = i + 1 < sections.length ? starts[i + 1] : s.end
+    return end - start > 1e-6 ? [{ ...s, start, end }] : []
+  })
+}
+
+/**
  * The section that starts inside each bar, keyed by the bar's start time. A section start that is not on a bar line
  * (no downbeat near it) is shown on the bar it falls in.
  */

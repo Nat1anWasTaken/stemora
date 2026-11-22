@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { lastAtOrBefore, sectionsByBar } from "@/player/analysis"
+import { lastAtOrBefore, sectionsByBar, snapSections } from "@/player/analysis"
 import { toAlphaTex, type FlatSyncPoint } from "@/player/drums/alphatex"
 import type { DrumPrecision } from "@/player/drums/precision"
 import { quantize, type QBar } from "@/player/drums/quantize"
@@ -14,7 +14,7 @@ export function useDrumChart(precision: DrumPrecision): DrumChart | null {
   return useMemo(() => {
     if (!analysis?.drums || grid.beats.length === 0) return null
     const bars = quantize(analysis, precision.precision, precision.triplets, grid)
-    const byStart = sectionsByBar(analysis.sections, bars)
+    const byStart = sectionsByBar(snapSections(analysis.sections, grid), bars)
     const marks = new Map<number, string>()
     bars.forEach((b, i) => {
       const part = byStart.get(b.start)
