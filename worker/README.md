@@ -3,7 +3,7 @@
 Stem separation on Modal with Demucs (`htdemucs`) or SCNet (`scnet_xl_ihf`, the "High quality" option). Interface: `../docs/contract.md`.
 
 - `app.py` Modal app `stemora`: image, GPU function `separate`, `spawn` web endpoint, `local_test` entrypoint
-- `analysis.py` beats/bars/chords (Beat This!, BTC); `drums.py` drum hits (ADTOF) on the drums stem; `sections.py` song parts (SongFormer, vendored in `songformer/`) snapped to the bar grid
+- `analysis.py` beats/bars/chords (Beat This!, lv-chordia); `drums.py` drum hits (ADTOF) on the drums stem; `sections.py` song parts (SongFormer, vendored in `songformer/`) snapped to the bar grid
 - `runner.py` job orchestration; `pipeline.py` probe/decode/separate/encode/peaks/upload; `scnet/` vendored SCNet network + checkpoint registry (MIT, from ZFTurbo/Music-Source-Separation-Training); `webhook.py` payloads, retries, heartbeat; `schema.py` request validation
 
 ## Setup

@@ -211,7 +211,7 @@ Stemora's own code is distributed under the GNU Affero General Public License v3
 > the ADTOF drum transcription weights (CC BY-NC-SA 4.0) and the MuQ encoder weights used for section detection (CC BY-NC 4.0).
 > A commercial deployment has to remove or replace those features. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-Code vendored under `worker/btc/`, `worker/scnet/` and `worker/songformer/` keeps its original license, included next to it.
+Code vendored under `worker/scnet/` and `worker/songformer/` keeps its original license, included next to it.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -234,7 +234,7 @@ Stemora stands on the work of these research projects; please cite them if you b
 * [Demucs](https://github.com/facebookresearch/demucs) (Défossez et al.): source separation
 * [SCNet](https://arxiv.org/abs/2401.13276) (Tong et al.) via [Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (ZFTurbo): high-quality separation
 * [Beat This!](https://github.com/CPJKU/beat_this) (Foscarin et al., CPJKU): beat and downbeat tracking
-* [BTC](https://github.com/jayg996/BTC-ISMIR19) (Park et al.): chord recognition
+* [Large-Vocabulary Chord Transcription](https://github.com/music-x-lab/ISMIR2019-Large-Vocabulary-Chord-Recognition) (Jiang et al.) via [lv-chordia](https://github.com/openmirlab/lv-chordia): chord recognition
 * [ADTOF](https://github.com/MZehren/ADTOF) (Zehren, Alunno, Bientinesi) via [ADTOF-pytorch](https://github.com/xavriley/ADTOF-pytorch): drum transcription
 * [SongFormer](https://github.com/ASLP-lab/SongFormer) (Hao et al.) with [MuQ](https://github.com/tencent-ailab/MuQ) and [MusicFM](https://github.com/minzwon/musicfm): song sections
 * [alphaTab](https://alphatab.net), [Signalsmith Stretch](https://signalsmith-audio.co.uk/code/stretch/), [shadcn/ui](https://ui.shadcn.com), [Base UI](https://base-ui.com), [Lucide](https://lucide.dev)
