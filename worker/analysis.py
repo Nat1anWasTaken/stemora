@@ -1,30 +1,21 @@
 """Beat / bar / chord analysis. Output is the `analysis.json` structure from docs/contract.md.
 
-Beats and downbeats come from the Beat This! model, chords from the BTC transformer
-(large vocabulary: maj/min/7/maj7/min7/dim/sus...), both run on the full mix. BTC's frame
-probabilities are averaged per beat and decoded with a Viterbi pass that charges for every
-chord change (less on downbeats), so the chart does not flicker between close candidates. Drum onsets (`drums.py`, ADTOF) come from the separated drums
-stem when one is given; song sections (`sections.py`, SongFormer) from the full mix. Heavy
-imports are lazy; the helpers need only numpy.
+Beats and downbeats come from the Beat This! model, chords from lv-chordia (Jiang et al., ISMIR 2019:
+a five-model CNN ensemble over a CQT, decoded by an HMM over a 25-quality chord dictionary), both
+run on the full mix. The HMM already yields stable segments; they are mapped to the contract's
+labels and snapped to the beat grid. Drum onsets (`drums.py`, ADTOF) come from the separated drums
+stem when one is given; song sections (`sections.py`, SongFormer) from the full mix. Heavy imports
+are lazy; the helpers need only numpy.
 """
-import os
 import traceback
 
 import numpy as np
 
 SR = 44100
 VERSION = 1
-BTC_SR = 22050
-BTC_DIR = os.environ.get("BTC_DIR", "/opt/btc")
-BTC_CKPT = "btc_model_large_voca.pt"
-BTC_CFG = dict(feature_size=144, timestep=108, num_chords=170, input_dropout=0.2, layer_dropout=0.2,
-               attention_dropout=0.2, relu_dropout=0.2, num_layers=8, num_heads=4, hidden_size=128,
-               total_key_depth=128, total_value_depth=128, filter_size=128, probs_out=False)
-BTC_HOP, BTC_CHUNK_S = 2048, 10.0
-BTC_FPS = BTC_SR / BTC_HOP  # frames per second of the chord model
+CHORD_SR = 22050  # lv-chordia's input rate
 
 ROOTS = ("C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B")
-QUALITIES = ("m", "", "dim", "aug", "m6", "6", "m7", "mMaj7", "maj7", "7", "dim7", "m7b5", "sus2", "sus4")
 # Chord tones (semitones above the root) per quality, for key estimation.
 INTERVALS = {"m": (0, 3, 7), "": (0, 4, 7), "dim": (0, 3, 6), "aug": (0, 4, 8), "m6": (0, 3, 7, 9), "6": (0, 4, 7, 9),
              "m7": (0, 3, 7, 10), "mMaj7": (0, 3, 7, 11), "maj7": (0, 4, 7, 11), "7": (0, 4, 7, 10),
@@ -34,17 +25,29 @@ MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 
 MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 
 
-def btc_labels() -> list[str]:
-    """Label for each of BTC's 170 classes (index = root*14 + quality, 168 = X, 169 = N)."""
-    return [ROOTS[i // 14] + QUALITIES[i % 14] for i in range(168)] + ["N", "N"]
+# lv-chordia speaks Harte syntax ("C#:min7", "Ab:maj/3", "G:sus4(b7)"). Its qualities, mapped to the
+# contract's suffixes; extensions fold to the seventh chord under them.
+HARTE_QUALITY = {"maj": "", "min": "m", "7": "7", "maj7": "maj7", "min7": "m7", "dim": "dim", "aug": "aug",
+                 "dim7": "dim7", "hdim7": "m7b5", "sus2": "sus2", "sus4": "sus4", "sus4(b7)": "sus4",
+                 "maj6": "6", "min6": "m6", "minmaj7": "mMaj7", "9": "7", "11": "7", "13": "7",
+                 "maj9": "maj7", "min9": "m7"}
+HARTE_ROOT = {"C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab", "A#": "Bb", "Cb": "B", "Fb": "E", "E#": "F", "B#": "C"}
 
 
-# Viterbi cost (in log-probability) of changing chord at a beat, by position in the bar. A change
-# has to be backed by that much extra evidence over the beats that follow, so one-beat flickers
-# vanish and changes gravitate to bar lines, where chords usually move.
-CHANGE_COST_DOWNBEAT = 0.5
-CHANGE_COST_HALF_BAR = 1.5
-CHANGE_COST_OTHER = 3.0
+def harte_to_label(harte: str) -> str:
+    """"F#:min7" -> "Gbm7"; "C:maj/b7" -> "C7" (a b7 in the bass is still a seventh); other inversions
+    drop the bass ("Ab:maj/3" -> "Ab"). Anything unparseable is "N"."""
+    if not harte or harte in ("N", "X") or ":" not in harte:
+        return "N"
+    root, _, rest = harte.partition(":")
+    quality, _, bass = rest.partition("/")
+    root = HARTE_ROOT.get(root, root)
+    if root not in ROOTS or quality not in HARTE_QUALITY:
+        return "N"
+    suffix = HARTE_QUALITY[quality]
+    if bass == "b7" and suffix in ("", "m"):
+        suffix += "7"
+    return root + suffix
 
 
 def beat_edges(beats: np.ndarray, duration: float) -> list[float]:
@@ -55,61 +58,21 @@ def beat_edges(beats: np.ndarray, duration: float) -> list[float]:
     return edges + [duration]
 
 
-def beat_probs(frame_probs: np.ndarray, edges: list[float]) -> np.ndarray:
-    """Mean frame probability inside each [edges[i], edges[i+1]) interval -> (len(edges)-1, classes)."""
-    n = len(frame_probs)
-    out = np.empty((len(edges) - 1, frame_probs.shape[1]))
-    for k, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
-        i0 = min(int(a * BTC_FPS), n - 1)
-        i1 = min(max(i0 + 1, int(b * BTC_FPS)), n)
-        out[k] = frame_probs[i0:i1].mean(axis=0)
-    return out
-
-
-def change_costs(starts: list[float], beats: np.ndarray, downbeats: np.ndarray) -> np.ndarray:
-    """Cost of a chord change at the start of each segment (see CHANGE_COST_*)."""
-    pos, sig = _bar_numbers(np.asarray(beats, dtype=float), np.asarray(downbeats, dtype=float))
-    by_time = {round(float(b), 3): p for b, p in zip(beats, pos)}
-    half = sig // 2 + 1 if sig % 2 == 0 and sig >= 4 else None
-    costs = []
-    for t in starts:
-        p = by_time.get(round(float(t), 3), 0)
-        costs.append(CHANGE_COST_DOWNBEAT if p == 1 else CHANGE_COST_HALF_BAR if p == half else CHANGE_COST_OTHER)
-    return np.array(costs)
-
-
-def viterbi(log_obs: np.ndarray, costs: np.ndarray) -> np.ndarray:
-    """Best state path where staying is free and switching into segment t costs costs[t]."""
-    n, k = log_obs.shape
-    score = log_obs[0].copy()
-    back = np.zeros((n, k), dtype=np.int64)
-    for t in range(1, n):
-        best = int(score.argmax())
-        switch = score[best] - costs[t]
-        stay = score >= switch
-        back[t] = np.where(stay, np.arange(k), best)
-        score = np.where(stay, score, switch) + log_obs[t]
-    path = np.empty(n, dtype=np.int64)
-    path[-1] = int(score.argmax())
-    for t in range(n - 1, 0, -1):
-        path[t - 1] = back[t, path[t]]
-    return path
-
-
-def chords_to_beats(frame_probs: np.ndarray, beats: np.ndarray, downbeats: np.ndarray,
-                    duration: float) -> tuple[list[float], list[str]]:
-    """Per-beat chord labels from BTC frame probabilities -> (segment starts, labels).
-
-    BTC's "unknown chord" class (X) is folded into N: the contract has no X and the player shows
-    both as no chord."""
-    probs = np.asarray(frame_probs, dtype=float)
-    probs = np.concatenate([probs[:, :168], probs[:, 168:].sum(axis=1, keepdims=True)], axis=1)
-    names = btc_labels()[:169]
+def chords_to_beats(segments: list[dict], beats: np.ndarray, duration: float) -> tuple[list[float], list[str]]:
+    """Free-timed chord segments -> (beat starts, labels): each beat gets the chord covering most of it."""
     edges = beat_edges(beats, duration)
-    starts = edges[:-1]
-    obs = np.log(beat_probs(probs, edges) + 1e-9)
-    path = viterbi(obs, change_costs(starts, beats, downbeats))
-    return starts, [names[i] for i in path]
+    labels = []
+    j = 0
+    for a, b in zip(edges[:-1], edges[1:]):
+        while j < len(segments) and segments[j]["end"] <= a:
+            j += 1
+        cover: dict[str, float] = {}
+        for seg in segments[j:]:
+            if seg["start"] >= b:
+                break
+            cover[seg["label"]] = cover.get(seg["label"], 0.0) + min(b, seg["end"]) - max(a, seg["start"])
+        labels.append(max(cover, key=cover.get) if cover else "N")
+    return edges[:-1], labels
 
 
 def merge_chords(times: list[float], labels: list[str], end: float) -> list[dict]:
@@ -214,42 +177,28 @@ def detect_beats(mono_44k: np.ndarray, device: str | None = None):
     return beats, snap_downbeats(beats, downbeats)
 
 
-def detect_chords(mix_mono_44k: np.ndarray, device: str | None = None) -> np.ndarray:
-    """BTC large-vocabulary chord recognition. Returns class probabilities, (frames at BTC_FPS, 170)."""
+def detect_chords(mix_mono_44k: np.ndarray, device: str | None = None) -> list[dict]:
+    """lv-chordia on the mix -> [{"start", "end", "label"}] in contract labels, free-timed."""
+    import tempfile
+
     import librosa
+    import soundfile as sf
     import torch
-    from btc.model import BTC_model
+    from lv_chordia.chord_recognition import chord_recognition
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    y = librosa.resample(mix_mono_44k, orig_sr=SR, target_sr=BTC_SR)
-    # The model was trained on CQTs computed per 10 s chunk; mirror that exactly.
-    step = int(BTC_SR * BTC_CHUNK_S)
-    parts = [librosa.cqt(y[i:i + step], sr=BTC_SR, n_bins=144, bins_per_octave=24, hop_length=BTC_HOP)
-             for i in range(0, max(len(y), 1), step) if len(y[i:i + step]) > 0]
-    feat = np.log(np.abs(np.concatenate(parts, axis=1)) + 1e-6).T
-    ckpt = torch.load(os.path.join(BTC_DIR, BTC_CKPT), map_location=device)
-    model = BTC_model(config=BTC_CFG).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    feat = (feat - ckpt["mean"]) / ckpt["std"]
-    ts = BTC_CFG["timestep"]
-    n_frames = feat.shape[0]
-    feat = np.pad(feat, ((0, -n_frames % ts), (0, 0)))
-    x = torch.tensor(feat, dtype=torch.float32, device=device).reshape(-1, ts, feat.shape[1])
-    preds = []
-    with torch.no_grad():
-        for i in range(0, x.shape[0], 16):
-            attn, _ = model.self_attn_layers(x[i:i + 16])
-            logits = model.output_layer.output_projection(attn)
-            preds.append(torch.softmax(logits, -1).reshape(-1, logits.shape[-1]).cpu().numpy())
-    return np.concatenate(preds)[:n_frames]
+    y = librosa.resample(mix_mono_44k, orig_sr=SR, target_sr=CHORD_SR)
+    with tempfile.NamedTemporaryFile(suffix=".wav") as f:  # its API reads a file
+        sf.write(f.name, y, CHORD_SR, subtype="FLOAT")
+        res = chord_recognition(audio_path=f.name, chord_dict_name="submission", device=device)
+    return [{"start": r["start_time"], "end": r["end_time"], "label": harte_to_label(r["chord"])} for r in res]
 
 
 def analyse(mix_mono: np.ndarray, duration: float, device: str | None = None,
             drums_mono: np.ndarray | None = None) -> dict:
     beats, downbeats = detect_beats(mix_mono, device)
-    frames = detect_chords(mix_mono, device)
-    starts, labels = chords_to_beats(frames, beats, downbeats, duration)
+    segments = detect_chords(mix_mono, device)
+    starts, labels = chords_to_beats(segments, beats, duration)
     out = build_analysis(beats, downbeats, merge_chords(starts, labels, duration), duration)
     if drums_mono is not None:
         # Separate best-effort step: a drum failure keeps the beats and chords.

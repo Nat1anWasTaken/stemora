@@ -253,55 +253,31 @@ def test_reporter_monotonic():
     assert sent[-1]["progress"] == 50
 
 
-def test_btc_labels_and_beat_snapping():
+def test_harte_to_label():
     import analysis as A
-    labels = A.btc_labels()
-    assert len(labels) == 170 and labels[8 * 14 + 8] == "Abmaj7" and labels[10 * 14 + 1] == "Bb" and labels[169] == "N"
-    frames = _frames([("C", 2.0), ("Gm7", 2.0)])
-    beats = np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5])
-    starts, labs = A.chords_to_beats(frames, beats, beats[::4], 4.0)
-    assert labs[0] == "C" and labs[-1] == "Gm7"
-    merged = A.merge_chords(starts, labs, 4.0)
-    assert [c["label"] for c in merged] == ["C", "Gm7"] and merged[0]["end"] == merged[1]["start"]
+    cases = {"C:maj": "C", "A:min": "Am", "F#:min7": "Gbm7", "C#:7": "Db7", "Bb:maj7": "Bbmaj7", "B:hdim7": "Bm7b5",
+             "E:dim7": "Edim7", "G:sus4(b7)": "Gsus4", "D:9": "D7", "D:maj9": "Dmaj7", "D:min9": "Dm7", "A:13": "A7",
+             "Ab:maj/3": "Ab", "C:min/5": "Cm", "C:maj/b7": "C7", "C:min/b7": "Cm7", "N": "N", "X": "N", "": "N",
+             "H:maj": "N", "C:weird": "N"}
+    for harte, label in cases.items():
+        assert A.harte_to_label(harte) == label, harte
+        assert label == "N" or A.parse_chord(label), label
 
 
-def _frames(spans, p=0.6):
-    """BTC-like frame probabilities per (label or {label: prob}, seconds) span; the rest is spread evenly."""
+def test_chords_snap_to_beats():
     import analysis as A
-    idx = {lab: i for i, lab in enumerate(A.btc_labels()[:168])} | {"N": 169, "X": 168}
-    rows = []
-    for lab, secs in spans:
-        mix = lab if isinstance(lab, dict) else {lab: p}
-        row = np.full(170, (1 - sum(mix.values())) / (170 - len(mix)))
-        for name, q in mix.items():
-            row[idx[name]] = q
-        rows += [row] * int(round(secs * A.BTC_FPS))
-    return np.array(rows)
-
-
-def test_chord_decoding_ignores_flicker_and_prefers_bar_lines():
-    import analysis as A
-    beats = np.arange(0.0, 8.0, 0.5)  # 120 bpm, 4/4: bars at 0, 2, 4, 6
-    downbeats = beats[::4]
-    # One beat where Am narrowly beats C, inside a bar of C, is dropped...
-    frames = _frames([("C", 1.0), ({"Am": 0.4, "C": 0.3}, 0.5), ("C", 2.5), ("G", 4.0)])
-    starts, labs = A.chords_to_beats(frames, beats, downbeats, 8.0)
+    beats = np.arange(0.5, 8.0, 0.5)
+    # Model boundaries fall between beats; a 0.2 s blip inside a beat loses to the chord around it.
+    segs = [{"start": 0.0, "end": 2.1, "label": "C"}, {"start": 2.1, "end": 3.3, "label": "Am"},
+            {"start": 3.3, "end": 3.5, "label": "E"}, {"start": 3.5, "end": 4.6, "label": "Am"},
+            {"start": 4.6, "end": 8.0, "label": "F"}]
+    starts, labs = A.chords_to_beats(segs, beats, 8.0)
     merged = A.merge_chords(starts, labs, 8.0)
-    assert [c["label"] for c in merged] == ["C", "G"] and merged[1]["start"] == 4.0
-    # ...but a change that holds for bars is kept, and lands on the bar line.
-    frames = _frames([("F", 2.0), ("Bb", 2.0), ("F", 4.0)])
-    starts, labs = A.chords_to_beats(frames, beats, downbeats, 8.0)
-    assert [(c["label"], c["start"]) for c in A.merge_chords(starts, labs, 8.0)] == [("F", 0.0), ("Bb", 2.0), ("F", 4.0)]
-    # Unknown (X) and no chord both come out as N.
-    starts, labs = A.chords_to_beats(_frames([("X", 4.0), ("N", 4.0)]), beats, downbeats, 8.0)
-    assert set(labs) == {"N"}
-
-
-def test_viterbi_switch_cost():
-    import analysis as A
-    obs = np.log(np.array([[0.9, 0.1], [0.4, 0.6], [0.9, 0.1]]))
-    assert A.viterbi(obs, np.array([0.0, 2.0, 2.0])).tolist() == [0, 0, 0]
-    assert A.viterbi(obs, np.array([0.0, 0.0, 0.0])).tolist() == [0, 1, 0]
+    assert [(c["label"], c["start"]) for c in merged] == [("C", 0.0), ("Am", 2.0), ("F", 4.5)]
+    assert all(a["end"] == b["start"] for a, b in zip(merged, merged[1:])) and merged[-1]["end"] == 8.0
+    # No beats / no segments still covers the whole song.
+    starts, labs = A.chords_to_beats([], np.array([]), 4.0)
+    assert A.merge_chords(starts, labs, 4.0) == [{"start": 0.0, "end": 4.0, "label": "N"}]
 
 
 def test_build_analysis():

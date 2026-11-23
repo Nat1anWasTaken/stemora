@@ -15,7 +15,6 @@ These are downloaded by `worker/app.py` at image build time. Their licenses forb
 
 | Directory | Origin | License |
 | --- | --- | --- |
-| `worker/btc/` | [jayg996/BTC-ISMIR19](https://github.com/jayg996/BTC-ISMIR19), Copyright (c) 2019 Jonggwon Park | MIT |
 | `worker/scnet/` | [ZFTurbo/Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) @ 6fdad13, Copyright (c) 2024 Roman Solovyev | MIT |
 | `worker/songformer/` | [ASLP-lab/SongFormer](https://github.com/ASLP-lab/SongFormer) | CC BY 4.0 |
 | `worker/songformer/muq/` | [tencent-ailab/MuQ](https://github.com/tencent-ailab/MuQ), Copyright (c) Tencent | MIT |
@@ -29,13 +28,13 @@ Each directory contains the original `LICENSE` file.
 | --- | --- |
 | [Demucs](https://github.com/facebookresearch/demucs) code and `htdemucs` weights | MIT |
 | SCNet `scnet_xl_ihf` checkpoint (ZFTurbo release v1.0.15) | MIT (repository license) |
-| [BTC](https://github.com/jayg996/BTC-ISMIR19) `btc_model_large_voca.pt` | MIT (repository license) |
+| [lv-chordia](https://github.com/openmirlab/lv-chordia) code and bundled weights (Jiang et al., Music X Lab) | MIT |
 | [Beat This!](https://github.com/CPJKU/beat_this) code and `final0` checkpoint | MIT |
 | [SongFormer](https://huggingface.co/ASLP-lab/SongFormer) weights | CC BY 4.0 |
 | [MusicFM](https://huggingface.co/minzwon/MusicFM) weights | see the model card |
 | PyTorch, torchaudio | BSD-3-Clause |
 | librosa | ISC |
-| NumPy, pretty_midi, FastAPI, einops, x-transformers, rotary-embedding-torch, easydict | MIT / BSD |
+| NumPy, pretty_midi, pydub, FastAPI, einops, x-transformers, rotary-embedding-torch, easydict | MIT / BSD |
 | transformers, safetensors, boto3, requests, Modal client | Apache-2.0 |
 
 ## Backend image

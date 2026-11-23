@@ -30,15 +30,15 @@ def _download_scnet_weights():
             raise RuntimeError(f"{name}: checkpoint sha256 {digest} != {spec['sha256']}")
 
 
-BTC_COMMIT = "2682317be668032e6e4b269ded36adaa2ad57df0"
+# lv-chordia chord recognition (MIT, weights bundled). Installed without deps: its metadata asks for
+# torch>=2.13, but the inference code runs as-is on the image's torch 2.4.1.
+LV_CHORDIA_COMMIT = "d8ab9ac99bce081bb79065d717f96e2c3b2099c8"
 
 
-def _download_btc_weights():
-    import os
-    import urllib.request
-    os.makedirs("/opt/btc", exist_ok=True)
-    url = f"https://github.com/jayg996/BTC-ISMIR19/raw/{BTC_COMMIT}/test/btc_model_large_voca.pt"
-    urllib.request.urlretrieve(url, "/opt/btc/btc_model_large_voca.pt")
+def _check_lv_chordia():
+    """Load the bundled ensemble once so a broken install fails the build, not the first job."""
+    from lv_chordia.chord_recognition import load_ensemble
+    load_ensemble(use_gpu=False)
 
 
 ADTOF_COMMIT = "85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9"
@@ -76,7 +76,9 @@ image = (
     .env({"TORCH_HOME": TORCH_HOME})
     .run_function(_download_weights)
     .run_function(_download_beat_model)
-    .run_function(_download_btc_weights)
+    .pip_install("pydub==0.25.1")
+    .pip_install(f"https://github.com/openmirlab/lv-chordia/archive/{LV_CHORDIA_COMMIT}.zip", extra_options="--no-deps")
+    .run_function(_check_lv_chordia)
     .add_local_python_source("scnet", copy=True)
     .run_function(_download_scnet_weights)
     .add_local_python_source("drums", copy=True)
@@ -88,7 +90,7 @@ image = (
     .add_local_python_source("songformer", copy=True)
     .run_function(_download_songformer)
     .env({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
-    .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "btc", "sections")
+    .add_local_python_source("pipeline", "webhook", "schema", "runner", "analysis", "sections")
 )
 
 # GPU types in order of preference (comma-separated); Modal schedules on the first one with
