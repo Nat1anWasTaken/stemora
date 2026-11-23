@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { formatClock, formatRemaining } from "@/lib/format"
 import { usePlayer } from "@/player/store"
+import { heardSemitones } from "@/player/transpose"
 import { MetronomePanel } from "@/player/ui/metronome/metronome-panel"
 import { KeyPanel } from "@/player/ui/practice-sheets"
 import { usePosition } from "@/player/ui/use-position"
@@ -43,7 +44,7 @@ export function Transport() {
   const status = usePlayer((s) => s.status)
   const metronome = usePlayer((s) => s.metronome)
   const speed = usePlayer((s) => s.speed)
-  const semitones = usePlayer((s) => s.semitones)
+  const keyOn = usePlayer((s) => heardSemitones(s.semitones, s.keyEnabled) !== 0)
   const { toggle, skip } = usePlayer.getState()
   const ready = status === "ready"
   return (
@@ -54,7 +55,7 @@ export function Transport() {
         {status === "loading" ? <Loader2 className="animate-spin" /> : playing ? <Pause key="pause" className="animate-in fill-current duration-200 zoom-in-50 fade-in" /> : <Play key="play" className="animate-in fill-current duration-200 zoom-in-50 fade-in" />}
       </Button>
       <Button variant="ghost" size="icon-lg" aria-label="Forward 10 seconds" disabled={!ready} onClick={() => skip(10)}><FastForward /></Button>
-      <KeyPanel trigger={<Button variant="toggle" size="icon-lg" aria-label="Song key" aria-pressed={semitones !== 0}><Hash /></Button>} />
+      <KeyPanel trigger={<Button variant="toggle" size="icon-lg" aria-label="Key" aria-pressed={keyOn}><Hash /></Button>} />
     </div>
   )
 }

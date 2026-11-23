@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { buildBars, buildCells, lastAtOrBefore, snapSections, splitChord, transposeChord, type Bar, type Section } from "@/player/analysis"
 import { getPosition, usePlayer } from "@/player/store"
+import { heardSemitones } from "@/player/transpose"
 import { cn } from "@/lib/utils"
 
 /** Highlight a beat this many seconds early so it lands with the sound rather than just after it. */
@@ -53,7 +54,7 @@ export function BarBeats({ bar, activeTime, looped, onSeek }: {
   looped?: boolean
   onSeek?: (t: number) => void
 }) {
-  const semitones = usePlayer((s) => s.semitones)
+  const semitones = usePlayer((s) => heardSemitones(s.semitones, s.keyEnabled))
   return (
     <div className={cn("grid gap-0.5 rounded-2xl", COLS[bar.cells.length] ?? "grid-cols-4", looped && "ring-2 ring-primary")}>
       {bar.cells.map((c) => {

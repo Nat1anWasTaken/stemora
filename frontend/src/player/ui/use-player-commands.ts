@@ -52,6 +52,12 @@ export function usePlayerCommands(o: PlayerCommandOptions) {
     { id: "player.metronome", title: "Metronome on / off", group: "Playback", keywords: ["click", "tempo"], enabled: ready, run: () => player().setMetronome(!player().metronome) },
     { id: "player.reset-speed", title: "Reset speed", group: "Playback", keywords: ["tempo", "original"], enabled: () => ready() && player().speed !== 1, run: () => player().setSpeed(1) },
     { id: "player.reset-key", title: "Reset song key", group: "Playback", keywords: ["transpose", "pitch", "original"], enabled: () => ready() && player().semitones !== 0, run: () => player().setSemitones(0) },
+    { id: "player.key-switch", title: "Key change on / off", group: "Playback", keywords: ["transpose", "pitch", "compare", "original"], enabled: () => ready() && player().canShift !== false && player().semitones !== 0, run: () => player().setKeyEnabled(!player().keyEnabled) },
+    ...STEM_NAMES.map((n): Command => {
+      const name = STEM_LABEL[n].toLowerCase()
+      const title = player().transposed.includes(n) ? `Keep ${name} in the original key` : `Transpose ${name} with the song key`
+      return { id: `player.follow-key.${n}`, title, group: "Playback", keywords: ["transpose", "pitch", "key", "stem"], enabled: () => ready() && player().canShift !== false, run: () => player().toggleTransposed(n) }
+    }),
 
     ...STEM_NAMES.map((n, i): Command => ({ id: `mixer.select.${n}`, title: `Select ${STEM_LABEL[n].toLowerCase()}`, group: "Mixer", keywords: ["stem"], shortcut: String(i + 1), enabled: ready, run: () => o.select(n) })),
     { id: "mixer.mute-selected", title: `Mute / unmute ${stem}`, group: "Mixer", keywords: ["selected stem"], shortcut: "M", enabled: ready, run: () => player().toggleMute(o.selected) },
