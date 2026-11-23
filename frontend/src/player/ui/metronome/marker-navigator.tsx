@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { PanelHeadline } from "@/components/app/panel-parts"
 import { Button } from "@/components/ui/button"
 import { formatClock } from "@/lib/format"
 import { usePlayer } from "@/player/store"
@@ -21,14 +22,12 @@ export function MarkerNavigator({ index }: { index: number }) {
   return (
     <div className="flex items-center gap-1">
       <Button variant="ghost" size="icon" aria-label="Previous tempo marker" disabled={index <= 0} onClick={() => go(index - 1)}><ChevronLeft /></Button>
-      <div className="flex min-w-0 flex-1 flex-col items-center" aria-live="polite">
-        <span className="text-sm font-semibold">{implicit ? "Detected beats" : `Marker ${markerNumber(markers, index)} of ${visibleMarkerCount(markers)}`}</span>
-        <span className="truncate text-xs text-muted-foreground tabular-nums">
-          {implicit
-            ? next ? `Until marker 1 at ${formatClock(next.time)}` : "Whole song"
-            : `${formatClock(m.time)} · ${m.kind === "manual" ? `${formatBpm(m.bpm)} BPM · ${formatTimeSignature(m)}` : "Detected beats"}`}
-        </span>
-      </div>
+      <PanelHeadline
+        title={implicit ? "Detected beats" : `Marker ${markerNumber(markers, index)} of ${visibleMarkerCount(markers)}`}
+        detail={implicit
+          ? next ? `Until marker 1 at ${formatClock(next.time)}` : "Whole song"
+          : `${formatClock(m.time)} · ${m.kind === "manual" ? `${formatBpm(m.bpm)} BPM · ${formatTimeSignature(m)}` : "Detected beats"}`}
+      />
       <Button variant="ghost" size="icon" aria-label="Next tempo marker" disabled={index >= markers.length - 1} onClick={() => go(index + 1)}><ChevronRight /></Button>
     </div>
   )

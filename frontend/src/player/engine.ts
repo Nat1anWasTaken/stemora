@@ -7,15 +7,18 @@
  * loopStart/loopEnd (sample-accurate wrap, no timers); position is derived from the audio clock.
  *
  * Tempo and key: at the original speed and key the stems play straight from their AudioBuffers as above. Otherwise they
- * play through one Signalsmith Stretch AudioWorklet that reads its own copy of the PCM (every stem as a pair of its
- * channels, so they share one time map and stay in sync) and changes speed and key in a single pass, without first
- * resampling through playbackRate. Its output is split back into the per-stem gains, so the mixer stays live. The node
- * and its copy are only built the first time the speed or key leaves the original. Where it cannot run, playbackRate
+ * play through Signalsmith Stretch AudioWorklets, one per stem, each reading its own copy of that stem's PCM and
+ * changing speed and key in a single pass, without first resampling through playbackRate. A stem can keep its original
+ * key while the others are transposed (drums, by default), so each node has its own key. They stay in sync because
+ * every node is given the same schedule and a node derives its read position from the audio clock through that
+ * schedule, not from when the message reached it. Each node feeds its stem's gain, so the mixer stays live. The nodes
+ * and their copies are only built the first time the speed or key leaves the original. Where they cannot run, playbackRate
  * changes the speed and the pitch moves with it. The metronome never goes through it: it clicks on the song's beat
  * grid (`setClicks`), mapped onto the audio clock through the same offset, speed and loop as the stems.
  */
 import type { StretchNode } from "signalsmith-stretch"
 import type { StemName } from "@/lib/api"
+import { stemSemitones } from "@/player/transpose"
 import { clickSound, DEFAULT_CLICK_SOUND, type ClickSound } from "@/player/click-sounds"
 import { clicksBetween, type Click, type ClickVolume } from "@/player/clicks"
 import { defaultMixer, effectiveGain, loopedPosition, clampLoop, type LoopRegion, type MixerState } from "@/player/mixer"
@@ -39,7 +42,8 @@ type AudioContextCtor = typeof AudioContext
 export class StemEngine {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
-  private stretch: StretchNode | null = null
+  /** One stretch node per stem, in the order of `stems` (empty until built). */
+  private stretches: StretchNode[] = []
   private stretchBuild: Promise<void> | null = null
   private stretchLatency = 0
   private stretching = false // the stretch node, not the buffer sources, is the path playing
@@ -47,6 +51,8 @@ export class StemEngine {
   private canShift = false
   private speed = 1
   private semitones = 0
+  /** Stems that follow `semitones`; the rest keep their original key. */
+  private transposed: readonly StemName[] = []
   private stems: StemNode[] = []
   private mixer: MixerState = defaultMixer()
   private loop: LoopRegion | null = null
@@ -119,36 +125,33 @@ export class StemEngine {
     return this.shifterModule
   }
 
-  /** Builds the stretch node and hands it a copy of every stem, the first time the speed or key needs it. */
+  /** Builds a stretch node per stem and hands each a copy of its stem, the first time the speed or key needs them. */
   private ensureStretch() {
     const ctx = this.ctx
     if (this.stretchBuild || !ctx || !this.canShift || !this.wantsStretch || this.stems.length === 0) return
     const stems = this.stems
     this.stretchBuild = (async () => {
       const { default: SignalsmithStretch } = await import("signalsmith-stretch")
-      const channels = stems.length * 2
-      // The node never answers if its WASM fails to start inside the worklet.
-      const node = await withTimeout(SignalsmithStretch(ctx, { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [channels] }), 15000)
-      this.stretchLatency = await node.latency()
+      // Every stem is padded to the longest, so the nodes share one timeline.
       const length = Math.max(...stems.map((s) => s.buffer.length))
-      const pcm = stems.flatMap((s) =>
-        [0, 1].map((c) => {
-          const data = new Float32Array(length)
-          s.buffer.copyFromChannel(data, Math.min(c, s.buffer.numberOfChannels - 1))
-          return data
+      const nodes = await Promise.all(
+        stems.map(async (s) => {
+          // A node never answers if its WASM fails to start inside the worklet.
+          const node = await withTimeout(SignalsmithStretch(ctx, { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] }), 15000)
+          const pcm = [0, 1].map((c) => {
+            const data = new Float32Array(length)
+            s.buffer.copyFromChannel(data, Math.min(c, s.buffer.numberOfChannels - 1))
+            return data
+          })
+          await node.addBuffers(pcm, pcm.map((d) => d.buffer))
+          return node
         }),
       )
-      await node.addBuffers(pcm, pcm.map((d) => d.buffer))
+      // The nodes are configured alike, so their latencies match; the largest covers any rounding.
+      this.stretchLatency = Math.max(...(await Promise.all(nodes.map((n) => n.latency()))))
       if (this.ctx !== ctx) return
-      const split = ctx.createChannelSplitter(channels)
-      node.connect(split)
-      stems.forEach((s, i) => {
-        const merge = ctx.createChannelMerger(2)
-        split.connect(merge, 2 * i, 0)
-        split.connect(merge, 2 * i + 1, 1)
-        merge.connect(s.gain)
-      })
-      this.stretch = node
+      nodes.forEach((n, i) => n.connect(stems[i].gain))
+      this.stretches = nodes
       this.update()
     })().catch(() => {
       this.canShift = false
@@ -273,18 +276,19 @@ export class StemEngine {
     this.update(previous)
   }
 
-  /** Key change in semitones; needs the stretcher (see loadShifter). */
-  setPitch(semitones: number) {
-    if (semitones === this.semitones) return
+  /** Key change in semitones for the stems in `stems` (the others keep their key); needs the stretcher (see loadShifter). */
+  setPitch(semitones: number, stems: readonly StemName[]) {
+    if (semitones === this.semitones && stems.length === this.transposed.length && stems.every((n) => this.transposed.includes(n))) return
     this.semitones = semitones
+    this.transposed = [...stems]
     this.update()
   }
 
   private get wantsStretch() {
-    return this.speed !== 1 || this.semitones !== 0
+    return this.speed !== 1 || (this.semitones !== 0 && this.transposed.length > 0)
   }
   private get useStretch() {
-    return !!this.stretch && this.wantsStretch
+    return this.stretches.length > 0 && this.wantsStretch
   }
 
   /** Applies a new speed or key: retimes the playing path in place, or restarts on the other one when that changes. */
@@ -306,10 +310,13 @@ export class StemEngine {
     this.rescheduleClicks()
   }
 
-  /** Points the stretcher at `offset` from `startedAt` on, with the current speed, key and loop. */
+  /** Points every stretcher at `offset` from `startedAt` on, with the current speed and loop and its stem's key. */
   private scheduleStretch() {
     const loop = this.activeLoop
-    void this.stretch!.schedule({ active: true, output: this.startedAt, input: this.offset, rate: this.speed, semitones: this.semitones, loopStart: loop?.a ?? 0, loopEnd: loop?.b ?? 0 })
+    this.stretches.forEach((node, i) => {
+      const semitones = stemSemitones(this.stems[i].name, this.semitones, this.transposed)
+      void node.schedule({ active: true, output: this.startedAt, input: this.offset, rate: this.speed, semitones, loopStart: loop?.a ?? 0, loopEnd: loop?.b ?? 0 })
+    })
   }
 
   setMetronome(enabled: boolean) {
@@ -404,7 +411,7 @@ export class StemEngine {
         s.source = null
       }
     }
-    if (this.stretching) void this.stretch?.stop()
+    if (this.stretching) for (const n of this.stretches) void n.stop()
     this.stretching = false
   }
 
@@ -510,7 +517,7 @@ export class StemEngine {
     this.playing = false
     this.onEnded = null
     this.onShiftUnavailable = null
-    this.stretch = null
+    this.stretches = []
     void this.ctx?.close()
     this.ctx = null
     this.stems = []

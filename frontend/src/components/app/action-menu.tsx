@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -27,10 +28,14 @@ export type MenuEntry =
   | { key: string; label: string; icon?: ReactNode; onSelect: () => void; destructive?: boolean; disabled?: boolean; hint?: string }
   | { key: string; separator: true }
   | { key: string; radio: MenuRadio }
+  | MenuCheckbox
+
+/** An on/off option. Toggling it leaves the menu open, so several can be set in one go. */
+export type MenuCheckbox = { key: string; label: string; icon?: ReactNode; checked: boolean; onCheckedChange: (checked: boolean) => void; disabled?: boolean }
 
 /**
- * Dropdown menu on desktop, bottom drawer on touch/mobile (Base UI Menu / Drawer). Entries are actions, separators or a single-choice
- * radio group. `label` adds a heading to the desktop dropdown (the drawer always shows `title`).
+ * Dropdown menu on desktop, bottom drawer on touch/mobile (Base UI Menu / Drawer). Entries are actions, separators, on/off
+ * checkboxes or a single-choice radio group. `label` adds a heading to the desktop dropdown (the drawer always shows `title`).
  */
 export function ActionMenu({ title, label, trigger, entries, align = "end" }: {
   title: string
@@ -62,6 +67,11 @@ export function ActionMenu({ title, label, trigger, entries, align = "end" }: {
                   {e.radio.options.map((o) => <DropdownMenuRadioItem key={o.value} value={o.value}>{o.label}</DropdownMenuRadioItem>)}
                 </DropdownMenuRadioGroup>
               </DropdownMenuGroup>
+            ) : "checked" in e ? (
+              <DropdownMenuCheckboxItem key={e.key} checked={e.checked} disabled={e.disabled} onCheckedChange={e.onCheckedChange}>
+                {e.icon}
+                {e.label}
+              </DropdownMenuCheckboxItem>
             ) : (
               <DropdownMenuItem key={e.key} variant={e.destructive ? "destructive" : "default"} disabled={e.disabled} onClick={e.onSelect}>
                 {e.icon}
@@ -109,6 +119,21 @@ export function ActionMenu({ title, label, trigger, entries, align = "end" }: {
                   )
                 })}
               </div>
+            ) : "checked" in e ? (
+              <Button
+                key={e.key}
+                variant="ghost"
+                size="lg"
+                role="checkbox"
+                aria-checked={e.checked}
+                disabled={e.disabled}
+                className="justify-start"
+                onClick={() => e.onCheckedChange(!e.checked)}
+              >
+                {e.icon}
+                {e.label}
+                {e.checked && <Check className="ml-auto text-primary" />}
+              </Button>
             ) : (
               <Button
                 key={e.key}

@@ -8,6 +8,7 @@ import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
 import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED } from "@/player/tempo"
 import { loadClickSound, saveClickSound } from "@/player/click-sounds"
+import { heardSemitones, loadTransposed, saveTransposed, toggleTransposed as toggleStem } from "@/player/transpose"
 import { buildGrid, defaultMarkers, markerClicks, normalizeMarkers, type BeatGrid, type TempoMarker } from "@/player/tempo-map"
 
 let engine: StemEngine | null = null
@@ -39,8 +40,12 @@ type PlayerState = {
   clickSound: string
   /** Playback speed, 1 = original tempo. */
   speed: number
-  /** Key change in semitones. */
+  /** Key change in semitones, as set on the dial (kept while the key switch is off). */
   semitones: number
+  /** The key switch: whether `semitones` is heard. Off plays the original key, for comparing against the transposed one. */
+  keyEnabled: boolean
+  /** Stems that follow the key change (the rest keep their original key), kept per browser. Drums are left out by default. */
+  transposed: StemName[]
   /** Whether the Signalsmith Stretch worklet can run (null while loading); without it speed changes also shift the pitch and the key cannot change. */
   canShift: boolean | null
   peaks: Peaks | null
@@ -69,7 +74,10 @@ type PlayerState = {
   setMetronome: (enabled: boolean) => void
   setClickSound: (id: string) => void
   setSpeed: (speed: number) => void
+  /** Sets the dial; also turns the key switch on, so a turn of the dial is always heard. */
   setSemitones: (n: number) => void
+  setKeyEnabled: (enabled: boolean) => void
+  toggleTransposed: (name: StemName) => void
   /** Whether `markers` is a preview (mid-drag) rather than a state to keep. */
   markersDraft: boolean
   /** Counts the user's committed tempo map changes (edits, undo, redo), not loading or previews. */
@@ -90,6 +98,10 @@ export const usePlayer = create<PlayerState>((set, get) => {
     engine?.setMixer(mixer)
     const id = get().songId
     if (id) saveMixer(id, mixer)
+  }
+  const applyKey = () => {
+    const { semitones, keyEnabled, transposed } = get()
+    engine?.setPitch(heardSemitones(semitones, keyEnabled), transposed)
   }
   const applyLoop = (loop: LoopRegion | null) => {
     set({ loop })
@@ -124,6 +136,8 @@ export const usePlayer = create<PlayerState>((set, get) => {
     clickSound: loadClickSound(),
     speed: 1,
     semitones: 0,
+    keyEnabled: true,
+    transposed: loadTransposed(),
     canShift: null,
     peaks: null,
     analysis: null,
@@ -143,9 +157,10 @@ export const usePlayer = create<PlayerState>((set, get) => {
       past = []
       future = []
       // The song record's length lets the charts and tempo map show before the stems are decoded.
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
       e.setMetronome(get().metronome)
       e.setClickSound(get().clickSound)
+      applyKey()
       applyGrid()
       void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
       e.onShiftUnavailable = () => engine === e && set({ canShift: false })
@@ -184,7 +199,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       stopKeepAlive()
       past = []
       future = []
-      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
+      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
     },
     play() {
       if (!engine || get().status !== "ready") return
@@ -246,8 +261,18 @@ export const usePlayer = create<PlayerState>((set, get) => {
     },
     setSemitones(n) {
       const st = Math.min(MAX_SEMITONES, Math.max(-MAX_SEMITONES, Math.round(n)))
-      set({ semitones: st })
-      engine?.setPitch(st)
+      set({ semitones: st, keyEnabled: true })
+      applyKey()
+    },
+    setKeyEnabled(enabled) {
+      set({ keyEnabled: enabled })
+      applyKey()
+    },
+    toggleTransposed(name) {
+      const transposed = toggleStem(get().transposed, name)
+      set({ transposed })
+      saveTransposed(transposed)
+      applyKey()
     },
     setMarkers(markers, opts = {}) {
       // A drag that ends where it began (a locked marker snapping back) is no edit: just end the preview.

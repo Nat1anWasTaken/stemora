@@ -1,13 +1,14 @@
-import { Download, Drum, Guitar, MoreHorizontal, Mic, Music, RotateCcw, VolumeX, Headphones } from "lucide-react"
+import { Download, Drum, Guitar, Hash, MoreHorizontal, Mic, Music, RotateCcw, VolumeX, Headphones } from "lucide-react"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { stemDownloadUrl, type StemName } from "@/lib/api"
 import { currentPreset, effectiveGain, STEM_LABEL } from "@/player/mixer"
 import { usePlayer } from "@/player/store"
+import { heardSemitones, signed, stemSemitones } from "@/player/transpose"
 import { cn } from "@/lib/utils"
 
-const ICONS = { vocals: Mic, drums: Drum, bass: Guitar, other: Music } as const
+export const STEM_ICONS = { vocals: Mic, drums: Drum, bass: Guitar, other: Music } as const
 
 /** Downloads `url`; `filename` names it (same-origin and blob URLs only, the server's name otherwise). */
 export function triggerDownload(url: string, filename = "") {
@@ -21,8 +22,12 @@ export function triggerDownload(url: string, filename = "") {
 
 export function StemRow({ name, songId, selected, onSelect }: { name: StemName; songId: string; selected: boolean; onSelect: () => void }) {
   const mixer = usePlayer((s) => s.mixer)
-  const { setVolume, resetVolume, toggleMute, toggleSolo } = usePlayer.getState()
-  const Icon = ICONS[name]
+  const follows = usePlayer((s) => s.transposed.includes(name))
+  // The key change this stem is heard at, shown next to its name only while it is transposed.
+  const shift = usePlayer((s) => stemSemitones(name, heardSemitones(s.semitones, s.keyEnabled), s.transposed))
+  const canShift = usePlayer((s) => s.canShift)
+  const { setVolume, resetVolume, toggleMute, toggleSolo, toggleTransposed } = usePlayer.getState()
+  const Icon = STEM_ICONS[name]
   const gain = effectiveGain(name, mixer)
   const silent = gain === 0
   const muted = mixer.muted.includes(name)
@@ -32,6 +37,7 @@ export function StemRow({ name, songId, selected, onSelect }: { name: StemName; 
     { key: "solo", label: soloed ? "Unsolo" : "Solo", icon: <Headphones />, onSelect: () => toggleSolo(name) },
     { key: "mute", label: muted ? "Unmute" : "Mute", icon: <VolumeX />, onSelect: () => toggleMute(name) },
     { key: "reset", label: "Reset volume", icon: <RotateCcw />, onSelect: () => resetVolume(name) },
+    { key: "key", label: "Follow song key", icon: <Hash />, checked: follows, disabled: canShift === false, onCheckedChange: () => toggleTransposed(name) },
     { key: "sep", separator: true },
     { key: "dl-m4a", label: "Download M4A", icon: <Download />, onSelect: () => triggerDownload(stemDownloadUrl(songId, name, "m4a")) },
     { key: "dl-flac", label: "Download FLAC (lossless)", icon: <Download />, onSelect: () => triggerDownload(stemDownloadUrl(songId, name, "flac")) },
@@ -55,7 +61,7 @@ export function StemRow({ name, songId, selected, onSelect }: { name: StemName; 
       </Button>
       <div className={cn("flex min-w-0 flex-1 flex-col transition-opacity", silent && "opacity-40")}>
         <div className="flex items-center justify-between px-1 text-xs">
-          <span className="font-medium">{STEM_LABEL[name]}{soloed && <span className="ml-1.5 text-stem">Solo</span>}{muted && !soloed && <span className="ml-1.5 text-muted-foreground">Muted</span>}</span>
+          <span className="font-medium">{STEM_LABEL[name]}{shift !== 0 && <span className="ml-1.5 text-muted-foreground tabular-nums" title={`Transposed ${signed(shift)} semitones`}>{signed(shift)}</span>}{soloed && <span className="ml-1.5 text-stem">Solo</span>}{muted && !soloed && <span className="ml-1.5 text-muted-foreground">Muted</span>}</span>
           <span className="text-muted-foreground tabular-nums">{Math.round(mixer.volumes[name] * 100)}</span>
         </div>
         <Slider
