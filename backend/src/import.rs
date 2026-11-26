@@ -11,10 +11,11 @@ use tokio::task::AbortHandle;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::catalog::{self, SpotifyKind, SpotifyLink, TrackMeta};
 use crate::config::Config;
 use crate::db::{self, SongRow, SongView};
 use crate::error::{AppError, AppResult};
-use crate::fetch::{DownloadProgress, FetchError, MediaInfo, too_large};
+use crate::fetch::{DownloadProgress, FetchError, Listing, MediaInfo, too_large};
 use crate::jobs::{self, SongStatus};
 use crate::storage;
 
@@ -30,6 +31,10 @@ pub fn validate_url(raw: &str) -> AppResult<String> {
     let raw = raw.trim();
     if raw.is_empty() || raw.len() > MAX_URL_LEN {
         return Err(invalid("enter a link of at most 2048 characters"));
+    }
+    // Spotify links are stored in one form (no tracking parameters), URIs included.
+    if let Some(link) = catalog::parse_spotify(raw) {
+        return Ok(link.url());
     }
     let u = url::Url::parse(raw).map_err(|_| invalid("not a valid link"))?;
     if !matches!(u.scheme(), "http" | "https") {
@@ -73,6 +78,8 @@ fn content_type_for(ext: &str) -> &'static str {
 pub enum ImportStage {
     /// Waiting for one of the `MAX_CONCURRENT_IMPORTS` download slots.
     Waiting,
+    /// Looking for a catalog's song (a Spotify track) on YouTube Music and YouTube.
+    Matching,
     /// Reading the link's details.
     Probing,
     Downloading,
@@ -84,6 +91,7 @@ impl ImportStage {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Waiting => "waiting",
+            Self::Matching => "matching",
             Self::Probing => "probing",
             Self::Downloading => "downloading",
             Self::Storing => "storing",
@@ -155,6 +163,18 @@ impl ImportTracker {
     }
 }
 
+fn duration_problem(duration_s: Option<f64>, cfg: &Config) -> Option<String> {
+    let d = duration_s?;
+    let max = f64::from(cfg.max_duration_s);
+    (d > max).then(|| {
+        format!(
+            "Audio is {:.1} min long; the maximum is {:.1} min.",
+            d / 60.0,
+            max / 60.0
+        )
+    })
+}
+
 /// Why `info` cannot be imported under `cfg`, if it cannot.
 pub fn check_info(info: &MediaInfo, cfg: &Config) -> Result<(), FetchError> {
     if info.is_playlist {
@@ -165,14 +185,8 @@ pub fn check_info(info: &MediaInfo, cfg: &Config) -> Result<(), FetchError> {
     if info.is_live {
         return Err(FetchError("Live streams cannot be imported.".into()));
     }
-    if let Some(d) = info.duration_s
-        && d > f64::from(cfg.max_duration_s)
-    {
-        return Err(FetchError(format!(
-            "Audio is {:.1} min long; the maximum is {:.1} min.",
-            d / 60.0,
-            f64::from(cfg.max_duration_s) / 60.0
-        )));
+    if let Some(p) = duration_problem(info.duration_s, cfg) {
+        return Err(FetchError(p));
     }
     let max_bytes = cfg.max_upload_bytes() as u64;
     if info.filesize.is_some_and(|s| s > max_bytes) {
@@ -206,6 +220,217 @@ pub async fn preview(state: &AppState, url: &str) -> Result<Preview, FetchError>
         site: info.site,
         filesize: info.filesize,
     })
+}
+
+/// One song a link holds.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedEntry {
+    /// The link to import it with.
+    pub url: String,
+    pub title: Option<String>,
+    /// Artists (catalogs) or the uploader (video sites).
+    pub artists: Vec<String>,
+    pub duration_s: Option<f64>,
+    /// Why importing it would fail, if it would.
+    pub problem: Option<String>,
+}
+
+/// A YouTube upload offered as a catalog song.
+#[derive(Debug, Clone, Serialize)]
+pub struct Match {
+    pub url: String,
+    pub title: String,
+    pub channel: Option<String>,
+    pub duration_s: Option<f64>,
+    /// From YouTube Music's song catalog.
+    pub music: bool,
+    /// How likely it is the song, 0..1.
+    pub score: f64,
+}
+
+/// What a link holds, for choosing what to import from it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Resolved {
+    /// `song`: one song (`entries` holds it); `collection`: a playlist or album.
+    pub kind: &'static str,
+    pub title: Option<String>,
+    /// Artist, playlist owner or uploader.
+    pub subtitle: Option<String>,
+    pub site: Option<String>,
+    pub entries: Vec<ResolvedEntry>,
+    /// For a song from a catalog that cannot be downloaded (Spotify): YouTube uploads that may
+    /// be it, best first. `null` when the link itself can be imported.
+    pub matches: Option<Vec<Match>>,
+}
+
+/// Matches offered for one song.
+const MAX_MATCHES: usize = 5;
+
+fn unavailable(title: Option<&str>) -> bool {
+    matches!(
+        title,
+        Some("[Private video]" | "[Deleted video]" | "[Unavailable video]")
+    )
+}
+
+fn catalog_entry(link: &SpotifyLink, t: &TrackMeta, cfg: &Config) -> ResolvedEntry {
+    ResolvedEntry {
+        url: link.url(),
+        title: Some(t.title.clone()),
+        artists: t.artists.clone(),
+        duration_s: t.duration_s,
+        problem: duration_problem(t.duration_s, cfg),
+    }
+}
+
+/// A Spotify short link becomes the link it opens; anything else is returned as it is.
+async fn expand(state: &AppState, url: &str) -> Result<String, FetchError> {
+    match url::Url::parse(url) {
+        Ok(u) if catalog::is_spotify_short_link(&u) => {
+            let full = state.fetcher.expand_short_link(url).await?;
+            catalog::parse_spotify(&full)
+                .map(|l| l.url())
+                .ok_or_else(|| FetchError("This Spotify link does not open a song.".into()))
+        }
+        _ => Ok(url.to_string()),
+    }
+}
+
+/// Look up what a link holds: one song, a catalog song with its YouTube matches, or the
+/// songs of a playlist or album. Nothing is stored.
+pub async fn resolve(state: &AppState, url: &str) -> Result<Resolved, FetchError> {
+    let _permit = state.probe_slots.acquire().await;
+    tokio::time::timeout(Duration::from_secs(90), resolve_inner(state, url))
+        .await
+        .map_err(|_| FetchError("The site took too long to answer.".into()))?
+}
+
+async fn resolve_inner(state: &AppState, url: &str) -> Result<Resolved, FetchError> {
+    let cfg = &state.config;
+    let url = expand(state, url).await?;
+    if let Some(link) = catalog::parse_spotify(&url) {
+        let entity = state.fetcher.spotify(&link).await?;
+        if link.kind == SpotifyKind::Track {
+            let (track, meta) = entity
+                .tracks
+                .first()
+                .ok_or_else(|| FetchError("Spotify did not describe this track.".into()))?;
+            let results = state.fetcher.search(&catalog::search_query(meta)).await?;
+            let matches = catalog::rank(meta, results)
+                .into_iter()
+                .take(MAX_MATCHES)
+                .map(|(c, score)| Match {
+                    url: c.url,
+                    title: c.title,
+                    channel: c.channel,
+                    duration_s: c.duration_s,
+                    music: c.music,
+                    score: (score * 100.0).round() / 100.0,
+                })
+                .collect();
+            return Ok(Resolved {
+                kind: "song",
+                title: Some(meta.title.clone()),
+                subtitle: (!meta.artists.is_empty()).then(|| meta.artists.join(", ")),
+                site: Some("Spotify".into()),
+                entries: vec![catalog_entry(track, meta, cfg)],
+                matches: Some(matches),
+            });
+        }
+        if entity.tracks.is_empty() {
+            return Err(FetchError("This playlist has no songs.".into()));
+        }
+        return Ok(Resolved {
+            kind: "collection",
+            title: entity.title,
+            subtitle: entity.subtitle,
+            site: Some("Spotify".into()),
+            entries: entity
+                .tracks
+                .iter()
+                .map(|(l, t)| catalog_entry(l, t, cfg))
+                .collect(),
+            matches: None,
+        });
+    }
+    match state.fetcher.list(&url).await? {
+        Listing::Single(info) => Ok(Resolved {
+            kind: "song",
+            title: info.title.clone(),
+            subtitle: info.uploader.clone(),
+            site: info.site.as_deref().map(crate::fetch::site_name),
+            entries: vec![ResolvedEntry {
+                url: url.clone(),
+                problem: check_info(&info, cfg).err().map(|e| e.0),
+                title: info.title,
+                artists: info.uploader.into_iter().collect(),
+                duration_s: info.duration_s,
+            }],
+            matches: None,
+        }),
+        Listing::Collection(c) => {
+            if c.entries.is_empty() {
+                return Err(FetchError("This playlist has no songs.".into()));
+            }
+            Ok(Resolved {
+                kind: "collection",
+                title: c.title,
+                subtitle: None,
+                site: c.site,
+                entries: c
+                    .entries
+                    .into_iter()
+                    .map(|e| ResolvedEntry {
+                        problem: if unavailable(e.title.as_deref()) {
+                            Some("The video is private or removed.".into())
+                        } else {
+                            duration_problem(e.duration_s, cfg)
+                        },
+                        url: e.url,
+                        title: e.title,
+                        artists: e.uploader.into_iter().collect(),
+                        duration_s: e.duration_s,
+                    })
+                    .collect(),
+                matches: None,
+            })
+        }
+    }
+}
+
+/// Find a Spotify track on YouTube without asking: the best-scoring result whose length is
+/// close to the track's. Returns the link to download, its details and the track.
+async fn auto_match(
+    state: &AppState,
+    link: &SpotifyLink,
+) -> Result<(String, MediaInfo, TrackMeta), FetchError> {
+    let entity = state.fetcher.spotify(link).await?;
+    let (_, meta) = entity
+        .tracks
+        .into_iter()
+        .next()
+        .ok_or_else(|| FetchError("Spotify did not describe this track.".into()))?;
+    let results = state.fetcher.search(&catalog::search_query(&meta)).await?;
+    let ranked = catalog::rank(&meta, results);
+    for (c, _) in ranked
+        .iter()
+        .filter(|(_, s)| *s >= catalog::AUTO_MATCH_MIN_SCORE)
+        .take(3)
+    {
+        let Ok(info) = state.fetcher.probe(&c.url).await else {
+            continue;
+        };
+        if let (Some(a), Some(b)) = (meta.duration_s, info.duration_s)
+            && (a - b).abs() > catalog::AUTO_MATCH_MAX_DURATION_DIFF_S
+        {
+            continue;
+        }
+        return Ok((c.url.clone(), info, meta));
+    }
+    Err(FetchError(format!(
+        "Could not find \"{}\" on YouTube Music or YouTube. Paste a YouTube link to it instead.",
+        meta.title.chars().take(100).collect::<String>()
+    )))
 }
 
 /// Removes the temporary download directory however the import ends.
@@ -317,14 +542,33 @@ async fn run(state: &AppState, song_id: Uuid) -> Result<(), FetchError> {
             .map_err(db_err)?;
     // Deleted (or otherwise moved on) while waiting for a slot.
     let Some(song) = song else { return Ok(()) };
-    let url = song.source_url.clone().unwrap_or_default();
+    let source = song.source_url.clone().unwrap_or_default();
     let cfg = &state.config;
     let max_bytes = cfg.max_upload_bytes() as u64;
 
-    state.imports.set_stage(song_id, ImportStage::Probing);
-    let info = state.fetcher.probe(&url).await?;
+    // A Spotify track is downloaded from the YouTube upload that matches it best, and keeps
+    // Spotify's title.
+    let (url, info, title) = match catalog::parse_spotify(&source) {
+        Some(link) if link.kind == SpotifyKind::Track => {
+            state.imports.set_stage(song_id, ImportStage::Matching);
+            let (url, info, meta) = auto_match(state, &link).await?;
+            state.imports.set_stage(song_id, ImportStage::Probing);
+            (url, info, Some(meta.title))
+        }
+        Some(_) => {
+            return Err(FetchError(
+                "Albums and playlists are imported song by song; choose the songs to add.".into(),
+            ));
+        }
+        None => {
+            state.imports.set_stage(song_id, ImportStage::Probing);
+            let info = state.fetcher.probe(&source).await?;
+            let title = info.title.clone();
+            (source, info, title)
+        }
+    };
     // Show what the link is as soon as it is known, even if it then cannot be imported.
-    let fetched_title: Option<String> = info.title.as_ref().map(|t| t.chars().take(200).collect());
+    let fetched_title: Option<String> = title.map(|t| t.chars().take(200).collect());
     sqlx::query(
         "UPDATE songs SET duration_s = COALESCE($2, duration_s), \
          title = CASE WHEN $3::text IS NOT NULL AND title = left(source_url, 200) THEN $3 ELSE title END, \
@@ -432,6 +676,7 @@ mod tests {
         for ok in [
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "  https://soundcloud.com/artist/track  ",
+            "https://spotify.link/abc",
             "http://example.com/a.mp3",
         ] {
             assert!(validate_url(ok).is_ok(), "{ok}");
@@ -453,6 +698,16 @@ mod tests {
             assert_eq!(e.code, "invalid_url", "{bad}");
         }
         assert!(validate_url(&format!("https://example.com/{}", "a".repeat(2100))).is_err());
+        let id = "4cOdK2wGLETKBW3PvgPWqT";
+        for spotify in [
+            format!("spotify:track:{id}"),
+            format!("https://open.spotify.com/intl-ja/track/{id}?si=x"),
+        ] {
+            assert_eq!(
+                validate_url(&spotify).unwrap(),
+                format!("https://open.spotify.com/track/{id}")
+            );
+        }
     }
 
     #[test]

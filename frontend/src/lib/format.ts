@@ -51,6 +51,7 @@ export function stageLabel(stage: string | null): string {
 
 const IMPORT_STAGE_LABELS: Record<string, string> = {
   waiting: "Waiting for a download slot",
+  matching: "Finding the song on YouTube",
   probing: "Reading link details",
   downloading: "Downloading audio",
   storing: "Saving audio",

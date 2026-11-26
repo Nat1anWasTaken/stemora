@@ -1,5 +1,6 @@
 import { useState, type ReactElement, type ReactNode } from "react"
-import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover"
 import { useIsDesktop } from "@/hooks/use-media"
 
@@ -55,6 +56,52 @@ export function ResponsivePanel({ title, action, trigger, size = "default", open
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-safe">
             {children}
             <div className="h-2 shrink-0" />
+          </div>
+        </div>
+      </DrawerContent>
+    </Drawer>
+  )
+}
+
+/**
+ * A dialog opened by the app rather than a trigger (e.g. once a lookup finishes): centred dialog on desktop, bottom drawer
+ * on touch/mobile. The body scrolls between the fixed header and `footer` (the dialog's buttons).
+ */
+export function ResponsiveDialog({ title, description, open, onOpenChange, footer, children }: {
+  title: string
+  description?: ReactNode
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  footer: ReactNode
+  children: ReactNode
+}) {
+  const desktop = useIsDesktop()
+  if (desktop) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent size="wide">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            {description && <DialogDescription>{description}</DialogDescription>}
+          </DialogHeader>
+          <div className="-mx-4 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain px-4">{children}</div>
+          <DialogFooter>{footer}</DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
+      <DrawerContent>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 pt-3">
+          <div className="flex flex-col gap-1 px-5 text-center">
+            <DrawerTitle>{title}</DrawerTitle>
+            {description && <DrawerDescription>{description}</DrawerDescription>}
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain px-5">{children}</div>
+          {/* Buttons are given cancel first (left on desktop); stacked, the main action goes on top. */}
+          <div className="shrink-0 border-t border-border px-5 pt-3 pb-safe">
+            <div className="flex flex-col-reverse gap-2 pb-3">{footer}</div>
           </div>
         </div>
       </DrawerContent>

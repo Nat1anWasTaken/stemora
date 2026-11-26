@@ -49,6 +49,40 @@ export type LinkPreview = {
   /** Why importing it would fail, if it would. */
   problem: string | null
 }
+/** One song a link holds (see `ResolvedLink`). */
+export type LinkEntry = {
+  /** The link to import it with (a Spotify track link is matched to YouTube when imported). */
+  url: string
+  title: string | null
+  /** Artists, or the uploader on video sites. */
+  artists: string[]
+  duration_s: number | null
+  /** Why importing it would fail, if it would. */
+  problem: string | null
+}
+/** A YouTube upload that may be a catalog (Spotify) song. */
+export type LinkMatch = {
+  url: string
+  title: string
+  channel: string | null
+  duration_s: number | null
+  /** From YouTube Music's song catalog. */
+  music: boolean
+  /** How likely it is the song, 0..1. */
+  score: number
+}
+/** What a link holds, looked up to choose what to import from it. */
+export type ResolvedLink = {
+  kind: "song" | "collection"
+  title: string | null
+  /** Artist, playlist owner or uploader. */
+  subtitle: string | null
+  site: string | null
+  entries: LinkEntry[]
+  /** For a Spotify song: YouTube uploads that may be it, best first. `null` when the link itself can be imported. */
+  matches: LinkMatch[] | null
+}
+export type BatchImportResult = { songs: Song[]; failed: { url: string; error: string; code: string }[] }
 /** Library sort orders understood by `GET /api/songs`. */
 export type SongSort = "newest" | "oldest" | "title" | "title_desc" | "longest" | "shortest"
 export type SongQuery = { q?: string; sort?: SongSort; status?: SongStatus[]; cursor?: string | null; limit?: number }
@@ -155,6 +189,10 @@ export const api = {
     request<{ song: Song; upload: Upload }>("/songs", { method: "POST", body: b }),
   importSong: (b: { url: string; title?: string; model: Model }) => request<Song>("/songs/import", { method: "POST", body: b }),
   previewLink: (url: string) => request<LinkPreview>("/songs/import/preview", { method: "POST", body: { url } }),
+  resolveLink: (url: string) => request<ResolvedLink>("/songs/import/resolve", { method: "POST", body: { url } }),
+  /** Queue several links in order (songs picked from a playlist); refused ones come back in `failed`. */
+  importBatch: (items: { url: string; title?: string }[], model: Model) =>
+    request<BatchImportResult>("/songs/import/batch", { method: "POST", body: { items, model } }),
   /** Take a pending song out of the queue, or stop an import that is still downloading. */
   cancel: (id: string) => request<Song>(`/songs/${id}/cancel`, { method: "POST" }),
   partUrls: (id: string, part_numbers: number[]) =>

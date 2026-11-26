@@ -12,8 +12,11 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use stemora_backend::auth::webhook_token;
+use stemora_backend::catalog::{Candidate, SpotifyEntity, TrackMeta, parse_spotify};
 use stemora_backend::config::Config;
-use stemora_backend::fetch::{FakeFetcher, FetchError, MediaInfo};
+use stemora_backend::fetch::{
+    Collection, CollectionEntry, FakeFetcher, FetchError, Listing, MediaInfo,
+};
 use stemora_backend::modal::{FakeModal, SpawnError};
 use stemora_backend::storage::{self, FakeStorage};
 use stemora_backend::{AppState, build_router, db, jobs};
@@ -229,7 +232,7 @@ impl TestApp {
         // The fake fetcher is instant, so the import may already be over by the time we look.
         if r.body["status"] == "importing" {
             assert!(
-                ["waiting", "probing", "downloading", "storing"]
+                ["waiting", "matching", "probing", "downloading", "storing"]
                     .contains(&r.body["stage"].as_str().unwrap()),
                 "{:?}",
                 r.body
@@ -2127,6 +2130,246 @@ async fn link_preview() {
         )
         .await;
     assert_eq!(r.body["code"], "invalid_url");
+}
+
+const SPOTIFY_TRACK: &str = "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT";
+
+fn spotify_track(title: &str, duration_s: f64) -> SpotifyEntity {
+    SpotifyEntity {
+        title: Some(title.into()),
+        subtitle: Some("Band".into()),
+        tracks: vec![(
+            parse_spotify(SPOTIFY_TRACK).unwrap(),
+            TrackMeta {
+                title: title.into(),
+                artists: vec!["Band".into()],
+                duration_s: Some(duration_s),
+            },
+        )],
+    }
+}
+
+fn yt(id: &str, title: &str, channel: &str, duration_s: f64) -> Candidate {
+    Candidate {
+        url: format!("https://www.youtube.com/watch?v={id}"),
+        title: title.into(),
+        channel: Some(channel.into()),
+        duration_s: Some(duration_s),
+        music: false,
+    }
+}
+
+#[tokio::test]
+async fn spotify_track_resolves_to_youtube_matches() {
+    let app = app!();
+    let admin = app.admin().await;
+    *app.fetcher.spotify.lock().unwrap() = Ok(spotify_track("Song", 180.0));
+    *app.fetcher.results.lock().unwrap() = Ok(vec![
+        yt("live", "Band - Song (Live)", "Band", 260.0),
+        yt("good", "Band - Song (Official Audio)", "Band", 181.0),
+    ]);
+    let r = app
+        .post(
+            "/api/songs/import/resolve",
+            &admin,
+            json!({"url":"spotify:track:4cOdK2wGLETKBW3PvgPWqT"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["kind"], "song");
+    assert_eq!(r.body["site"], "Spotify");
+    assert_eq!(r.body["subtitle"], "Band");
+    assert_eq!(r.body["entries"][0]["url"], SPOTIFY_TRACK);
+    let m = r.body["matches"].as_array().unwrap();
+    assert_eq!(m.len(), 2);
+    assert_eq!(m[0]["url"], "https://www.youtube.com/watch?v=good");
+    assert!(m[0]["score"].as_f64().unwrap() > m[1]["score"].as_f64().unwrap());
+    assert_eq!(
+        app.fetcher.calls.lock().unwrap().clone(),
+        vec![
+            format!("spotify {SPOTIFY_TRACK}"),
+            "search Band Song".to_string()
+        ]
+    );
+
+    // Short links are followed first.
+    let r = app
+        .post(
+            "/api/songs/import/resolve",
+            &admin,
+            json!({"url":"https://spotify.link/abc"}),
+        )
+        .await;
+    assert_eq!(r.body["entries"][0]["url"], SPOTIFY_TRACK, "{:?}", r.body);
+
+    *app.fetcher.spotify.lock().unwrap() =
+        Err(FetchError("Spotify does not know this link.".into()));
+    let r = app
+        .post(
+            "/api/songs/import/resolve",
+            &admin,
+            json!({"url":SPOTIFY_TRACK}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(r.body["code"], "link_unavailable");
+}
+
+#[tokio::test]
+async fn playlists_resolve_to_their_songs() {
+    let app = app!();
+    let admin = app.admin().await;
+    *app.fetcher.listing.lock().unwrap() = Some(Ok(Listing::Collection(Collection {
+        title: Some("Mix".into()),
+        site: Some("YouTube".into()),
+        entries: vec![
+            CollectionEntry {
+                url: "https://www.youtube.com/watch?v=a".into(),
+                title: Some("One".into()),
+                uploader: Some("Band".into()),
+                duration_s: Some(200.0),
+            },
+            CollectionEntry {
+                url: "https://www.youtube.com/watch?v=b".into(),
+                title: Some("Long".into()),
+                uploader: None,
+                duration_s: Some(5000.0),
+            },
+            CollectionEntry {
+                url: "https://www.youtube.com/watch?v=c".into(),
+                title: Some("[Private video]".into()),
+                uploader: None,
+                duration_s: None,
+            },
+        ],
+    })));
+    let r = app
+        .post(
+            "/api/songs/import/resolve",
+            &admin,
+            json!({"url":"https://www.youtube.com/playlist?list=PL1"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["kind"], "collection");
+    assert_eq!(r.body["title"], "Mix");
+    assert_eq!(r.body["matches"], Value::Null);
+    let e = r.body["entries"].as_array().unwrap();
+    assert_eq!(e.len(), 3);
+    assert_eq!(e[0]["artists"], json!(["Band"]));
+    assert_eq!(e[0]["problem"], Value::Null);
+    assert!(e[1]["problem"].as_str().unwrap().contains("maximum"));
+    assert!(e[2]["problem"].as_str().unwrap().contains("private"));
+
+    // A Spotify playlist lists its tracks as Spotify links, matched when imported.
+    let mut pl = spotify_track("Song", 180.0);
+    pl.title = Some("Road trip".into());
+    *app.fetcher.spotify.lock().unwrap() = Ok(pl);
+    let r = app
+        .post(
+            "/api/songs/import/resolve",
+            &admin,
+            json!({"url":"https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=1"}),
+        )
+        .await;
+    assert_eq!(r.body["kind"], "collection", "{:?}", r.body);
+    assert_eq!(r.body["title"], "Road trip");
+    assert_eq!(r.body["entries"][0]["url"], SPOTIFY_TRACK);
+    assert_eq!(r.body["entries"][0]["title"], "Song");
+
+    // One song: nothing to choose.
+    *app.fetcher.listing.lock().unwrap() = None;
+    let r = app
+        .post(
+            "/api/songs/import/resolve",
+            &admin,
+            json!({"url":"https://www.youtube.com/watch?v=x"}),
+        )
+        .await;
+    assert_eq!(r.body["kind"], "song");
+    assert_eq!(r.body["title"], "Fetched Title");
+    assert_eq!(
+        r.body["entries"][0]["url"],
+        "https://www.youtube.com/watch?v=x"
+    );
+}
+
+#[tokio::test]
+async fn spotify_tracks_are_matched_when_imported() {
+    let app = app!();
+    let admin = app.admin().await;
+    *app.fetcher.spotify.lock().unwrap() = Ok(spotify_track("Song", 180.0));
+    *app.fetcher.results.lock().unwrap() = Ok(vec![
+        yt("mv", "Band - Song (Official Video)", "Band", 181.0),
+        yt("audio", "Band - Song", "Band - Topic", 180.0),
+    ]);
+    // The best-scoring result turns out longer than the track (an intro): the next one is used.
+    app.fetcher
+        .durations
+        .lock()
+        .unwrap()
+        .insert("https://www.youtube.com/watch?v=audio".into(), 240.0);
+    let song = app
+        .import(&admin, json!({"url":SPOTIFY_TRACK,"model":"htdemucs"}))
+        .await;
+    assert_eq!(song["status"], "queued", "{song:?}");
+    assert_eq!(song["title"], "Song");
+    assert_eq!(song["source_url"], SPOTIFY_TRACK);
+    let calls = app.fetcher.calls.lock().unwrap().clone();
+    assert!(
+        calls.contains(&"download https://www.youtube.com/watch?v=mv".to_string()),
+        "{calls:?}"
+    );
+
+    // Nothing close enough: the song fails with a way forward.
+    *app.fetcher.results.lock().unwrap() = Ok(vec![yt("x", "Other Thing", "Someone", 90.0)]);
+    let song = app
+        .import(&admin, json!({"url":SPOTIFY_TRACK,"model":"htdemucs"}))
+        .await;
+    assert_eq!(song["status"], "failed");
+    assert!(
+        song["error"]
+            .as_str()
+            .unwrap()
+            .contains("Paste a YouTube link")
+    );
+}
+
+#[tokio::test]
+async fn batch_import_queues_in_order() {
+    let app = app!();
+    let admin = app.admin().await;
+    let r = app
+        .post(
+            "/api/songs/import/batch",
+            &admin,
+            json!({"model":"htdemucs","items":[
+                {"url":"https://www.youtube.com/watch?v=1","title":"First"},
+                {"url":"http://127.0.0.1/x"},
+                {"url":"https://www.youtube.com/watch?v=2","title":"Second"},
+                {"url":"https://www.youtube.com/watch?v=3"}
+            ]}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    let songs = r.body["songs"].as_array().unwrap();
+    assert_eq!(songs.len(), 3);
+    assert_eq!(songs[0]["source_url"], "https://www.youtube.com/watch?v=1");
+    assert_eq!(songs[2]["status"], "pending");
+    assert_eq!(songs[2]["queue_position"], 1);
+    assert_eq!(
+        r.body["failed"],
+        json!([{"url":"http://127.0.0.1/x","code":"invalid_url","error":"links to private addresses are not allowed"}])
+    );
+
+    let r = app
+        .post(
+            "/api/songs/import/batch",
+            &admin,
+            json!({"model":"htdemucs","items":[]}),
+        )
+        .await;
+    assert_eq!(r.body["code"], "invalid_batch");
 }
 
 #[tokio::test]
