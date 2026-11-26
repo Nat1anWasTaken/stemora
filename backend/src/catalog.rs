@@ -338,14 +338,19 @@ fn has_phrase(text: &str, phrase: &str) -> bool {
     format!(" {text} ").contains(&format!(" {} ", tokens(phrase).join(" ")))
 }
 
-/// Whether `c`'s title (or channel) carries most of the song's title. Matching without asking
-/// requires it: an upload by the right artist at the right length can still be another song.
+/// Whether `c`'s title (or channel) carries most of the song's title, and names any version
+/// (live, remix, ...) the song's title names. Matching without asking requires it: an upload by
+/// the right artist at the right length can still be another song or the studio take.
 pub fn names_title(t: &TrackMeta, c: &Candidate) -> bool {
     let mut have: HashSet<String> = tokens(&c.title).into_iter().collect();
     if let Some(ch) = &c.channel {
         have.extend(tokens(ch));
     }
+    let (song, cand) = (tokens(&t.title).join(" "), tokens(&c.title).join(" "));
     fraction_found(&tokens(&core_title(&t.title)), &have) >= 0.75
+        && OTHER_VERSION
+            .iter()
+            .all(|w| !has_phrase(&song, w) || has_phrase(&cand, w))
 }
 
 /// The YouTube video id of a watch link, used to merge results that are the same upload.
@@ -555,6 +560,12 @@ mod tests {
         let studio = raw_score(&live, &cand("Song", "Band - Topic", 200.0));
         let live_upload = raw_score(&live, &cand("Band - Song (Live)", "Band", 200.0));
         assert!(live_upload > studio, "{live_upload} {studio}");
+        // Without a live upload, the studio one is offered but never picked without asking.
+        assert!(!names_title(&live, &cand("Song", "Band - Topic", 200.0)));
+        assert!(names_title(
+            &live,
+            &cand("Band - Song (Live)", "Band", 200.0)
+        ));
     }
 
     #[test]
