@@ -124,7 +124,7 @@ export function CollectionDialog({ resolved, onDone }: { resolved: ResolvedLink;
           <Button variant="outline" onClick={() => onDone(null)}>Cancel</Button>
           <Button disabled={selected.size === 0} onClick={() => onDone(entries.filter((_, i) => selected.has(i)))}>
             <ListPlus />
-            {selected.size === 1 ? "Add 1 song to queue" : `Add ${selected.size} songs to queue`}
+            {selected.size === 1 ? "Import 1 song" : `Import ${selected.size} songs`}
           </Button>
         </>
       }

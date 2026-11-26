@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, type DragEvent, type FormEvent } from "r
 import { Link, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { AlertTriangle, FileAudio, Link2, ListOrdered, Loader2, UploadCloud, X } from "lucide-react"
+import { AlertTriangle, FileAudio, Layers, Link2, Loader2, UploadCloud, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -118,7 +118,7 @@ function LinkImport({ model, onAdded }: { model: Model; onAdded: (n: number) => 
       )}
       <Button type="submit" size="lg" variant="secondary" disabled={!!busy || links.length === 0}>
         {busy ? <Loader2 className="animate-spin" /> : <Link2 />}
-        {busy ? `${busy}…` : links.length > 1 ? `Add ${links.length} links to queue` : "Add to queue"}
+        {busy ? `${busy}…` : links.length > 1 ? `Import ${links.length} links` : "Import"}
       </Button>
       {prompt?.kind === "match" && <MatchDialog resolved={prompt.resolved} onDone={prompt.done} />}
       {prompt?.kind === "collection" && <CollectionDialog resolved={prompt.resolved} onDone={prompt.done} />}
@@ -170,7 +170,7 @@ export function UploadPage() {
   const refresh = () => void qc.invalidateQueries({ queryKey: keys.songs })
   const added = (n: number) => {
     refresh()
-    toast.success(`Added ${n} ${n === 1 ? "song" : "songs"} to the queue`, { action: { label: "View queue", onClick: () => nav("/queue") } })
+    toast.success(`Added ${n} ${n === 1 ? "song" : "songs"} to Processing`, { action: { label: "View", onClick: () => nav("/processing") } })
   }
 
   const startAll = () => {
@@ -231,7 +231,7 @@ export function UploadPage() {
           <UploadCloud />
           {items.length > 1 ? `Upload ${items.length} songs` : "Upload song"}
         </Button>
-        {inQueue > 0 && <Button size="lg" variant="secondary" render={<Link to="/queue" />}><ListOrdered />View queue ({inQueue})</Button>}
+        {inQueue > 0 && <Button size="lg" variant="secondary" render={<Link to="/processing" />}><Layers />View Processing ({inQueue})</Button>}
       </div>
     </div>
   )

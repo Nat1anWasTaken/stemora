@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router"
-import { ArrowDownUp, LayoutGrid, List, ListOrdered, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
+import { ArrowDownUp, LayoutGrid, Layers, List, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
 import { ActionMenu } from "@/components/app/action-menu"
 import { SongItem, type LibraryView } from "@/components/app/song-item"
 import { Button } from "@/components/ui/button"
@@ -114,7 +114,7 @@ export function LibraryPage() {
         </div>
         <div className="flex gap-2">
           {inQueue > 0 && (
-            <Button size="lg" variant="secondary" render={<Link to="/queue" />}><ListOrdered />{inQueue} in queue</Button>
+            <Button size="lg" variant="secondary" render={<Link to="/processing" />}><Layers />{inQueue} processing</Button>
           )}
           <Button size="lg" className="hidden md:inline-flex" render={<Link to="/upload" />}><Plus />Upload song</Button>
         </div>

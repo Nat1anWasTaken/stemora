@@ -66,7 +66,7 @@ export function SongPage() {
         )}
         {isCancellable(song) && (
           <Button variant="secondary" disabled={cancel.isPending} onClick={() => cancel.mutate(song)}>
-            <Ban />{importing || isLinkImport(song) ? "Cancel import" : "Remove from queue"}
+            <Ban />{importing || isLinkImport(song) ? "Cancel import" : "Remove from Processing"}
           </Button>
         )}
         {song.status !== "failed" && <p className="text-sm text-muted-foreground">This page updates on its own. You can leave and come back.</p>}

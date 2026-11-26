@@ -25,7 +25,7 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
   const failedImport = isFailedImport(song)
   const importing = song.status === "importing"
   const pending = song.status === "pending"
-  const cancelLabel = importing || isLinkImport(song) ? "Cancel import" : "Remove from queue"
+  const cancelLabel = importing || isLinkImport(song) ? "Cancel import" : "Remove from Processing"
   const row = useRef<HTMLDivElement>(null)
   const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
   const list = view === "list"

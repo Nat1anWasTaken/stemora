@@ -1,4 +1,4 @@
-import { Library, ListOrdered, LogOut, Plus, RotateCw, Search, UserRound, Users, WifiOff } from "lucide-react"
+import { Layers, Library, LogOut, Plus, RotateCw, Search, UserRound, Users, WifiOff } from "lucide-react"
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
@@ -23,11 +23,11 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn("pressable flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium duration-200", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")
 
-/** Songs running or waiting, for the Queue nav item. */
+/** Songs running or waiting, for the Processing nav item. */
 function QueueCount({ count, floating }: { count: number; floating?: boolean }) {
   if (count === 0) return null
   return (
-    <Badge variant="count" className={floating ? "absolute -top-1.5 -right-2.5" : "ml-auto"} aria-label={`${count} in queue`}>
+    <Badge variant="count" className={floating ? "absolute -top-1.5 -right-2.5" : "ml-auto"} aria-label={`${count} processing`}>
       {count > 99 ? "99+" : count}
     </Badge>
   )
@@ -86,7 +86,7 @@ export function AppShell() {
   useCommands(() => [
     go("library", "Library", "/", ["songs", "home"]),
     go("upload", "Upload song", "/upload", ["add", "import", "link", "file"]),
-    go("queue", "Queue", "/queue", ["processing", "jobs"]),
+    go("processing", "Processing", "/processing", ["queue", "jobs", "imports"]),
     ...(admin ? [go("invites", "Invites", "/admin/invites", ["users", "admin"])] : []),
     go("account", "Account", "/account", ["settings", "storage", "install", "update"]),
     { id: "app.sign-out", title: "Sign out", group: "General", keywords: ["log out", "logout"], run: () => void logout() },
@@ -103,7 +103,7 @@ export function AppShell() {
         </Button>
         <nav className="flex flex-col gap-1" aria-label="Main">
           <NavLink to="/" end className={linkClass}><Library className="size-5" />Library</NavLink>
-          <NavLink to="/queue" className={linkClass}><ListOrdered className="size-5" />Queue<QueueCount count={count} /></NavLink>
+          <NavLink to="/processing" className={linkClass}><Layers className="size-5" />Processing<QueueCount count={count} /></NavLink>
           {admin && <NavLink to="/admin/invites" className={linkClass}><Users className="size-5" />Invites</NavLink>}
         </nav>
         <div className="mt-auto flex flex-col gap-4">
@@ -131,12 +131,12 @@ export function AppShell() {
         <NavLink to="/upload" className={mobileLinkClass}>
           <Plus className="size-5" />Upload
         </NavLink>
-        <NavLink to="/queue" className={mobileLinkClass}>
+        <NavLink to="/processing" className={mobileLinkClass}>
           <span className="relative">
-            <ListOrdered className="size-5" />
+            <Layers className="size-5" />
             <QueueCount count={count} floating />
           </span>
-          Queue
+          Processing
         </NavLink>
         {admin && (
           <NavLink to="/admin/invites" className={mobileLinkClass}>

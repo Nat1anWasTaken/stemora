@@ -1,6 +1,6 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import { BrowserRouter, Route, Routes } from "react-router"
+import { BrowserRouter, Navigate, Route, Routes } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import "./index.css"
 import { PwaManager } from "@/components/app/pwa"
@@ -14,7 +14,7 @@ import { AccountPage } from "@/pages/account"
 import { BootstrapPage, InvitePage, LoginPage } from "@/pages/auth"
 import { InvitesPage } from "@/pages/invites"
 import { LibraryPage } from "@/pages/library"
-import { QueuePage } from "@/pages/queue"
+import { ProcessingPage } from "@/pages/processing"
 import { SongPage } from "@/pages/song"
 import { UploadPage } from "@/pages/upload"
 
@@ -43,7 +43,8 @@ createRoot(document.getElementById("root")!).render(
               <Route element={<AppShell />}>
                 <Route index element={<LibraryPage />} />
                 <Route path="/upload" element={<UploadPage />} />
-                <Route path="/queue" element={<QueuePage />} />
+                <Route path="/processing" element={<ProcessingPage />} />
+                <Route path="/queue" element={<Navigate to="/processing" replace />} />
                 <Route path="/admin/invites" element={<InvitesPage />} />
                 <Route path="/account" element={<AccountPage />} />
               </Route>

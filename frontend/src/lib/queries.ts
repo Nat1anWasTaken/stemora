@@ -92,7 +92,7 @@ export function useSongActions() {
   })
   const reprocess = useMutation({
     mutationFn: (v: { id: string; model: Model }) => api.reprocess(v.id, v.model),
-    onSuccess: (song, v) => { toast.success(song.status === "pending" ? "Added to the queue" : "Processing started"); refresh(v.id) },
+    onSuccess: (song, v) => { toast.success(song.status === "pending" ? "Waiting in Processing" : "Processing started"); refresh(v.id) },
     onError: (e) => toast.error(message(e)),
   })
   // Import the same link again, then drop the failed song.
@@ -103,13 +103,13 @@ export function useSongActions() {
       await api.remove(s.id)
       return fresh
     },
-    onSuccess: (fresh, s) => { toast.success(fresh.status === "pending" ? "Added to the queue" : "Import started"); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
+    onSuccess: (fresh, s) => { toast.success(fresh.status === "pending" ? "Waiting in Processing" : "Import started"); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
     onError: (e) => { toast.error(message(e)); refresh() },
   })
   // Takes a song out of the queue, or stops an import that is downloading.
   const cancel = useMutation({
     mutationFn: (s: Song) => api.cancel(s.id),
-    onSuccess: (_d, s) => { toast.success(s.status === "importing" || isLinkImport(s) ? "Import cancelled" : "Removed from the queue"); refresh(s.id) },
+    onSuccess: (_d, s) => { toast.success(s.status === "importing" || isLinkImport(s) ? "Import cancelled" : "Removed from Processing"); refresh(s.id) },
     onError: (e, s) => { toast.error(message(e)); refresh(s.id) },
   })
   return { remove, rename, reprocess, reimport, cancel }
