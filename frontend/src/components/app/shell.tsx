@@ -1,5 +1,5 @@
 import { Layers, Library, LogOut, Plus, RotateCw, Search, UserRound, Users, WifiOff } from "lucide-react"
-import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 import { PALETTE_SHORTCUT, toggleCommandPalette } from "@/components/app/command-palette"
@@ -83,6 +83,8 @@ export function AppShell() {
   const nav = useNavigate()
   const admin = me.data?.role === "admin"
   const { count } = useQueue()
+  /** Setlists live in the Library. */
+  const inSetlist = useLocation().pathname.startsWith("/setlists/")
   /** A song is loaded: the mini player shows, so the page needs room below it. */
   const playing = usePlayer((s) => s.songId !== null)
   const logout = async () => {
@@ -112,7 +114,7 @@ export function AppShell() {
           <kbd className="text-xs">{formatShortcut(PALETTE_SHORTCUT)}</kbd>
         </Button>
         <nav className="flex flex-col gap-1" aria-label="Main">
-          <NavLink to="/" end className={linkClass}><Library className="size-5" />Library</NavLink>
+          <NavLink to="/" end className={(a) => linkClass({ isActive: a.isActive || inSetlist })}><Library className="size-5" />Library</NavLink>
           <NavLink to="/processing" className={linkClass}><Layers className="size-5" />Processing<QueueCount count={count} /></NavLink>
           {admin && <NavLink to="/admin/invites" className={linkClass}><Users className="size-5" />Invites</NavLink>}
         </nav>
@@ -136,7 +138,7 @@ export function AppShell() {
 
       <MiniPlayer />
       <nav className="glass vt-nav fixed inset-x-4 bottom-nav z-30 animate-in duration-500 ease-spring fade-in slide-in-from-bottom-4 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
-        <NavLink to="/" end className={mobileLinkClass}>
+        <NavLink to="/" end className={(a) => mobileLinkClass({ isActive: a.isActive || inSetlist })}>
           <Library className="size-5" />Library
         </NavLink>
         <NavLink to="/upload" className={mobileLinkClass}>
