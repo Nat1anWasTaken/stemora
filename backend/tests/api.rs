@@ -2347,6 +2347,89 @@ async fn spotify_tracks_are_matched_when_imported() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_imports_respect_the_queue_limit() {
+    // No job slots (the tweak bypasses config validation), so every import stays `pending`.
+    let Some(app) = setup_with(|c| {
+        c.max_concurrent_jobs = 0;
+        c.max_queued_per_user = 3;
+    })
+    .await
+    else {
+        return;
+    };
+    let admin = app.admin().await;
+    let app = Arc::new(app);
+    let tasks: Vec<_> = (0..24)
+        .map(|i| {
+            let (app, admin) = (app.clone(), admin.clone());
+            tokio::spawn(async move {
+                app.post(
+                    "/api/songs/import",
+                    &admin,
+                    json!({"url": format!("https://www.youtube.com/watch?v={i}"), "model": "htdemucs"}),
+                )
+                .await
+                .status
+            })
+        })
+        .collect();
+    let mut accepted = 0;
+    for t in tasks {
+        match t.await.unwrap() {
+            StatusCode::OK => accepted += 1,
+            s => assert_eq!(s, StatusCode::TOO_MANY_REQUESTS),
+        }
+    }
+    assert_eq!(accepted, 3);
+    let (pending,): (i64,) = sqlx::query_as("SELECT count(*) FROM songs WHERE status = 'pending'")
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(pending, 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn admission_waits_for_the_queue_lock() {
+    let Some(app) = setup_with(|c| c.max_concurrent_jobs = 0).await else {
+        return;
+    };
+    let admin = app.admin().await;
+    let uid: (Uuid,) = sqlx::query_as("SELECT id FROM users LIMIT 1")
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
+    // Hold the user's queue lock, as a concurrent admission or pump would.
+    let mut tx = app.state.pool.begin().await.unwrap();
+    jobs::lock_queue(&mut tx, uid.0).await.unwrap();
+    let app = Arc::new(app);
+    let req = {
+        let (app, admin) = (app.clone(), admin.clone());
+        tokio::spawn(async move {
+            app.post(
+                "/api/songs/import",
+                &admin,
+                json!({"url": "https://www.youtube.com/watch?v=x", "model": "htdemucs"}),
+            )
+            .await
+            .status
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Nothing is stored until the lock is free: the size check and the insert happen under it.
+    let (songs,): (i64,) = sqlx::query_as("SELECT count(*) FROM songs")
+        .fetch_one(&app.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        songs, 0,
+        "the import was stored while the queue lock was held"
+    );
+    assert!(!req.is_finished());
+    tx.commit().await.unwrap();
+    assert_eq!(req.await.unwrap(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn batch_import_queues_in_order() {
     let app = app!();

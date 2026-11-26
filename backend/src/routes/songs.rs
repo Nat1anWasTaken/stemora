@@ -46,12 +46,18 @@ fn check_rate(st: &AppState, user: Uuid) -> AppResult<()> {
     }
 }
 
-/// Refuse new work once the user's queue holds `MAX_QUEUED_PER_USER` waiting songs.
-async fn check_queue_room(st: &AppState, user: Uuid) -> AppResult<()> {
+/// Refuse new work once the user's queue holds `MAX_QUEUED_PER_USER` waiting songs. Paths that
+/// add a `pending` song run it inside a transaction holding [`jobs::lock_queue`], so that
+/// concurrent requests cannot both pass it; elsewhere it only rejects early.
+async fn check_queue_room(
+    db: impl sqlx::PgExecutor<'_>,
+    st: &AppState,
+    user: Uuid,
+) -> AppResult<()> {
     let (waiting,): (i64,) =
         sqlx::query_as("SELECT count(*) FROM songs WHERE user_id = $1 AND status = 'pending'")
             .bind(user)
-            .fetch_one(&st.pool)
+            .fetch_one(db)
             .await?;
     if waiting >= st.config.max_queued_per_user {
         return Err(AppError::too_many(
@@ -257,7 +263,8 @@ async fn create(
     check_rate(&st, u.id)?;
     upload::validate_model(&r.model)?;
     let (ext, content_type) = upload::validate_audio(&r.filename, &r.content_type)?;
-    check_queue_room(&st, u.id).await?;
+    // Only an early rejection: the song waits as `uploading` until `complete`.
+    check_queue_room(&st.pool, &st, u.id).await?;
     if r.size <= 0 {
         return Err(AppError::bad_request(
             "invalid_size",
@@ -363,19 +370,33 @@ async fn import_link(
 ) -> AppResult<Json<SongView>> {
     check_rate(&st, u.id)?;
     upload::validate_model(&r.model)?;
-    let song_id = insert_import(&st, u.id, &r.url, &r.title, &r.model).await?;
-    jobs::pump(&st, u.id).await?;
-    Ok(Json(live_view(&st, song_id).await?))
+    let stored = insert_import(&st, u.id, &r.url, &r.title, &r.model).await?;
+    // The song is stored: a failure to start it now is retried by the reaper, not reported.
+    jobs::pump_logged(&st, u.id).await;
+    Ok(Json(refreshed(&st, stored).await))
+}
+
+/// `stored` as it is now, or as it was stored when it cannot be read again: a request that
+/// stored songs must not fail afterwards, or a client retrying it would add them twice.
+async fn refreshed(st: &AppState, stored: SongView) -> SongView {
+    match live_view(st, stored.id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(song_id = %stored.id, error = %e.message, "could not read a stored song");
+            stored
+        }
+    }
 }
 
 /// Check and add one link import to the user's queue (as `pending`; the caller pumps).
+/// Returns the song as stored.
 async fn insert_import(
     st: &AppState,
     user: Uuid,
     url: &str,
     title: &str,
     model: &str,
-) -> AppResult<Uuid> {
+) -> AppResult<SongView> {
     let url = import::validate_url(url)?;
     if db::used_bytes(&st.pool, user).await? >= st.config.quota_bytes() {
         return Err(AppError::forbidden(
@@ -383,7 +404,6 @@ async fn insert_import(
             "storage quota exceeded",
         ));
     }
-    check_queue_room(st, user).await?;
     // Until the download reports a title, the link is the placeholder title.
     let title: String = {
         let t = title.trim();
@@ -393,18 +413,25 @@ async fn insert_import(
     .take(200)
     .collect();
     let song_id = Uuid::new_v4();
-    sqlx::query(
+    // The size check and the insert hold the queue lock together.
+    let mut tx = st.pool.begin().await?;
+    jobs::lock_queue(&mut tx, user).await?;
+    check_queue_room(&mut *tx, st, user).await?;
+    let stored: SongView = sqlx::query_as(
         "INSERT INTO songs (id, user_id, title, filename, content_type, size_bytes, status, model, original_key, source_url, queued_at) \
-         VALUES ($1, $2, $3, '', 'application/octet-stream', 0, 'pending', $4, '', $5, now())",
+         VALUES ($1, $2, $3, '', 'application/octet-stream', 0, 'pending', $4, '', $5, now()) \
+         RETURNING id, title, status, duration_s, size_bytes, model, 0 AS progress, NULL::text AS stage, \
+         error, source_url, created_at, NULL::bigint AS queue_position",
     )
     .bind(song_id)
     .bind(user)
     .bind(&title)
     .bind(model)
     .bind(&url)
-    .execute(&st.pool)
+    .fetch_one(&mut *tx)
     .await?;
-    Ok(song_id)
+    tx.commit().await?;
+    Ok(stored)
 }
 
 /// Most links one batch import takes.
@@ -438,26 +465,26 @@ async fn import_batch(
     }
     check_rate(&st, u.id)?;
     upload::validate_model(&r.model)?;
-    let (mut ids, mut failed) = (Vec::new(), Vec::new());
+    let (mut stored, mut failed) = (Vec::new(), Vec::new());
     for item in &r.items {
         let mut res = insert_import(&st, u.id, &item.url, &item.title, &r.model).await;
         // Songs added so far only wait as `pending`: start what free slots allow, then retry.
-        if matches!(&res, Err(e) if e.code == "queue_full") && !ids.is_empty() {
+        if matches!(&res, Err(e) if e.code == "queue_full") && !stored.is_empty() {
             jobs::pump_logged(&st, u.id).await;
             res = insert_import(&st, u.id, &item.url, &item.title, &r.model).await;
         }
         match res {
-            Ok(id) => ids.push(id),
+            Ok(song) => stored.push(song),
             Err(e) => failed.push(json!({"url": item.url, "error": e.message, "code": e.code})),
         }
     }
-    // The songs are stored: a failure to start them now is retried by the reaper, not reported.
-    if !ids.is_empty() {
+    // From here on the songs are stored, so nothing may fail the request (see `refreshed`).
+    if !stored.is_empty() {
         jobs::pump_logged(&st, u.id).await;
     }
-    let mut songs = Vec::with_capacity(ids.len());
-    for id in ids {
-        songs.push(live_view(&st, id).await?);
+    let mut songs = Vec::with_capacity(stored.len());
+    for song in stored {
+        songs.push(refreshed(&st, song).await);
     }
     Ok(Json(json!({"songs": songs, "failed": failed})))
 }
@@ -720,7 +747,7 @@ async fn reprocess(
         ));
     }
     check_rate(&st, u.id)?;
-    check_queue_room(&st, u.id).await?;
+    check_queue_room(&st.pool, &st, u.id).await?;
     // A failed link import never stored an original (empty key).
     if song.original_key.is_empty()
         || st
@@ -735,6 +762,10 @@ async fn reprocess(
             "the original upload no longer exists",
         ));
     }
+    // The queue lock is held from the size check to the song turning `pending`.
+    let mut tx = st.pool.begin().await?;
+    jobs::lock_queue(&mut tx, u.id).await?;
+    check_queue_room(&mut *tx, &st, u.id).await?;
     // Remove old stems from R2 first; if that fails nothing has changed in the DB.
     st.storage
         .delete_prefix(&storage::stems_prefix(u.id, id))
@@ -748,7 +779,6 @@ async fn reprocess(
         .delete(&storage::analysis_key(u.id, id))
         .await
         .map_err(AppError::bad_gateway)?;
-    let mut tx = st.pool.begin().await?;
     let claimed = sqlx::query(
         "UPDATE songs SET status = 'pending', model = $2, error = NULL, duration_s = NULL, \
          queued_at = now(), updated_at = now() WHERE id = $1 AND status IN ('ready', 'failed')",
@@ -768,7 +798,8 @@ async fn reprocess(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    jobs::pump(&st, u.id).await?;
+    // The song is queued: a failure to start it now is retried by the reaper, not reported.
+    jobs::pump_logged(&st, u.id).await;
     Ok(Json(song_view(&st.pool, id).await?))
 }
 

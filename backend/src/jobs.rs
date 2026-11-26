@@ -255,6 +255,21 @@ pub async fn requeue_orphaned_imports(state: &AppState) -> Result<u64, sqlx::Err
     Ok(rows.len() as u64)
 }
 
+/// Take the user's queue lock until `tx` ends. [`pump`] holds it while it starts songs, and
+/// whatever adds a `pending` song holds it from the queue-size check to the insert, so neither
+/// two pumps nor two concurrent admissions can overshoot a limit.
+pub async fn lock_queue(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+        .bind(QUEUE_LOCK_CLASS)
+        .bind(user_id.to_string())
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 /// Start the oldest `pending` songs of a user while they have free slots
 /// (`MAX_CONCURRENT_JOBS` minus [`db::active_jobs`]): a link that has no original yet starts
 /// importing, anything else becomes a queued job. Call it whenever work is added to the queue
@@ -262,11 +277,7 @@ pub async fn requeue_orphaned_imports(state: &AppState) -> Result<u64, sqlx::Err
 pub async fn pump(state: &AppState, user_id: Uuid) -> Result<(), sqlx::Error> {
     let mut tx = state.pool.begin().await?;
     // Only one pump per user at a time, so two of them cannot both fill the same free slot.
-    sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
-        .bind(QUEUE_LOCK_CLASS)
-        .bind(user_id.to_string())
-        .execute(&mut *tx)
-        .await?;
+    lock_queue(&mut tx, user_id).await?;
     let free = state.config.max_concurrent_jobs - db::active_jobs(&mut *tx, user_id).await?;
     if free <= 0 {
         return tx.commit().await;
