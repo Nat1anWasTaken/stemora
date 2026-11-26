@@ -1,5 +1,5 @@
-import { Library, ListOrdered, LogOut, Plus, RotateCw, Search, UserRound, Users, WifiOff } from "lucide-react"
-import { NavLink, Navigate, Outlet, useNavigate } from "react-router"
+import { Layers, Library, LogOut, Plus, RotateCw, Search, UserRound, Users, WifiOff } from "lucide-react"
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2 } from "lucide-react"
 import { PALETTE_SHORTCUT, toggleCommandPalette } from "@/components/app/command-palette"
@@ -16,6 +16,10 @@ import { keys, useMe, useUsage } from "@/lib/queries"
 import { useQueue } from "@/lib/queue"
 import { uploads } from "@/lib/uploads"
 import { cn } from "@/lib/utils"
+import { MiniPlayer } from "@/player/ui/mini-player"
+import { PlaybackHost } from "@/player/ui/playback-host"
+import { usePlayer } from "@/player/store"
+import { rememberMe } from "@/player/offline"
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn("flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors", isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
@@ -23,11 +27,11 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 const mobileLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn("pressable flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-xs font-medium duration-200", isActive ? "bg-primary/15 text-primary" : "text-muted-foreground")
 
-/** Songs running or waiting, for the Queue nav item. */
+/** Songs running or waiting, for the Processing nav item. */
 function QueueCount({ count, floating }: { count: number; floating?: boolean }) {
   if (count === 0) return null
   return (
-    <Badge variant="count" className={floating ? "absolute -top-1.5 -right-2.5" : "ml-auto"} aria-label={`${count} in queue`}>
+    <Badge variant="count" className={floating ? "absolute -top-1.5 -right-2.5" : "ml-auto"} aria-label={`${count} processing`}>
       {count > 99 ? "99+" : count}
     </Badge>
   )
@@ -51,7 +55,8 @@ export function RequireAuth() {
   const me = useMe()
   if (me.isLoading) return <div className="grid min-h-app place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
   // A network failure (e.g. the installed app opened offline) is not a signed-out user.
-  if (me.isError)
+  // A failed refetch keeps the user it already has (the network dropped mid-set): only a first load blocks.
+  if (me.isError && !me.data)
     return (
       <div className="flex min-h-app flex-col items-center justify-center gap-4 px-6 pt-safe pb-safe text-center">
         <WifiOff className="size-10 text-muted-foreground" />
@@ -66,7 +71,12 @@ export function RequireAuth() {
       </div>
     )
   if (!me.data) return <Navigate to="/login" replace />
-  return <Outlet />
+  return (
+    <>
+      <PlaybackHost />
+      <Outlet />
+    </>
+  )
 }
 
 export function AppShell() {
@@ -75,18 +85,23 @@ export function AppShell() {
   const nav = useNavigate()
   const admin = me.data?.role === "admin"
   const { count } = useQueue()
+  /** Setlists live in the Library. */
+  const inSetlist = useLocation().pathname.startsWith("/setlists/")
+  /** A song is loaded: the mini player shows, so the page needs room below it. */
+  const playing = usePlayer((s) => s.songId !== null)
   const logout = async () => {
     await api.logout().catch(() => {})
     uploads.reset()
     qc.clear()
     qc.setQueryData(keys.me, null)
+    rememberMe(null)
     nav("/login", { replace: true })
   }
   const go = (id: string, title: string, to: string, keywords: string[] = []): Command => ({ id: `nav.${id}`, title, group: "Go to", keywords, run: () => nav(to) })
   useCommands(() => [
     go("library", "Library", "/", ["songs", "home"]),
     go("upload", "Upload song", "/upload", ["add", "import", "link", "file"]),
-    go("queue", "Queue", "/queue", ["processing", "jobs"]),
+    go("processing", "Processing", "/processing", ["queue", "jobs", "imports"]),
     ...(admin ? [go("invites", "Invites", "/admin/invites", ["users", "admin"])] : []),
     go("account", "Account", "/account", ["settings", "storage", "install", "update"]),
     { id: "app.sign-out", title: "Sign out", group: "General", keywords: ["log out", "logout"], run: () => void logout() },
@@ -102,8 +117,8 @@ export function AppShell() {
           <kbd className="text-xs">{formatShortcut(PALETTE_SHORTCUT)}</kbd>
         </Button>
         <nav className="flex flex-col gap-1" aria-label="Main">
-          <NavLink to="/" end className={linkClass}><Library className="size-5" />Library</NavLink>
-          <NavLink to="/queue" className={linkClass}><ListOrdered className="size-5" />Queue<QueueCount count={count} /></NavLink>
+          <NavLink to="/" end className={(a) => linkClass({ isActive: a.isActive || inSetlist })}><Library className="size-5" />Library</NavLink>
+          <NavLink to="/processing" className={linkClass}><Layers className="size-5" />Processing<QueueCount count={count} /></NavLink>
           {admin && <NavLink to="/admin/invites" className={linkClass}><Users className="size-5" />Invites</NavLink>}
         </nav>
         <div className="mt-auto flex flex-col gap-4">
@@ -118,25 +133,26 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 pb-nav md:pb-0">
+      <main className={cn("min-w-0 flex-1", playing ? "pb-nav-mini md:pb-28" : "pb-nav md:pb-0")}>
         <PageTransition>
           <Outlet />
         </PageTransition>
       </main>
 
+      <MiniPlayer />
       <nav className="glass vt-nav fixed inset-x-4 bottom-nav z-30 animate-in duration-500 ease-spring fade-in slide-in-from-bottom-4 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
-        <NavLink to="/" end className={mobileLinkClass}>
+        <NavLink to="/" end className={(a) => mobileLinkClass({ isActive: a.isActive || inSetlist })}>
           <Library className="size-5" />Library
         </NavLink>
         <NavLink to="/upload" className={mobileLinkClass}>
           <Plus className="size-5" />Upload
         </NavLink>
-        <NavLink to="/queue" className={mobileLinkClass}>
+        <NavLink to="/processing" className={mobileLinkClass}>
           <span className="relative">
-            <ListOrdered className="size-5" />
+            <Layers className="size-5" />
             <QueueCount count={count} floating />
           </span>
-          Queue
+          Processing
         </NavLink>
         {admin && (
           <NavLink to="/admin/invites" className={mobileLinkClass}>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { CLICK_SOUNDS, clickSound } from "@/player/click-sounds"
 import { usePlayer } from "@/player/store"
 
-/** Which sound the metronome makes (kept in this browser). */
+/** Which sound the metronome makes (part of the song's playback settings). */
 export function ClickSoundPicker() {
   const id = usePlayer((s) => s.clickSound)
   const { setClickSound } = usePlayer.getState()

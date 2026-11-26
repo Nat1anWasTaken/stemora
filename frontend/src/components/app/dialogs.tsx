@@ -37,7 +37,20 @@ export function ConfirmDialog(props: {
   )
 }
 
-export function RenameDialog(props: { open: boolean; onOpenChange: (o: boolean) => void; title: string; onRename: (t: string) => void }) {
+/** Asks for one line of text: a song's name by default; `heading`, `description`, `label` and `submit` reword it (setlist names, notes). */
+export function RenameDialog(props: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  title: string
+  onRename: (t: string) => void
+  heading?: string
+  description?: string
+  label?: string
+  submit?: string
+  maxLength?: number
+  /** Whether an empty value may be saved (clearing notes). */
+  allowEmpty?: boolean
+}) {
   const [value, setValue] = useState(props.title)
   return (
     <Dialog open={props.open} onOpenChange={(o) => { if (o) setValue(props.title); props.onOpenChange(o) }}>
@@ -47,19 +60,19 @@ export function RenameDialog(props: { open: boolean; onOpenChange: (o: boolean) 
           onSubmit={(e) => {
             e.preventDefault()
             const t = value.trim()
-            if (t) {
+            if (t || props.allowEmpty) {
               props.onRename(t)
               props.onOpenChange(false)
             }
           }}
         >
           <DialogHeader>
-            <DialogTitle>Rename song</DialogTitle>
-            <DialogDescription>Only changes the name shown in your library.</DialogDescription>
+            <DialogTitle>{props.heading ?? "Rename song"}</DialogTitle>
+            <DialogDescription>{props.description ?? "Only changes the name shown in your library."}</DialogDescription>
           </DialogHeader>
-          <Input value={value} onChange={(e) => setValue(e.target.value)} autoFocus maxLength={200} aria-label="Song title" />
+          <Input value={value} onChange={(e) => setValue(e.target.value)} autoFocus maxLength={props.maxLength ?? 200} aria-label={props.label ?? "Song title"} />
           <DialogFooter>
-            <Button type="submit" disabled={!value.trim()}>Save name</Button>
+            <Button type="submit" disabled={!value.trim() && !props.allowEmpty}>{props.submit ?? "Save name"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

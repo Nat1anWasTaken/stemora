@@ -1,7 +1,8 @@
 import { useRef, useState, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router"
-import { Ban, MoreHorizontal, Pencil, Play, RefreshCw, Sparkles, Trash2 } from "lucide-react"
+import { Ban, ListEnd, ListPlus, ListStart, MoreHorizontal, Pencil, Play, RefreshCw, Sparkles, Trash2 } from "lucide-react"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
+import { AddToSetlistDialog } from "@/components/app/add-to-setlist"
 import { ConfirmDialog, RenameDialog } from "@/components/app/dialogs"
 import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,7 @@ import { formatBytes, formatClock, hostOf, relativeTime } from "@/lib/format"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useSongActions } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { upNext } from "@/player/up-next"
 
 export type LibraryView = "grid" | "list"
 
@@ -25,14 +27,24 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
   const failedImport = isFailedImport(song)
   const importing = song.status === "importing"
   const pending = song.status === "pending"
-  const cancelLabel = importing || isLinkImport(song) ? "Cancel import" : "Remove from queue"
+  const cancelLabel = importing || isLinkImport(song) ? "Cancel import" : "Remove from Processing"
   const row = useRef<HTMLDivElement>(null)
-  const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true) })
+  const [addingTo, setAddingTo] = useState(false)
+  const ref = { id: song.id, title: song.title }
+  const swipe = useSwipeAction(row, { reveal: 96, onFullSwipe: () => setConfirm(true), onSwipeRight: ready ? () => upNext.add([ref]) : undefined })
   const list = view === "list"
 
   const entries: MenuEntry[] = [
     ...(isCancellable(song) ? [{ key: "cancel", label: cancelLabel, icon: <Ban />, onSelect: () => cancel.mutate(song) } as MenuEntry] : []),
-    ...(ready ? [{ key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) } as MenuEntry] : []),
+    ...(ready
+      ? ([
+          { key: "open", label: "Open player", icon: <Play />, onSelect: () => nav(`/songs/${song.id}`) },
+          { key: "next", label: "Play next", icon: <ListStart />, onSelect: () => upNext.playNext([ref]) },
+          { key: "add", label: "Add to Up Next", icon: <ListEnd />, onSelect: () => upNext.add([ref]) },
+          { key: "setlist", label: "Add to setlist…", icon: <ListPlus />, onSelect: () => setAddingTo(true) },
+          { key: "sep-play", separator: true },
+        ] as MenuEntry[])
+      : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
     ...((song.status === "failed" && !failedImport) || ready
       ? [{ key: "hq", label: song.model === HQ_MODEL ? "Reprocess" : "Reprocess in high quality", icon: <Sparkles />, onSelect: () => reprocess.mutate({ id: song.id, model: HQ_MODEL }) } as MenuEntry]
@@ -99,7 +111,12 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
 
   return (
     <li className="pressable relative">
-      <div className={cn("absolute inset-0.5 flex justify-end bg-destructive/20", list ? "rounded-2xl" : "rounded-3xl")} aria-hidden={!swipe.open}>
+      {/* Behind the row: Up Next on the left (swipe right), Delete on the right (swipe left). */}
+      <div className={cn("absolute inset-0.5 flex overflow-hidden", list ? "rounded-2xl" : "rounded-3xl")} aria-hidden={!swipe.open}>
+        <div className="flex flex-1 items-center bg-primary/20">
+          {ready && <span className="flex w-24 flex-col items-center gap-1 text-xs font-medium text-primary"><ListEnd className="size-5" />Up Next</span>}
+        </div>
+        <div className="flex flex-1 justify-end bg-destructive/20">
         <button
           type="button"
           tabIndex={swipe.open ? 0 : -1}
@@ -111,6 +128,7 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
         >
           <Trash2 className="size-5" />Delete
         </button>
+        </div>
       </div>
       {list ? (
         <div ref={row} className="surface-soft swipe-row relative flex flex-col gap-2 rounded-2xl border border-border px-3 py-2 hover:border-primary/40">
@@ -152,6 +170,7 @@ export function SongItem({ song, view }: { song: Song; view: LibraryView }) {
           {details}
         </div>
       )}
+      {ready && <AddToSetlistDialog songs={[ref]} open={addingTo} onOpenChange={setAddingTo} />}
       <RenameDialog open={renaming} onOpenChange={setRenaming} title={song.title} onRename={(t) => rename.mutate({ id: song.id, title: t })} />
       <ConfirmDialog
         open={confirm}

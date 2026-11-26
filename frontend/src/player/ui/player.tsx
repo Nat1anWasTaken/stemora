@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router"
-import { AudioWaveform, ChevronDown, Download, FileMusic, LayoutGrid, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
+import { useLocation, useNavigate } from "react-router"
+import { AudioWaveform, ChevronDown, Download, FileMusic, LayoutGrid, ListMusic, ListPlus, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { ActionMenu, type MenuEntry } from "@/components/app/action-menu"
@@ -14,8 +14,12 @@ import { formatClock } from "@/lib/format"
 import { useSongActions } from "@/lib/queries"
 import { tempoMidi } from "@/player/midi"
 import { STEM_NAMES } from "@/player/mixer"
-import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
-import { getPosition, usePlayer } from "@/player/store"
+import { getPosition, settingsOf, usePlayer } from "@/player/store"
+import { openSong, useUpNext } from "@/player/up-next"
+import { SettingsSourceMenu } from "@/player/ui/settings-source"
+import { UpNextPanel } from "@/player/ui/up-next-panel"
+import { AddToSetlistDialog } from "@/components/app/add-to-setlist"
+import { Badge } from "@/components/ui/badge"
 import { ChartToolbar, loadChart, saveChart, type Chart, type DrumControls } from "@/player/ui/chart-header"
 import { ChordGrid } from "@/player/ui/chord-grid"
 import { DrumNotation } from "@/player/ui/drum-notation"
@@ -30,11 +34,11 @@ import { useSheetDrag } from "@/player/ui/use-sheet-drag"
 import { usePlayerCommands } from "@/player/ui/use-player-commands"
 import { TempoEditor } from "@/player/ui/tempo-editor/tempo-editor"
 import { Swap, WorkspaceToolbar } from "@/player/ui/workspace"
-import { useTempoMarkers } from "@/player/use-tempo-markers"
 import type { StemName } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-function usePlayerEnvironment() {
+/** Full-screen player pages: no page zoom, and the `player-active` styles (no rubber-banding behind the sheet). */
+export function usePlayerEnvironment() {
   useEffect(() => {
     const html = document.documentElement
     html.classList.add("player-active")
@@ -48,29 +52,10 @@ function usePlayerEnvironment() {
   }, [])
 }
 
-function useMediaSession(title: string) {
-  const status = usePlayer((s) => s.status)
-  const playing = usePlayer((s) => s.playing)
-  const duration = usePlayer((s) => s.duration)
-  useEffect(() => {
-    if (status !== "ready") return
-    const { play, pause, seek, skip } = usePlayer.getState()
-    setMediaMetadata(title, "/icons/icon-512.png")
-    bindMediaHandlers({ play, pause, seekTo: seek, seekBy: skip })
-    return clearMediaSession
-  }, [status, title])
-  useEffect(() => {
-    if (status !== "ready") return
-    setPlaybackState(playing, getPosition(), duration)
-    if (!playing) return
-    const id = setInterval(() => setPlaybackState(true, getPosition(), duration), 1000)
-    return () => clearInterval(id)
-  }, [status, playing, duration])
-}
-
 export function Player({ detail }: { detail: SongDetail }) {
   const { song } = detail
   const nav = useNavigate()
+  const location = useLocation()
   const { remove, rename, reprocess } = useSongActions()
   const status = usePlayer((s) => s.status)
   const loadProgress = usePlayer((s) => s.loadProgress)
@@ -89,6 +74,8 @@ export function Player({ detail }: { detail: SongDetail }) {
   const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [reproc, setReproc] = useState(false)
+  const [addingTo, setAddingTo] = useState(false)
+  const upcoming = useUpNext((s) => Math.max(0, s.items.length - s.index - 1))
   const select = useCallback((n: StemName) => setSelected(n), [])
   const toggleView = useCallback(() => setView((v) => (v === "tempo" ? "practice" : "tempo")), [])
   const practice = desktop ? view === "practice" : tab === "practice"
@@ -115,7 +102,6 @@ export function Player({ detail }: { detail: SongDetail }) {
   }), [])
   const drumChart = useDrumChart(precision)
   const { breaks, toggle: toggleBreak, editable: breaksEditable } = useDrumBreaks(song.id, detail)
-  useTempoMarkers(song.id, detail.tempo_markers)
   const toggleBreakAtPlayhead = useCallback(() => {
     if (!drumChart) return
     const bar = barIndexAt(drumChart.bars, getPosition())
@@ -137,22 +123,34 @@ export function Player({ detail }: { detail: SongDetail }) {
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
-  useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)
 
-  // Navigate even if the exit animation never reports its end (e.g. the tab is hidden).
+  // Closing only hides the sheet: the song keeps playing in the mini player, back on the page it was opened from.
+  const leave = useCallback(() => {
+    if (location.key !== "default") nav(-1)
+    else nav("/", { replace: true })
+  }, [location.key, nav])
+  // Leave even if the exit animation never reports its end (e.g. the tab is hidden).
   useEffect(() => {
     if (!closing) return
-    const id = setTimeout(() => nav("/"), 500)
+    const id = setTimeout(leave, 500)
     return () => clearTimeout(id)
-  }, [closing, nav])
+  }, [closing, leave])
 
-  // (Re)load only when the song changes; presigned URLs in later refetches are ignored.
+  // Load the song unless it is the one already playing (reopened from the mini player); it becomes Up Next's current
+  // song. Presigned URLs in later refetches are ignored; the song stays loaded after this sheet closes (PlaybackHost).
   useEffect(() => {
-    void usePlayer.getState().load(detail)
-    return () => usePlayer.getState().unload()
+    if (usePlayer.getState().songId !== song.id) void openSong(detail)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [song.id])
+  // Up Next moved on to another song (it ended, or Next): show that one.
+  useEffect(
+    () =>
+      usePlayer.subscribe((s, prev) => {
+        if (s.songId && s.songId !== prev.songId && s.songId !== song.id) nav(`/songs/${s.songId}`, { replace: true })
+      }),
+    [song.id, nav],
+  )
 
   const downloadAll = (format: "m4a" | "flac") => {
     toast.message(`Downloading 4 stems (${format.toUpperCase()})`, { description: "Your browser may ask to allow multiple downloads." })
@@ -160,6 +158,10 @@ export function Player({ detail }: { detail: SongDetail }) {
   }
 
   const hasGrid = usePlayer((s) => s.grid.beats.length > 0)
+  const retry = () => {
+    const st = usePlayer.getState()
+    void st.load(detail, { settings: settingsOf(st), scope: st.settingsScope ?? undefined, server: st.settingsServer })
+  }
   const exportTempo = () => {
     const { grid, duration, analysis } = usePlayer.getState()
     const bytes = tempoMidi(grid, duration, { title: song.title, sections: analysis?.sections })
@@ -175,6 +177,7 @@ export function Player({ detail }: { detail: SongDetail }) {
     { key: "dl-tempo", label: "Export tempo map (MIDI)", icon: <FileMusic />, disabled: !hasGrid, onSelect: exportTempo },
     ...(song.model !== HQ_MODEL ? [{ key: "hq", label: "Reprocess in high quality", icon: <Sparkles />, onSelect: () => setReproc(true) } as MenuEntry] : []),
     { key: "rename", label: "Rename", icon: <Pencil />, onSelect: () => setRenaming(true) },
+    { key: "setlist", label: "Add to setlist…", icon: <ListPlus />, onSelect: () => setAddingTo(true) },
     { key: "sep", separator: true },
     { key: "delete", label: "Delete song", icon: <Trash2 />, destructive: true, onSelect: () => setDeleting(true) },
   ]
@@ -191,7 +194,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   ) : status === "error" ? (
     <div role="alert" className="flex h-14 shrink-0 items-center gap-3 rounded-2xl border border-destructive/40 bg-destructive/10 px-4">
       <p className="min-w-0 flex-1 truncate text-sm text-destructive">{error}</p>
-      <Button variant="secondary" size="sm" onClick={() => void usePlayer.getState().load(detail)}>Try again</Button>
+      <Button variant="secondary" size="sm" onClick={retry}>Try again</Button>
     </div>
   ) : null
   const floatingStatus = statusPanel && <div className="absolute inset-x-4 bottom-2 z-10 rounded-2xl glass md:inset-x-6">{statusPanel}</div>
@@ -204,7 +207,7 @@ export function Player({ detail }: { detail: SongDetail }) {
       ref={sheet}
       className={cn("player-sheet sheet-drag fixed inset-0 z-40 flex h-app flex-col overflow-hidden pt-safe pr-safe pl-safe", closing ? "animate-sheet-out" : "animate-sheet-in")}
       onAnimationEnd={(e) => {
-        if (closing && e.target === e.currentTarget) nav("/")
+        if (closing && e.target === e.currentTarget) leave()
       }}
     >
       <div ref={dragZone} className="no-gestures shrink-0">
@@ -215,8 +218,20 @@ export function Player({ detail }: { detail: SongDetail }) {
           <Button variant="secondary" size="icon-lg" aria-label="Back to library" onClick={close}><ChevronDown className="md:rotate-90" /></Button>
           <div className="flex min-w-0 flex-1 flex-col px-1">
             <h1 className="truncate text-lg leading-tight font-semibold">{song.title}</h1>
-            <p className="truncate text-sm text-muted-foreground">{song.duration_s ? formatClock(song.duration_s) : "Stems"}{isHighQuality(song.model) ? " · High quality" : ""}</p>
+            <div className="flex min-w-0 items-center gap-1">
+              <p className="shrink-0 text-sm text-muted-foreground">{song.duration_s ? formatClock(song.duration_s) : "Stems"}{isHighQuality(song.model) ? " · High quality" : ""}</p>
+              <span className="text-sm text-muted-foreground" aria-hidden>·</span>
+              <SettingsSourceMenu />
+            </div>
           </div>
+          <UpNextPanel
+            trigger={
+              <Button variant="secondary" size="icon-lg" className="relative" aria-label={upcoming > 0 ? `Up next: ${upcoming} songs` : "Up next"}>
+                <ListMusic />
+                {upcoming > 0 && <Badge variant="count" className="absolute -top-1 -right-1">{upcoming}</Badge>}
+              </Button>
+            }
+          />
           <ActionMenu title={song.title} entries={entries} trigger={<Button variant="secondary" size="icon-lg" aria-label="More options"><MoreHorizontal /></Button>} />
         </header>
       </div>
@@ -293,6 +308,7 @@ export function Player({ detail }: { detail: SongDetail }) {
         </div>
       </footer>
 
+      <AddToSetlistDialog songs={[{ id: song.id, title: song.title }]} open={addingTo} onOpenChange={setAddingTo} />
       <RenameDialog open={renaming} onOpenChange={setRenaming} title={song.title} onRename={(t) => rename.mutate({ id: song.id, title: t })} />
       <ConfirmDialog
         open={deleting}

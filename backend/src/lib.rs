@@ -11,6 +11,7 @@ pub mod jobs;
 pub mod modal;
 pub mod ratelimit;
 pub mod routes;
+pub mod settings;
 pub mod storage;
 pub mod upload;
 
@@ -88,6 +89,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::webhooks::router())
         .merge(routes::admin::router())
         .merge(routes::usage::router())
+        .merge(routes::me::router())
+        .merge(routes::setlists::router())
         .route("/healthz", axum::routing::get(healthz));
     Router::new()
         .nest("/api", api)

@@ -5,13 +5,20 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
  * Dragging moves `row` through `--swipe-x` (the `swipe-row` utility). Releasing past half the row width calls
  * `onFullSwipe`; past half of `reveal` it stays open showing the action behind it; otherwise it springs back.
  * A tap anywhere else closes it, and the click that ends a swipe is swallowed so links under it don't fire.
+ * With `onSwipeRight`, the row also follows a swipe to the right, and releasing it past `reveal` calls that (the row
+ * springs back): a quick action shown behind the row's left edge.
  */
-export function useSwipeAction(row: RefObject<HTMLElement | null>, { reveal, onFullSwipe }: { reveal: number; onFullSwipe: () => void }) {
+export function useSwipeAction(
+  row: RefObject<HTMLElement | null>,
+  { reveal, onFullSwipe, onSwipeRight }: { reveal: number; onFullSwipe: () => void; onSwipeRight?: () => void },
+) {
   const [open, setOpen] = useState(false)
   const isOpen = useRef(false)
   const full = useRef(onFullSwipe)
+  const right = useRef(onSwipeRight)
   useEffect(() => {
     full.current = onFullSwipe
+    right.current = onSwipeRight
   })
   const close = useCallback(() => setOpen(false), [])
 
@@ -50,8 +57,9 @@ export function useSwipeAction(row: RefObject<HTMLElement | null>, { reveal, onF
       }
       if (axis !== "x") return
       const raw = start.base + dx
-      // rubber-band past the right edge, no limit to the left (up to the row width)
-      offset = raw > 0 ? raw * 0.2 : Math.max(raw, -el.offsetWidth)
+      // to the right: follows up to `reveal` then rubber-bands (or only rubber-bands without a right action);
+      // no limit to the left (up to the row width)
+      offset = raw > 0 ? (right.current && start.base === 0 ? Math.min(raw, reveal) + Math.max(0, raw - reveal) * 0.2 : raw * 0.2) : Math.max(raw, -el.offsetWidth)
       el.style.setProperty("--swipe-x", `${offset}px`)
     }
     const onUp = (e: PointerEvent) => {
@@ -64,12 +72,14 @@ export function useSwipeAction(row: RefObject<HTMLElement | null>, { reveal, onF
       // swallow the click that ends this gesture
       el.addEventListener("click", swallow, { capture: true, once: true })
       setTimeout(() => el.removeEventListener("click", swallow, { capture: true }), 300)
+      const rightSwipe = e.type === "pointerup" && !!right.current && offset >= reveal
       const fullSwipe = e.type === "pointerup" && offset < -el.offsetWidth * 0.5
       const next = !fullSwipe && e.type === "pointerup" && offset < -reveal / 2
       el.style.setProperty("--swipe-x", next ? `${-reveal}px` : "0px")
       isOpen.current = next
       setOpen(next)
       if (fullSwipe) full.current()
+      if (rightSwipe) right.current?.()
     }
     el.addEventListener("pointerdown", onDown)
     el.addEventListener("pointermove", onMove)

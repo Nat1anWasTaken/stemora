@@ -1,9 +1,11 @@
 import { create } from "zustand"
-import type { SongDetail, StemName } from "@/lib/api"
+import type { PlaybackSettings, SongDetail, StemName } from "@/lib/api"
 import { StemEngine } from "@/player/engine"
 import { startKeepAlive, stopKeepAlive } from "@/player/keepAlive"
 import { applyPreset, clampLoop, defaultMixer, toggleIn, type LoopRegion, type MixerState, type Preset } from "@/player/mixer"
-import { loadMixer, saveMixer } from "@/player/mixerStorage"
+import { initialSettings, type SettingsScope } from "@/player/settings"
+import { localSources } from "@/player/offline"
+import type { CountInClick } from "@/player/engine"
 import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
 import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED } from "@/player/tempo"
@@ -13,6 +15,14 @@ import { buildGrid, defaultMarkers, markerClicks, normalizeMarkers, type BeatGri
 
 let engine: StemEngine | null = null
 let abort: AbortController | null = null
+/** Up Next's say when a song ends: returns true when it goes on to play another, so background playback is kept up. */
+let songEnded: () => boolean = () => false
+export function setSongEndedHandler(fn: () => boolean) {
+  songEnded = fn
+}
+
+/** How a song is loaded: which settings set it opens with and where they are saved, and whether it starts by itself. */
+export type LoadOptions = { settings?: PlaybackSettings; scope?: SettingsScope; server?: PlaybackSettings | null; autoplay?: boolean }
 
 /** Current playhead in seconds; read in rAF loops (not reactive). */
 export const getPosition = () => engine?.position ?? 0
@@ -26,6 +36,11 @@ const HISTORY = 200
 
 type PlayerState = {
   songId: string | null
+  /** The loaded song as it was when loaded (its presigned URLs, tempo map and settings then); null when nothing is. */
+  detail: SongDetail | null
+  /** Where the settings being heard come from and go to (docs/playback.md), and that place's copy on the server. */
+  settingsScope: SettingsScope | null
+  settingsServer: PlaybackSettings | null
   status: "idle" | "loading" | "ready" | "error"
   loadProgress: number
   error: string | null
@@ -36,7 +51,7 @@ type PlayerState = {
   pendingA: number | null
   /** Metronome click on/off; it clicks on the beat grid. */
   metronome: boolean
-  /** Metronome sound (an id from CLICK_SOUNDS), kept per browser. */
+  /** Metronome sound (an id from CLICK_SOUNDS); this browser's last choice is the default for songs never set up. */
   clickSound: string
   /** Playback speed, 1 = original tempo. */
   speed: number
@@ -44,7 +59,7 @@ type PlayerState = {
   semitones: number
   /** The key switch: whether `semitones` is heard. Off plays the original key, for comparing against the transposed one. */
   keyEnabled: boolean
-  /** Stems that follow the key change (the rest keep their original key), kept per browser. Drums are left out by default. */
+  /** Stems that follow the key change (the rest keep their original key). Drums are left out by default. */
   transposed: StemName[]
   /** Whether the Signalsmith Stretch worklet can run (null while loading); without it speed changes also shift the pitch and the key cannot change. */
   canShift: boolean | null
@@ -56,9 +71,11 @@ type PlayerState = {
   canUndo: boolean
   canRedo: boolean
 
-  load: (detail: SongDetail) => Promise<void>
-  unload: () => void
-  play: () => void
+  load: (detail: SongDetail, opts?: LoadOptions) => Promise<void>
+  /** Switches the settings being heard (and where changes go) at once, mid-song too. */
+  applySettings: (settings: PlaybackSettings, scope: SettingsScope, server: PlaybackSettings | null) => void
+  unload: (opts?: { keepAlive?: boolean }) => void
+  play: (countIn?: CountInClick[]) => void
   pause: () => void
   toggle: () => void
   seek: (t: number) => void
@@ -91,13 +108,22 @@ type PlayerState = {
   redo: () => void
 }
 
+/** The playback settings set the player is on now (what docs/playback.md calls a settings set). */
+export const settingsOf = (s: Pick<PlayerState, "mixer" | "speed" | "semitones" | "keyEnabled" | "transposed" | "metronome" | "clickSound">): PlaybackSettings => ({
+  mixer: s.mixer,
+  speed: s.speed,
+  semitones: s.semitones,
+  key_enabled: s.keyEnabled,
+  transposed: s.transposed,
+  metronome: s.metronome,
+  click_sound: s.clickSound,
+})
+
 export const usePlayer = create<PlayerState>((set, get) => {
   const updateMixer = (fn: (m: MixerState) => MixerState) => {
     const mixer = fn(get().mixer)
     set({ mixer })
     engine?.setMixer(mixer)
-    const id = get().songId
-    if (id) saveMixer(id, mixer)
   }
   const applyKey = () => {
     const { semitones, keyEnabled, transposed } = get()
@@ -124,6 +150,9 @@ export const usePlayer = create<PlayerState>((set, get) => {
 
   return {
     songId: null,
+    detail: null,
+    settingsScope: null,
+    settingsServer: null,
     status: "idle",
     loadProgress: 0,
     error: null,
@@ -148,16 +177,21 @@ export const usePlayer = create<PlayerState>((set, get) => {
     markersDraft: false,
     markerEdits: 0,
 
-    async load(detail) {
-      get().unload()
+    async load(detail, opts = {}) {
+      // Keep the page's background-playback element going from one song to the next.
+      get().unload({ keepAlive: get().playing || !!opts.autoplay })
       const e = new StemEngine()
       engine = e
       abort = new AbortController()
-      const mixer = loadMixer(detail.song.id)
+      const s = opts.settings ?? initialSettings(detail.song.id, detail.settings)
+      const scope: SettingsScope = opts.scope ?? { kind: "song", id: detail.song.id }
+      const server = opts.server !== undefined ? opts.server : (detail.settings ?? null)
+      const mixer = s.mixer
       past = []
       future = []
       // The song record's length lets the charts and tempo map show before the stems are decoded.
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      set({ songId: detail.song.id, detail, settingsScope: scope, settingsServer: server, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: s.speed, semitones: s.semitones, keyEnabled: s.key_enabled, transposed: s.transposed, metronome: s.metronome, clickSound: s.click_sound, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      e.setSpeed(s.speed)
       e.setMetronome(get().metronome)
       e.setClickSound(get().clickSound)
       applyKey()
@@ -165,20 +199,23 @@ export const usePlayer = create<PlayerState>((set, get) => {
       void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
       e.onShiftUnavailable = () => engine === e && set({ canShift: false })
       e.onEnded = () => {
-        stopKeepAlive()
         set({ playing: false })
+        if (!songEnded()) stopKeepAlive()
       }
+      // A song kept offline plays from its cached files.
+      const src = await localSources(detail)
+      if (engine !== e) return src.release()
       try {
         // Beat/chord analysis is optional and never blocks playback.
-        if (detail.analysis_url) {
-          void fetchAnalysis(detail.analysis_url).then((analysis) => {
-            if (engine !== e || !analysis) return
-            set({ analysis })
-            applyGrid()
-          })
-        }
-        const peaksPromise = detail.peaks_url ? fetchPeaks(detail.peaks_url) : Promise.resolve(null)
-        await e.load(detail.stems.map((s) => ({ name: s.name, url: s.url })), (p) => engine === e && set({ loadProgress: p }), abort.signal)
+        const analysisPromise = src.analysis ? fetchAnalysis(src.analysis) : Promise.resolve(null)
+        void analysisPromise.then((analysis) => {
+          if (engine !== e || !analysis) return
+          set({ analysis })
+          applyGrid()
+        })
+        const peaksPromise = src.peaks ? fetchPeaks(src.peaks) : Promise.resolve(null)
+        void Promise.allSettled([analysisPromise, peaksPromise]).then(() => setTimeout(src.release, 60_000))
+        await e.load(src.stems, (p) => engine === e && set({ loadProgress: p }), abort.signal)
         if (engine !== e) return
         e.setMixer(mixer)
         let peaks = await peaksPromise
@@ -186,26 +223,36 @@ export const usePlayer = create<PlayerState>((set, get) => {
         if (engine !== e) return
         set({ status: "ready", duration: e.duration, peaks, loadProgress: 1, markers: normalizeMarkers(get().markers, e.duration) })
         applyGrid()
+        if (opts.autoplay) get().play()
       } catch (err) {
         if (engine !== e || (err instanceof DOMException && err.name === "AbortError")) return
         set({ status: "error", error: err instanceof Error ? err.message : "Could not load the stems" })
       }
     },
-    unload() {
+    unload(opts) {
       abort?.abort()
       abort = null
       engine?.dispose()
       engine = null
-      stopKeepAlive()
+      // iOS lets the silent element start only inside a tap, so the next song keeps it running rather than restarting it.
+      if (!opts?.keepAlive) stopKeepAlive()
       past = []
       future = []
-      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
+      set({ songId: null, detail: null, settingsScope: null, settingsServer: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
     },
-    play() {
+    play(countIn) {
       if (!engine || get().status !== "ready") return
       startKeepAlive() // inside the user gesture
       set({ playing: true })
-      engine.play().catch(() => set({ playing: false }))
+      engine.play(countIn).catch(() => set({ playing: false }))
+    },
+    applySettings(st, scope, server) {
+      set({ mixer: st.mixer, speed: st.speed, semitones: st.semitones, keyEnabled: st.key_enabled, transposed: st.transposed, metronome: st.metronome, clickSound: st.click_sound, settingsScope: scope, settingsServer: server })
+      engine?.setMixer(st.mixer)
+      engine?.setSpeed(st.speed)
+      engine?.setMetronome(st.metronome)
+      engine?.setClickSound(st.click_sound)
+      applyKey()
     },
     pause() {
       engine?.pause()

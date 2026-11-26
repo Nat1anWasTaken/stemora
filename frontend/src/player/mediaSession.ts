@@ -3,6 +3,9 @@ export type MediaHandlers = {
   pause: () => void
   seekTo: (t: number) => void
   seekBy: (delta: number) => void
+  /** Up Next: null when there is no song that way. */
+  next?: (() => void) | null
+  previous?: (() => void) | null
 }
 
 const ms = () => (typeof navigator !== "undefined" && "mediaSession" in navigator ? navigator.mediaSession : null)
@@ -28,6 +31,8 @@ export function bindMediaHandlers(h: MediaHandlers) {
   set("seekbackward", (d) => h.seekBy(-(d.seekOffset ?? 10)))
   set("seekforward", (d) => h.seekBy(d.seekOffset ?? 10))
   set("seekto", (d) => d.seekTime !== undefined && h.seekTo(d.seekTime))
+  set("nexttrack", h.next ? () => h.next?.() : null)
+  set("previoustrack", h.previous ? () => h.previous?.() : null)
 }
 
 export function clearMediaSession() {
@@ -35,7 +40,7 @@ export function clearMediaSession() {
   if (!s) return
   s.metadata = null
   s.playbackState = "none"
-  for (const a of ["play", "pause", "seekbackward", "seekforward", "seekto"] as const) {
+  for (const a of ["play", "pause", "seekbackward", "seekforward", "seekto", "nexttrack", "previoustrack"] as const) {
     try {
       s.setActionHandler(a, null)
     } catch {

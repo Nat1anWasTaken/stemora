@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router"
-import { ArrowDownUp, LayoutGrid, List, ListOrdered, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
+import { ArrowDownUp, LayoutGrid, Layers, List, Loader2, Music2, Plus, RotateCw, SearchX } from "lucide-react"
 import { ActionMenu } from "@/components/app/action-menu"
 import { SongItem, type LibraryView } from "@/components/app/song-item"
+import { LibraryTabs, useLibraryTab } from "@/components/app/library-tabs"
+import { SetlistsView } from "@/pages/setlists"
 import { Button } from "@/components/ui/button"
 import { SearchInput } from "@/components/ui/search-input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -65,7 +67,13 @@ function SkeletonItems({ view, count }: { view: LibraryView; count: number }) {
   return Array.from({ length: count }, (_, i) => <Skeleton key={i} className={view === "grid" ? "h-24" : "h-16"} />)
 }
 
+/** The Library: songs, or setlists (`?tab=setlists`). */
 export function LibraryPage() {
+  const [tab] = useLibraryTab()
+  return tab === "setlists" ? <SetlistsView /> : <SongsView />
+}
+
+function SongsView() {
   const { q, sort, setQ, setSort } = useLibraryParams()
   const [view, setView] = useLibraryView()
   // The field updates at once; the URL (and the query) follow after a short pause.
@@ -114,11 +122,12 @@ export function LibraryPage() {
         </div>
         <div className="flex gap-2">
           {inQueue > 0 && (
-            <Button size="lg" variant="secondary" render={<Link to="/queue" />}><ListOrdered />{inQueue} in queue</Button>
+            <Button size="lg" variant="secondary" render={<Link to="/processing" />}><Layers />{inQueue} processing</Button>
           )}
           <Button size="lg" className="hidden md:inline-flex" render={<Link to="/upload" />}><Plus />Upload song</Button>
         </div>
       </header>
+      <LibraryTabs />
 
       {!empty && (
         <div className="glass-page sticky top-0 z-10 -mx-4 -my-2 flex items-center gap-2 px-4 py-2 md:-mx-8 md:px-8">

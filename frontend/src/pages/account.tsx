@@ -10,6 +10,7 @@ import { api } from "@/lib/api"
 import { promptInstall, useInstallState } from "@/lib/install"
 import { applyUpdate, checkForUpdate, updatesSupported } from "@/lib/pwa-update"
 import { keys, useMe } from "@/lib/queries"
+import { rememberMe } from "@/player/offline"
 
 function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return (
@@ -155,6 +156,7 @@ export function AccountPage() {
     await api.logout().catch(() => {})
     qc.clear()
     qc.setQueryData(keys.me, null)
+    rememberMe(null)
     nav("/login", { replace: true })
   }
   if (!me.data) return null

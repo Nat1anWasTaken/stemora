@@ -214,6 +214,10 @@
 /* The command palette sits near the top on phones so the on-screen keyboard never covers it. */
 @utility top-safe-dialog { top: calc(env(safe-area-inset-top) + 1rem); }
 @utility bottom-nav { bottom: calc(env(safe-area-inset-bottom) + 0.75rem); }
+/* The mini player, just above the bottom nav (its 0.75rem offset + its height + a gap). */
+@utility bottom-mini { bottom: calc(env(safe-area-inset-bottom) + 5rem); }
+/* Room below the page for the bottom nav and the mini player above it. */
+@utility pb-nav-mini { padding-bottom: calc(9.25rem + env(safe-area-inset-bottom)); }
 
 /* Full-height app shell using dynamic viewport units */
 @utility h-app { height: 100dvh; }

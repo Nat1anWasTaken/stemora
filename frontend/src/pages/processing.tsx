@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type ReactNode } from "react"
 import { Link } from "react-router"
-import { AlertTriangle, Ban, CheckCircle2, FileAudio, ListOrdered, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { AlertTriangle, Ban, CheckCircle2, FileAudio, Layers, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react"
 import { ProcessingLine, SongArtwork, StatusBadge } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -46,7 +46,7 @@ function SongRow({ song }: { song: Song }) {
   const { remove, reprocess, reimport, cancel } = useSongActions()
   const pending = song.status === "pending"
   const running = song.status === "importing" || song.status === "queued" || song.status === "processing"
-  const cancelLabel = song.status === "importing" || isLinkImport(song) ? "Cancel import" : "Remove from queue"
+  const cancelLabel = song.status === "importing" || isLinkImport(song) ? "Cancel import" : "Remove from Processing"
 
   const actions = (
     <>
@@ -155,7 +155,7 @@ function ElsewhereRow({ song }: { song: Song }) {
   )
 }
 
-export function QueuePage() {
+export function ProcessingPage() {
   const q = useQueue()
   const empty = q.count === 0 && q.uploads.length === 0 && q.elsewhere.length === 0 && q.failed.length === 0 && q.finished.length === 0
 
@@ -163,7 +163,7 @@ export function QueuePage() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 pt-page md:px-8 md:py-10">
       <header className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-semibold md:text-4xl">Queue</h1>
+          <h1 className="text-3xl font-semibold md:text-4xl">Processing</h1>
           <p className="text-muted-foreground">
             {q.count > 0 ? `${q.count} in progress or waiting. Songs start on their own as slots free up, even with the app closed.` : "Uploads, link imports and separations, on every device."}
           </p>
@@ -180,9 +180,9 @@ export function QueuePage() {
 
       {!q.isLoading && empty && (
         <div className="animate-page flex flex-col items-center gap-4 rounded-3xl border border-dashed border-border px-6 py-16 text-center">
-          <ListOrdered className="size-8 text-muted-foreground" />
+          <Layers className="size-8 text-muted-foreground" />
           <div className="flex flex-col gap-1">
-            <h2 className="text-xl font-semibold">Nothing in the queue</h2>
+            <h2 className="text-xl font-semibold">Nothing processing</h2>
             <p className="max-w-xs text-muted-foreground">Add files or paste links, and follow them here while they download and split into stems.</p>
           </div>
           <Button size="lg" render={<Link to="/upload" />}><Plus />Add songs</Button>

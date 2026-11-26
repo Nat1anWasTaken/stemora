@@ -59,6 +59,13 @@ export function mockApi(): Plugin {
     Array.isArray(c) && c.length >= 1 && c.length <= 32 && c.every((col) => Array.isArray(col) && col.length >= 1 && col.length <= 8 && col.every((l) => l === "accent" || l === "normal" || l === "soft" || l === "muted"))
   /** Tempo maps per song id (PUT /api/songs/{id}/tempo-markers). */
   const tempoMarkers = new Map<string, { time: number }[]>()
+  /** Playback settings per song and the listening set (PUT /api/songs/{id}/settings, /api/me/listening-settings); stored as sent. */
+  const songSettings = new Map<string, unknown>()
+  let listeningSettings: unknown = null
+  /** Setlists (docs/contract.md): entries hold song ids; the API view joins the songs. */
+  type MockEntry = { id: string; song_id: string; settings: unknown; transition: "continue" | "stop" | null; notes: string }
+  type MockSetlist = { id: string; name: string; settings_source: string; transition: string; created_at: string; updated_at: string; entries: MockEntry[] }
+  const setlists: MockSetlist[] = []
   /** Drum-notation line breaks (bar start times) per song id (PUT /api/songs/{id}/drum-breaks). */
   const drumBreaks = new Map<string, number[]>()
   const songs: MockSong[] = [
@@ -265,7 +272,77 @@ export function mockApi(): Plugin {
               return json(res, 200, { token, url: `http://${req.headers.host}/invite/${token}`, expires_at })
             }
           }
+          if (path === "/api/me/listening-settings") {
+            if (method === "PUT") listeningSettings = (await readBody(req)).settings ?? null
+            return json(res, 200, { settings: listeningSettings })
+          }
           if (path === "/api/me/usage") return json(res, 200, { used_bytes: songs.reduce((a, s) => a + s.size_bytes, 0), quota_bytes: 5000 * MIB })
+
+          // ---- setlists
+          const setlistView = (l: MockSetlist) => {
+            const live = l.entries.filter((e) => songs.some((x) => x.id === e.song_id))
+            return { id: l.id, name: l.name, settings_source: l.settings_source, transition: l.transition, entry_count: live.length,
+              duration_s: live.reduce((a, e) => a + (songs.find((x) => x.id === e.song_id)?.duration_s ?? 0), 0), created_at: l.created_at, updated_at: l.updated_at }
+          }
+          const setlistDetail = (l: MockSetlist) => ({ setlist: setlistView(l), entries: l.entries.flatMap((e) => {
+            const song = songs.find((x) => x.id === e.song_id)
+            return song ? [{ id: e.id, song: publicSong(song), settings: e.settings, transition: e.transition, notes: e.notes }] : []
+          }) })
+          const appendSongs = (l: MockSetlist, ids: unknown) => {
+            for (const id of Array.isArray(ids) ? ids : []) {
+              if (songs.some((x) => x.id === id)) l.entries.push({ id: randomUUID(), song_id: id as string, settings: songSettings.get(id as string) ?? null, transition: null, notes: "" })
+            }
+            l.updated_at = iso(Date.now())
+          }
+          if (path === "/api/setlists") {
+            if (method === "GET") return json(res, 200, { setlists: [...setlists].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map(setlistView) })
+            if (method === "POST") {
+              const b = await readBody(req)
+              const name = typeof b.name === "string" ? b.name.trim() : ""
+              if (!name) return err(res, 400, "invalid_name", "a setlist needs a name of 1 to 200 characters")
+              const now = iso(Date.now())
+              const l: MockSetlist = { id: randomUUID(), name, settings_source: (b.settings_source as string) ?? "setlist", transition: (b.transition as string) ?? "stop", created_at: now, updated_at: now, entries: [] }
+              appendSongs(l, b.song_ids)
+              setlists.push(l)
+              return json(res, 200, setlistDetail(l))
+            }
+          }
+          const sm = /^\/api\/setlists\/([\w-]+)(?:\/(entries)(?:\/([\w-]+)\/settings)?)?$/.exec(path)
+          if (sm) {
+            const l = setlists.find((x) => x.id === sm[1])
+            if (!l) return err(res, 404, "not_found", "Setlist not found")
+            if (!sm[2]) {
+              if (method === "GET") return json(res, 200, setlistDetail(l))
+              if (method === "DELETE") { setlists.splice(setlists.indexOf(l), 1); return json(res, 204) }
+              if (method === "PATCH") {
+                const b = await readBody(req)
+                if (typeof b.name === "string" && b.name.trim()) l.name = b.name.trim()
+                if (typeof b.settings_source === "string") l.settings_source = b.settings_source
+                if (typeof b.transition === "string") l.transition = b.transition
+                l.updated_at = iso(Date.now())
+                return json(res, 200, setlistDetail(l))
+              }
+            } else if (sm[3] && method === "PUT") {
+              const e = l.entries.find((x) => x.id === sm[3])
+              if (!e) return err(res, 404, "not_found", "Entry not found")
+              e.settings = (await readBody(req)).settings ?? null
+              return json(res, 200, { settings: e.settings })
+            } else if (method === "POST") {
+              appendSongs(l, (await readBody(req)).song_ids)
+              return json(res, 200, setlistDetail(l))
+            } else if (method === "PUT") {
+              const list = ((await readBody(req)).entries ?? []) as { id: string; transition: "continue" | "stop" | null; notes?: string }[]
+              const next: MockEntry[] = []
+              for (const e of list) {
+                const old = l.entries.find((x) => x.id === e.id)
+                if (!old || next.includes(old)) return err(res, 400, "invalid_entry", "unknown or repeated entry")
+                next.push({ ...old, transition: e.transition ?? null, notes: (e.notes ?? "").trim() })
+              }
+              l.entries = next
+              l.updated_at = iso(Date.now())
+              return json(res, 200, setlistDetail(l))
+            }
+          }
 
           // ---- songs
           if (path.startsWith("/api/songs")) pump()
@@ -358,8 +435,8 @@ export function mockApi(): Plugin {
             if (!sub && method === "GET") {
               const p = publicSong(s)
               return json(res, 200, s.status === "ready"
-                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS }
-                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS })
+                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS, settings: songSettings.get(s.id) ?? null }
+                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS, settings: songSettings.get(s.id) ?? null })
             }
             if (sub === "tempo-markers" && method === "PUT") {
               const b = await readBody(req)
@@ -380,6 +457,11 @@ export function mockApi(): Plugin {
               const markers = out.length ? out : DEFAULT_MARKERS
               tempoMarkers.set(s.id, markers)
               return json(res, 200, { markers })
+            }
+            if (sub === "settings" && method === "PUT") {
+              const settings = (await readBody(req)).settings ?? null
+              songSettings.set(s.id, settings)
+              return json(res, 200, { settings })
             }
             if (sub === "drum-breaks" && method === "PUT") {
               const b = await readBody(req)
