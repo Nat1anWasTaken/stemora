@@ -42,6 +42,28 @@ function writeIndex(v: Record<string, string[]>) {
 }
 
 export const isOfflineSetlist = (id: string) => id in readIndex()
+export const hasOfflineSetlists = () => Object.keys(readIndex()).length > 0
+
+const ME = "stemora:offline-me"
+/**
+ * The signed-in user, remembered so the app can open without a network when setlists are kept offline (the stage at
+ * a venue with bad reception). Forgotten on sign-out.
+ */
+export function rememberMe(user: unknown) {
+  try {
+    if (user) localStorage.setItem(ME, JSON.stringify(user))
+    else localStorage.removeItem(ME)
+  } catch {
+    /* ignore */
+  }
+}
+export function rememberedMe<T>(): T | null {
+  try {
+    return JSON.parse(localStorage.getItem(ME) ?? "null") as T | null
+  } catch {
+    return null
+  }
+}
 
 async function fetchOk(url: string): Promise<Response> {
   const r = await fetch(url)

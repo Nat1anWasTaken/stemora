@@ -37,7 +37,8 @@ import { Swap, WorkspaceToolbar } from "@/player/ui/workspace"
 import type { StemName } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-function usePlayerEnvironment() {
+/** Full-screen player pages: no page zoom, and the `player-active` styles (no rubber-banding behind the sheet). */
+export function usePlayerEnvironment() {
   useEffect(() => {
     const html = document.documentElement
     html.classList.add("player-active")

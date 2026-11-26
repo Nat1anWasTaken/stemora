@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils"
 import { MiniPlayer } from "@/player/ui/mini-player"
 import { PlaybackHost } from "@/player/ui/playback-host"
 import { usePlayer } from "@/player/store"
+import { rememberMe } from "@/player/offline"
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn("flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors", isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
@@ -54,7 +55,8 @@ export function RequireAuth() {
   const me = useMe()
   if (me.isLoading) return <div className="grid min-h-app place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>
   // A network failure (e.g. the installed app opened offline) is not a signed-out user.
-  if (me.isError)
+  // A failed refetch keeps the user it already has (the network dropped mid-set): only a first load blocks.
+  if (me.isError && !me.data)
     return (
       <div className="flex min-h-app flex-col items-center justify-center gap-4 px-6 pt-safe pb-safe text-center">
         <WifiOff className="size-10 text-muted-foreground" />
@@ -92,6 +94,7 @@ export function AppShell() {
     uploads.reset()
     qc.clear()
     qc.setQueryData(keys.me, null)
+    rememberMe(null)
     nav("/login", { replace: true })
   }
   const go = (id: string, title: string, to: string, keywords: string[] = []): Command => ({ id: `nav.${id}`, title, group: "Go to", keywords, run: () => nav(to) })

@@ -17,6 +17,7 @@ import { LibraryPage } from "@/pages/library"
 import { ProcessingPage } from "@/pages/processing"
 import { SetlistPage } from "@/pages/setlists"
 import { SongPage } from "@/pages/song"
+import { StagePage } from "@/pages/stage"
 import { UploadPage } from "@/pages/upload"
 
 
@@ -33,6 +34,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/invite/:token" element={<InvitePage />} />
             <Route element={<RequireAuth />}>
               <Route path="/songs/:id" element={<SongPage />} />
+              <Route path="/setlists/:id/stage" element={<StagePage />} />
               <Route element={<AppShell />}>
                 <Route index element={<LibraryPage />} />
                 <Route path="/upload" element={<UploadPage />} />

@@ -1,8 +1,8 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { usePlayer } from "@/player/store"
-import { api, ApiError, isActive, isLinkImport, retryModel, type EntryEdit, type Model, type Setlist, type SetlistDetail, type SettingsSource, type Song, type SongPage, type SongSort, type SongStatus, type Transition } from "@/lib/api"
-import { offlineSetlist, removeSetlistOffline } from "@/player/offline"
+import { api, ApiError, isActive, isLinkImport, retryModel, type EntryEdit, type Model, type Setlist, type SetlistDetail, type SettingsSource, type Song, type SongPage, type SongSort, type SongStatus, type Transition, type User } from "@/lib/api"
+import { hasOfflineSetlists, offlineSetlist, rememberedMe, rememberMe, removeSetlistOffline } from "@/player/offline"
 import { useUpNext } from "@/player/up-next"
 
 export const keys = {
@@ -17,7 +17,25 @@ export const keys = {
   listening: ["listening-settings"] as const,
 }
 
-export const useMe = () => useQuery({ queryKey: keys.me, queryFn: api.me, staleTime: 60_000, retry: false })
+export const useMe = () =>
+  useQuery({
+    queryKey: keys.me,
+    queryFn: async () => {
+      try {
+        const user = await api.me()
+        rememberMe(user)
+        return user
+      } catch (e) {
+        // Unreachable server: with setlists kept offline, open as the last user so they can still be played.
+        const unreachable = !(e instanceof ApiError) || e.status >= 500
+        const known = rememberedMe<User>()
+        if (unreachable && known && hasOfflineSetlists()) return known
+        throw e
+      }
+    },
+    staleTime: 60_000,
+    retry: false,
+  })
 export const useUsage = () => useQuery({ queryKey: keys.usage, queryFn: api.usage, refetchInterval: 30_000 })
 
 /** The library, a page at a time. Polls every 2s while any loaded song is still being processed. */

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 
 vi.mock("@/player/store", () => ({ usePlayer: { getState: () => ({}) }, getPosition: () => 0, setSongEndedHandler: () => {}, settingsOf: () => ({}) }))
 vi.mock("@/lib/query-client", () => ({ queryClient: {} }))
-vi.mock("@/player/offline", () => ({ offlineDetail: async () => null }))
+vi.mock("@/player/offline", () => ({ offlineDetail: async () => null, offlineSetlist: async () => null }))
 
 const { effectiveSource, insertNext, moveItem, removeItem, transitionAfter } = await import("@/player/up-next")
 

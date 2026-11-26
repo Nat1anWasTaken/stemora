@@ -5,7 +5,7 @@ import { keys } from "@/lib/queries"
 import { queryClient } from "@/lib/query-client"
 import { clearPending, initialSettings, loadPending, parseSettings, type SettingsScope } from "@/player/settings"
 import { getPosition, setSongEndedHandler, settingsOf, usePlayer, type LoadOptions } from "@/player/store"
-import { offlineDetail } from "@/player/offline"
+import { offlineDetail, offlineSetlist } from "@/player/offline"
 
 /**
  * Up Next (docs/playback.md): what plays on this device, the current song included. It is kept in this browser
@@ -114,7 +114,7 @@ async function setlistDetail(id: string): Promise<SetlistDetail | null> {
   try {
     return await queryClient.fetchQuery({ queryKey: keys.setlist(id), queryFn: () => api.setlist(id), staleTime: 60_000 })
   } catch {
-    return queryClient.getQueryData<SetlistDetail>(keys.setlist(id)) ?? null
+    return queryClient.getQueryData<SetlistDetail>(keys.setlist(id)) ?? (await offlineSetlist(id))
   }
 }
 
