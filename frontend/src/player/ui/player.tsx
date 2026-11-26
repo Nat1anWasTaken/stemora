@@ -30,6 +30,7 @@ import { useSheetDrag } from "@/player/ui/use-sheet-drag"
 import { usePlayerCommands } from "@/player/ui/use-player-commands"
 import { TempoEditor } from "@/player/ui/tempo-editor/tempo-editor"
 import { Swap, WorkspaceToolbar } from "@/player/ui/workspace"
+import { useSettingsSync } from "@/player/use-settings-sync"
 import { useTempoMarkers } from "@/player/use-tempo-markers"
 import type { StemName } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -116,6 +117,7 @@ export function Player({ detail }: { detail: SongDetail }) {
   const drumChart = useDrumChart(precision)
   const { breaks, toggle: toggleBreak, editable: breaksEditable } = useDrumBreaks(song.id, detail)
   useTempoMarkers(song.id, detail.tempo_markers)
+  useSettingsSync(song.id, detail.settings)
   const toggleBreakAtPlayhead = useCallback(() => {
     if (!drumChart) return
     const bar = barIndexAt(drumChart.bars, getPosition())

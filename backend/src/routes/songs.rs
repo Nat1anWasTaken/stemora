@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/songs/{id}/cancel", post(cancel))
         .route("/songs/{id}/drum-breaks", put(set_drum_breaks))
         .route("/songs/{id}/tempo-markers", put(set_tempo_markers))
+        .route("/songs/{id}/settings", put(set_settings))
         .route("/songs/{id}/stems/{name}/download", get(download))
 }
 
@@ -779,15 +780,20 @@ async fn detail(
 ) -> AppResult<Json<Value>> {
     owned_song(&st.pool, u.id, id).await?;
     let song = live_view(&st, id).await?;
-    let (drum_breaks, drum_break_times, tempo_markers): (Vec<i32>, Vec<f64>, String) =
-        sqlx::query_as(
-            "SELECT drum_breaks, drum_break_times, tempo_markers::text FROM songs WHERE id = $1",
+    let (drum_breaks, drum_break_times, tempo_markers, settings): (
+        Vec<i32>,
+        Vec<f64>,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+            "SELECT drum_breaks, drum_break_times, tempo_markers::text, settings::text FROM songs WHERE id = $1",
         )
         .bind(id)
         .fetch_one(&st.pool)
         .await?;
     let tempo_markers: Value =
         serde_json::from_str(&tempo_markers).unwrap_or_else(|_| default_tempo_markers());
+    let settings: Option<Value> = settings.and_then(|s| serde_json::from_str(&s).ok());
     let (mut stems, mut peaks_url, mut analysis_url) = (Vec::new(), None, None);
     if song.status == SongStatus::Ready.as_str() {
         let rows: Vec<StemRow> = sqlx::query_as("SELECT * FROM stems WHERE song_id = $1")
@@ -807,7 +813,7 @@ async fn detail(
         );
     }
     Ok(Json(
-        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks, "drum_break_times": drum_break_times, "tempo_markers": tempo_markers}),
+        json!({"song": song, "stems": stems, "peaks_url": peaks_url, "analysis_url": analysis_url, "drum_breaks": drum_breaks, "drum_break_times": drum_break_times, "tempo_markers": tempo_markers, "settings": settings}),
     ))
 }
 
@@ -1030,6 +1036,28 @@ async fn set_tempo_markers(
         return Err(AppError::not_found());
     }
     Ok(Json(json!({ "markers": markers })))
+}
+
+/// Replace the song's playback settings (whole set; the client sends the latest state), normalised by
+/// `settings::normalize`.
+async fn set_settings(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(r): Json<crate::routes::me::SettingsReq>,
+) -> AppResult<Json<Value>> {
+    let s = crate::settings::normalize(&r.settings);
+    let n = sqlx::query("UPDATE songs SET settings = $3::jsonb WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(u.id)
+        .bind(s.to_string())
+        .execute(&st.pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(AppError::not_found());
+    }
+    Ok(Json(json!({ "settings": s })))
 }
 
 async fn remove(

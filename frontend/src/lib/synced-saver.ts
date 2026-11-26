@@ -4,7 +4,8 @@ const SAVE_DELAY = 300
 /**
  * Saves one value behind the UI: debounced, whole value at a time, never more than one request in flight (a newer
  * state goes out once the current request ends, so an older response can never overwrite it). `show` puts a state
- * on screen; a failed save shows what the server last confirmed again.
+ * on screen; a failed save shows what the server last confirmed again, or, with `keepOnError`, keeps the unsaved state
+ * and sends it with the next change or `flush`.
  */
 export function createSyncedSaver<T>(opts: {
   initial: T
@@ -14,11 +15,14 @@ export function createSyncedSaver<T>(opts: {
   /** The request body for a keepalive save while the page goes away. */
   beacon: { url: string; body: (value: T) => unknown }
   onError: (e: unknown) => void
+  /** Keep a state the server refused or never got instead of rolling back to the confirmed one (for settings you hear). */
+  keepOnError?: boolean
 }) {
   let latest = opts.initial
   let confirmed = opts.initial
   let inFlight = false
   let timer = 0
+  let failed = false
   let show: (value: T) => void = () => {}
   const saver = {
     /** Where saved or rolled-back states are shown. */
@@ -30,6 +34,7 @@ export function createSyncedSaver<T>(opts: {
       if (inFlight || opts.same(latest, confirmed)) return
       const sent = latest
       inFlight = true
+      failed = false
       opts
         .save(sent)
         .then((r) => {
@@ -42,12 +47,15 @@ export function createSyncedSaver<T>(opts: {
         })
         .catch((e: unknown) => {
           opts.onError(e)
+          failed = true
+          if (opts.keepOnError) return
           latest = confirmed
           show(confirmed)
         })
         .finally(() => {
           inFlight = false
-          if (!opts.same(latest, confirmed)) saver.flush()
+          // After a failure the state waits for the next change or flush, rather than retrying in a tight loop.
+          if (!failed && !opts.same(latest, confirmed)) saver.flush()
         })
     },
     /** A new state is on screen: save it shortly. */

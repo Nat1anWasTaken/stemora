@@ -1,9 +1,9 @@
 import { create } from "zustand"
-import type { SongDetail, StemName } from "@/lib/api"
+import type { PlaybackSettings, SongDetail, StemName } from "@/lib/api"
 import { StemEngine } from "@/player/engine"
 import { startKeepAlive, stopKeepAlive } from "@/player/keepAlive"
 import { applyPreset, clampLoop, defaultMixer, toggleIn, type LoopRegion, type MixerState, type Preset } from "@/player/mixer"
-import { loadMixer, saveMixer } from "@/player/mixerStorage"
+import { initialSettings } from "@/player/settings"
 import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
 import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED } from "@/player/tempo"
@@ -36,7 +36,7 @@ type PlayerState = {
   pendingA: number | null
   /** Metronome click on/off; it clicks on the beat grid. */
   metronome: boolean
-  /** Metronome sound (an id from CLICK_SOUNDS), kept per browser. */
+  /** Metronome sound (an id from CLICK_SOUNDS); this browser's last choice is the default for songs never set up. */
   clickSound: string
   /** Playback speed, 1 = original tempo. */
   speed: number
@@ -44,7 +44,7 @@ type PlayerState = {
   semitones: number
   /** The key switch: whether `semitones` is heard. Off plays the original key, for comparing against the transposed one. */
   keyEnabled: boolean
-  /** Stems that follow the key change (the rest keep their original key), kept per browser. Drums are left out by default. */
+  /** Stems that follow the key change (the rest keep their original key). Drums are left out by default. */
   transposed: StemName[]
   /** Whether the Signalsmith Stretch worklet can run (null while loading); without it speed changes also shift the pitch and the key cannot change. */
   canShift: boolean | null
@@ -91,13 +91,22 @@ type PlayerState = {
   redo: () => void
 }
 
+/** The playback settings set the player is on now (what docs/playback.md calls a settings set). */
+export const settingsOf = (s: Pick<PlayerState, "mixer" | "speed" | "semitones" | "keyEnabled" | "transposed" | "metronome" | "clickSound">): PlaybackSettings => ({
+  mixer: s.mixer,
+  speed: s.speed,
+  semitones: s.semitones,
+  key_enabled: s.keyEnabled,
+  transposed: s.transposed,
+  metronome: s.metronome,
+  click_sound: s.clickSound,
+})
+
 export const usePlayer = create<PlayerState>((set, get) => {
   const updateMixer = (fn: (m: MixerState) => MixerState) => {
     const mixer = fn(get().mixer)
     set({ mixer })
     engine?.setMixer(mixer)
-    const id = get().songId
-    if (id) saveMixer(id, mixer)
   }
   const applyKey = () => {
     const { semitones, keyEnabled, transposed } = get()
@@ -153,11 +162,13 @@ export const usePlayer = create<PlayerState>((set, get) => {
       const e = new StemEngine()
       engine = e
       abort = new AbortController()
-      const mixer = loadMixer(detail.song.id)
+      const s = initialSettings(detail.song.id, detail.settings)
+      const mixer = s.mixer
       past = []
       future = []
       // The song record's length lets the charts and tempo map show before the stems are decoded.
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: s.speed, semitones: s.semitones, keyEnabled: s.key_enabled, transposed: s.transposed, metronome: s.metronome, clickSound: s.click_sound, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      e.setSpeed(s.speed)
       e.setMetronome(get().metronome)
       e.setClickSound(get().clickSound)
       applyKey()

@@ -63,9 +63,16 @@ type ResolvedLink = { kind: "song" | "collection"; title: string | null; subtitl
 type LinkEntry = { url: string /* link to import it with */; title: string | null; artists: string[]; duration_s: number | null;
                    problem: string | null /* why importing it would fail */ }
 type LinkMatch = { url: string; title: string; channel: string | null; duration_s: number | null; music: boolean /* from YouTube Music's song catalog */; score: number /* 0..1 */ }
-type Stem = { name: "vocals"|"drums"|"bass"|"other"; url: string /* presigned GET m4a */; size_bytes: number }
+type StemName = "vocals"|"drums"|"bass"|"other"
+type Stem = { name: StemName; url: string /* presigned GET m4a */; size_bytes: number }
 type SongDetail = { song: Song; stems: Stem[]; peaks_url: string | null; analysis_url: string | null /* presigned; the object may be missing (404) */;
-                    drum_breaks: number[] /* legacy bar indices */; drum_break_times: number[]; tempo_markers: TempoMarker[] }
+                    drum_breaks: number[] /* legacy bar indices */; drum_break_times: number[]; tempo_markers: TempoMarker[];
+                    settings: PlaybackSettings | null /* null until first saved */ }
+type PlaybackSettings = { mixer: { volumes: Record<StemName, number> /* 0..1 */; muted: StemName[]; soloed: StemName[] };
+                          speed: number /* multiplier 0.5..1.5 */; semitones: number /* integer -12..12, relative to the original */;
+                          key_enabled: boolean /* false: play the original key, keeping semitones */;
+                          transposed: StemName[] /* stems that follow the key; default vocals, bass, other */;
+                          metronome: boolean; click_sound: string /* id, [a-z0-9_-]{1,64}, default "classic" */ }
 type TempoMarker = { time: number /* seconds */; kind: "auto" }
                  | { time: number; kind: "manual"; bpm: number /* 20..400, 0.01 steps, in `den` notes: 6/8 at 120 = 120 eighths a minute */;
                      num: number /* 1..32 */; den: 2 | 4 | 8 | 16;
@@ -102,10 +109,12 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `GET /api/songs/{id}` -> SongDetail (stems/peaks_url only when ready; presigned URLs valid 1h)
 - `PUT /api/songs/{id}/drum-breaks` `{times:number[]}` -> `{times:number[]}`. Replaces the song's drum-notation line breaks: the start times (seconds) of the bars that begin a new row, so they stay with the music when the tempo map changes the bars. The server keeps times in 0 < t <= 86400, rounded to microseconds, sorted, one per millisecond; more than 2000 -> 400 `too_many_breaks`. Saving times clears the legacy bar indices. SongDetail carries them as `drum_break_times`, and the legacy `drum_breaks` (bar indices, still accepted as `{bars:number[]}` -> `{bars}` from older clients) for clients to convert: the bars of the default tempo map at the time they were set.
 - `PUT /api/songs/{id}/tempo-markers` `{markers:TempoMarker[]}` -> `{markers:TempoMarker[]}`. Replaces the song's tempo map: from each marker on, the beats are a fixed grid (`manual`) or the detected beats of `analysis.json` (`auto`), until the next marker; every marker starts a bar. The server drops malformed markers (unknown kind, time outside 0..86400, `num`/`den` out of range) and malformed `clicks` (the marker is kept without them), clamps and rounds `bpm`, sorts by time, keeps one marker per 20 ms, and makes the first marker sit at 0 (adding an auto marker there when none is). More than 1000 -> 400 `too_many_markers`. New songs (and songs from before the feature) hold `[{"time":0,"kind":"auto"}]`. Snapping (a marker after a manual one sits a whole number of its beats later) is kept by the client, not checked by the server.
+- `PUT /api/songs/{id}/settings` `{settings:PlaybackSettings}` -> `{settings:PlaybackSettings}`. Replaces the song's playback settings (see `playback.md`). The server normalises the set: missing or malformed fields take their defaults, numbers are clamped (volumes and speed rounded to 0.001, semitones to an integer), unknown stems dropped and stem lists put in vocals, drums, bass, other order, so a set read back is always complete.
 - `PATCH /api/songs/{id}` `{title}` -> Song; `DELETE /api/songs/{id}` -> 204 (removes R2 prefix `users/{uid}/songs/{sid}/`, DB rows)
 - `POST /api/songs/{id}/reprocess` `{model}` -> Song (needs original still present; deletes old stems; joins the back of the queue as `pending`, started at once when a slot is free; 429 `queue_full`)
 - `GET /api/songs/{id}/stems/{name}/download?format=m4a|flac` -> 302 to presigned GET with `Content-Disposition: attachment; filename="{title} - {name}.{ext}"`
 - `GET /api/me/usage` -> Usage
+- `GET /api/me/listening-settings` -> `{settings: PlaybackSettings | null}` (null until first saved); `PUT /api/me/listening-settings` `{settings:PlaybackSettings}` -> `{settings}`, normalised like song settings. One set per user, used for every song while the player's settings source is Listening.
 Webhook: `POST /api/webhooks/jobs/{job_id}` (token auth as above, not cookie). Idempotent; ignores updates for jobs already in a terminal state or for a stale attempt (and tells the worker to stop, see Cancellation above). Deleting a song makes its running worker stop at its next update (heartbeat every ~15s) and remove what it already uploaded.
 
 Job/song state machine: song `uploading` -> (complete) `pending` -> (slot free) `queued`; a link import starts `pending` -> (slot free) `importing` -> (download stored) `queued` | `failed`; `pending` -> (cancel) `failed`; songs still `importing` when the backend starts were interrupted and go back to `pending` (keeping their place) to download again; `queued` -> (first `running` webhook) `processing` -> `ready` | `failed`. `ready`/`failed` -> (reprocess) `pending`. Retryable failure with attempts < 3 re-spawns after backoff (30s, 120s) and stays `processing`/`queued`; reaper fails jobs without a heartbeat for 5 minutes, or 30 minutes while the worker has not reported yet (no `stage`: the call is still waiting for a GPU), retrying if attempts left and cancelling the abandoned Modal call via `cancel` and deletes `uploading` songs older than 24h (abort multipart, remove objects).

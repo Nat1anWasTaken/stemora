@@ -2461,3 +2461,56 @@ async fn import_validation_and_limits() {
     let r = app.get(&format!("/api/songs/{third}"), &admin).await;
     assert_eq!(r.body["song"]["queue_position"], 3);
 }
+
+#[tokio::test]
+async fn playback_settings() {
+    let Some(app) = setup().await else { return };
+    let admin = app.admin().await;
+    let bob = app.user(&admin, "bob@example.com").await;
+    let id = app.song(&bob, MIB).await;
+
+    // never saved: null, for the client to fill in (and migrate this browser's old settings)
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.status, StatusCode::OK);
+    assert_eq!(d.body["settings"], Value::Null);
+
+    // whole-set replace, normalised; owner only
+    let path = format!("/api/songs/{id}/settings");
+    let body = json!({"settings": {"mixer": {"volumes": {"vocals": 0.5}, "muted": ["vocals"]}, "speed": 0.8, "semitones": -2, "metronome": true}});
+    let r = app
+        .req(Method::PUT, &path, Some(&bob), None, Some(body.clone()))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["settings"]["mixer"]["volumes"]["vocals"], json!(0.5));
+    assert_eq!(r.body["settings"]["mixer"]["volumes"]["bass"], json!(1.0));
+    assert_eq!(r.body["settings"]["semitones"], json!(-2));
+    assert_eq!(
+        r.body["settings"]["transposed"],
+        json!(["vocals", "bass", "other"])
+    );
+    let d = app.get(&format!("/api/songs/{id}"), &bob).await;
+    assert_eq!(d.body["settings"], r.body["settings"]);
+    let other = app
+        .req(Method::PUT, &path, Some(&admin), None, Some(body))
+        .await;
+    assert_eq!(other.status, StatusCode::NOT_FOUND);
+
+    // listening settings: one per user
+    let l = app.get("/api/me/listening-settings", &bob).await;
+    assert_eq!(l.status, StatusCode::OK);
+    assert_eq!(l.body["settings"], Value::Null);
+    let r = app
+        .req(
+            Method::PUT,
+            "/api/me/listening-settings",
+            Some(&bob),
+            None,
+            Some(json!({"settings": {"speed": 1.2}})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let l = app.get("/api/me/listening-settings", &bob).await;
+    assert_eq!(l.body["settings"]["speed"], json!(1.2));
+    let a = app.get("/api/me/listening-settings", &admin).await;
+    assert_eq!(a.body["settings"], Value::Null);
+}

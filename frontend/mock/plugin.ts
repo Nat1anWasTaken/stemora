@@ -59,6 +59,9 @@ export function mockApi(): Plugin {
     Array.isArray(c) && c.length >= 1 && c.length <= 32 && c.every((col) => Array.isArray(col) && col.length >= 1 && col.length <= 8 && col.every((l) => l === "accent" || l === "normal" || l === "soft" || l === "muted"))
   /** Tempo maps per song id (PUT /api/songs/{id}/tempo-markers). */
   const tempoMarkers = new Map<string, { time: number }[]>()
+  /** Playback settings per song and the listening set (PUT /api/songs/{id}/settings, /api/me/listening-settings); stored as sent. */
+  const songSettings = new Map<string, unknown>()
+  let listeningSettings: unknown = null
   /** Drum-notation line breaks (bar start times) per song id (PUT /api/songs/{id}/drum-breaks). */
   const drumBreaks = new Map<string, number[]>()
   const songs: MockSong[] = [
@@ -265,6 +268,10 @@ export function mockApi(): Plugin {
               return json(res, 200, { token, url: `http://${req.headers.host}/invite/${token}`, expires_at })
             }
           }
+          if (path === "/api/me/listening-settings") {
+            if (method === "PUT") listeningSettings = (await readBody(req)).settings ?? null
+            return json(res, 200, { settings: listeningSettings })
+          }
           if (path === "/api/me/usage") return json(res, 200, { used_bytes: songs.reduce((a, s) => a + s.size_bytes, 0), quota_bytes: 5000 * MIB })
 
           // ---- songs
@@ -358,8 +365,8 @@ export function mockApi(): Plugin {
             if (!sub && method === "GET") {
               const p = publicSong(s)
               return json(res, 200, s.status === "ready"
-                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS }
-                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS })
+                ? { song: p, stems: STEMS.map((name) => ({ name, url: `/mock/${name}.m4a`, size_bytes: 240000 })), peaks_url: "/mock/peaks.json", analysis_url: "/mock/analysis.json", drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS, settings: songSettings.get(s.id) ?? null }
+                : { song: p, stems: [], peaks_url: null, analysis_url: null, drum_breaks: [], drum_break_times: drumBreaks.get(s.id) ?? [], tempo_markers: tempoMarkers.get(s.id) ?? DEFAULT_MARKERS, settings: songSettings.get(s.id) ?? null })
             }
             if (sub === "tempo-markers" && method === "PUT") {
               const b = await readBody(req)
@@ -380,6 +387,11 @@ export function mockApi(): Plugin {
               const markers = out.length ? out : DEFAULT_MARKERS
               tempoMarkers.set(s.id, markers)
               return json(res, 200, { markers })
+            }
+            if (sub === "settings" && method === "PUT") {
+              const settings = (await readBody(req)).settings ?? null
+              songSettings.set(s.id, settings)
+              return json(res, 200, { settings })
             }
             if (sub === "drum-breaks" && method === "PUT") {
               const b = await readBody(req)

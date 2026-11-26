@@ -100,6 +100,18 @@ export type SongDetail = {
   drum_break_times?: number[]
   /** The song's tempo map, sorted, the first at 0 (see docs/contract.md). Missing from older backends. */
   tempo_markers?: TempoMarkerJson[]
+  /** The song's playback settings; null until first saved, missing from older backends (see docs/playback.md). */
+  settings?: PlaybackSettings | null
+}
+/** A playback settings set (docs/contract.md): what the player's mixer, speed, key and click controls are set to. */
+export type PlaybackSettings = {
+  mixer: { volumes: Record<StemName, number>; muted: StemName[]; soloed: StemName[] }
+  speed: number
+  semitones: number
+  key_enabled: boolean
+  transposed: StemName[]
+  metronome: boolean
+  click_sound: string
 }
 /** A tempo marker as stored: `auto` hands the beats to the detected ones; `manual` lays a grid (BPM of `den` notes). */
 export type TempoMarkerJson = { time: number; kind: "auto" } | { time: number; kind: "manual"; bpm: number; num: number; den: number; clicks?: ("accent" | "normal" | "soft" | "muted")[][] }
@@ -204,6 +216,11 @@ export const api = {
   setDrumBreaks: (id: string, times: number[]) => request<{ times: number[] }>(`/songs/${id}/drum-breaks`, { method: "PUT", body: { times } }),
   setTempoMarkers: (id: string, markers: TempoMarkerJson[]) =>
     request<{ markers: TempoMarkerJson[] }>(`/songs/${id}/tempo-markers`, { method: "PUT", body: { markers } }),
+  setSongSettings: (id: string, settings: PlaybackSettings) =>
+    request<{ settings: PlaybackSettings }>(`/songs/${id}/settings`, { method: "PUT", body: { settings } }),
+  listeningSettings: () => request<{ settings: PlaybackSettings | null }>("/me/listening-settings"),
+  setListeningSettings: (settings: PlaybackSettings) =>
+    request<{ settings: PlaybackSettings }>("/me/listening-settings", { method: "PUT", body: { settings } }),
   reprocess: (id: string, model: Model) => request<Song>(`/songs/${id}/reprocess`, { method: "POST", body: { model } }),
   usage: () => request<Usage>("/me/usage"),
 }
