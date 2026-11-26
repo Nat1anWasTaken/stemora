@@ -90,7 +90,16 @@ sign in ("confirm you're not a bot"); that surfaces as a failed song with that m
 reject links to private/loopback addresses, but yt-dlp follows redirects on its own, so this is best
 effort rather than a hard SSRF boundary.
 
+Spotify links work too, although Spotify's audio cannot be downloaded: the backend reads the track, album
+or playlist from Spotify's public embed page (no API key) and finds each track on YouTube Music / YouTube
+(`src/catalog.rs` does the matching). `POST /api/songs/import/resolve` returns the candidates (or a playlist's
+songs) for the client to confirm; importing a Spotify track link directly picks the best match whose length
+fits. YouTube Music's song search answers nothing from many datacenter IPs, so on a VPS matches mostly come
+from plain YouTube search; they are ranked by title, artist and length, so this usually still finds the
+right recording.
+
 To try the real yt-dlp locally: `STEMORA_IMPORT_TEST_URL=<link> cargo test -- --ignored real_ytdlp`.
+To try Spotify lookups and matching: `cargo test -- --ignored real_spotify_match --nocapture`.
 
 ## Notes
 

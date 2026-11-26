@@ -8,53 +8,100 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { api, HQ_MODEL, type Model } from "@/lib/api"
-import { formatBytes, splitLinks, titleFromFilename } from "@/lib/format"
+import { CollectionDialog, MatchDialog } from "@/components/app/import-choices"
+import { api, HQ_MODEL, type LinkEntry, type LinkMatch, type Model, type ResolvedLink } from "@/lib/api"
+import { formatBytes, hostOf, splitLinks, titleFromFilename } from "@/lib/format"
+import { isSpotify, needsLookup } from "@/lib/links"
 import { keys } from "@/lib/queries"
 import { useQueue } from "@/lib/queue"
 import { uploads } from "@/lib/uploads"
 import { cn } from "@/lib/utils"
 
-/** Paste one or more links; each is added to the server-side queue right away. */
+type Prompt =
+  | { kind: "match"; resolved: ResolvedLink; done: (m: LinkMatch | null) => void }
+  | { kind: "collection"; resolved: ResolvedLink; done: (picked: LinkEntry[] | null) => void }
+
+/**
+ * Paste one or more links; each is added to the server-side queue right away, in order. Spotify links and playlists are
+ * looked up first: a Spotify song asks which YouTube upload it is, a playlist or album which of its songs to add.
+ */
 function LinkImport({ model, onAdded }: { model: Model; onAdded: (n: number) => void }) {
   const [text, setText] = useState("")
-  const [adding, setAdding] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
   const [problems, setProblems] = useState<{ url: string; error: string }[]>([])
+  const [prompt, setPrompt] = useState<Prompt | null>(null)
   const links = splitLinks(text)
+
+  const ask = <T,>(kind: Prompt["kind"], resolved: ResolvedLink) =>
+    new Promise<T | null>((resolve) => {
+      const done = (v: T | null) => {
+        setPrompt(null)
+        resolve(v)
+      }
+      setPrompt({ kind, resolved, done } as Prompt)
+    })
 
   const add = async (e: FormEvent) => {
     e.preventDefault()
-    if (links.length === 0 || adding) return
-    setAdding(true)
+    if (links.length === 0 || busy) return
+    setBusy("Adding")
     setProblems([])
     const failed: { url: string; error: string }[] = []
+    const fail = (url: string, err: unknown) => failed.push({ url, error: err instanceof Error ? err.message : "Could not add the link" })
+    let added = 0
     // One at a time, so they join the queue in the order they were pasted.
     for (const url of links) {
       try {
-        await api.importSong({ url, model })
+        if (!needsLookup(url)) {
+          await api.importSong({ url, model })
+          added++
+          continue
+        }
+        setBusy(`Looking up ${isSpotify(url) ? "Spotify" : hostOf(url)} link`)
+        const r = await api.resolveLink(url)
+        if (r.kind === "collection") {
+          const picked = await ask<LinkEntry[]>("collection", r)
+          if (!picked?.length) continue
+          setBusy("Adding")
+          const res = await api.importBatch(picked.map((x) => ({ url: x.url, title: x.title ?? undefined })), model)
+          added += res.songs.length
+          failed.push(...res.failed.map((f) => ({ url: f.url, error: f.error })))
+        } else if (r.matches) {
+          const match = await ask<LinkMatch>("match", r)
+          if (!match) continue
+          setBusy("Adding")
+          // Spotify's title, not the upload's ("Song (Official Video)").
+          await api.importSong({ url: match.url, title: r.title ?? undefined, model })
+          added++
+        } else if (r.entries[0]?.problem) {
+          failed.push({ url, error: r.entries[0].problem })
+        } else {
+          await api.importSong({ url, model })
+          added++
+        }
       } catch (err) {
-        failed.push({ url, error: err instanceof Error ? err.message : "Could not add the link" })
+        fail(url, err)
       }
     }
     // Keep the links that were refused so they can be fixed and added again.
     setText(failed.map((f) => f.url).join("\n"))
     setProblems(failed)
-    setAdding(false)
-    if (failed.length < links.length) onAdded(links.length - failed.length)
+    setBusy(null)
+    if (added > 0) onAdded(added)
   }
 
   return (
     <form onSubmit={add} className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
       <div className="flex flex-col gap-1">
         <Label htmlFor="links">Import from links</Label>
-        <p className="text-sm text-muted-foreground">Paste YouTube, SoundCloud or other links, one per line. The server downloads them in turn, even if you close the app.</p>
+        <p className="text-sm text-muted-foreground">Paste YouTube, Spotify, SoundCloud or other links, one per line, including playlists and albums. The server downloads them in turn, even if you close the app.</p>
       </div>
       <Textarea
         id="links"
         inputMode="url"
         autoComplete="off"
         spellCheck={false}
-        placeholder={"https://www.youtube.com/watch?v=...\nhttps://soundcloud.com/..."}
+        placeholder={"https://www.youtube.com/watch?v=...\nhttps://open.spotify.com/playlist/..."}
         value={text}
         onChange={(e) => setText(e.target.value)}
         aria-invalid={problems.length > 0 || undefined}
@@ -69,10 +116,12 @@ function LinkImport({ model, onAdded }: { model: Model; onAdded: (n: number) => 
           ))}
         </ul>
       )}
-      <Button type="submit" size="lg" variant="secondary" disabled={adding || links.length === 0}>
-        {adding ? <Loader2 className="animate-spin" /> : <Link2 />}
-        {links.length > 1 ? `Add ${links.length} links to queue` : "Add to queue"}
+      <Button type="submit" size="lg" variant="secondary" disabled={!!busy || links.length === 0}>
+        {busy ? <Loader2 className="animate-spin" /> : <Link2 />}
+        {busy ? `${busy}…` : links.length > 1 ? `Add ${links.length} links to queue` : "Add to queue"}
       </Button>
+      {prompt?.kind === "match" && <MatchDialog resolved={prompt.resolved} onDone={prompt.done} />}
+      {prompt?.kind === "collection" && <CollectionDialog resolved={prompt.resolved} onDone={prompt.done} />}
     </form>
   )
 }

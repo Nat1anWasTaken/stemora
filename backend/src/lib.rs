@@ -1,6 +1,7 @@
 //! Stemora backend: auth, songs, uploads, Modal job orchestration.
 
 pub mod auth;
+pub mod catalog;
 pub mod config;
 pub mod db;
 pub mod error;

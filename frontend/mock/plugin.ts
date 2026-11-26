@@ -109,7 +109,8 @@ export function mockApi(): Plugin {
     const t = (Date.now() - s.importStart) / 1000
     s.download = null
     if (t < 1) { s.stage = "waiting"; s.progress = 0; return }
-    if (t < 2.5) { s.stage = "probing"; return }
+    // Spotify tracks are first found on YouTube.
+    if (t < 2.5) { s.stage = s.source_url?.includes("spotify.com/track/") && t < 1.8 ? "matching" : "probing"; return }
     if (s.importFail) { s.status = "failed"; s.stage = null; s.error = s.importFail; s.importStart = undefined; return }
     if (s.title === s.source_url) s.title = "Imported Song (mock)"
     s.duration_s = 214
@@ -290,15 +291,64 @@ export function mockApi(): Plugin {
             const long = link.includes("long")
             return json(res, 200, { title: "Imported Song (mock)", duration_s: long ? 3600 : 214, uploader: "Mock Artist", site: "Youtube", filesize: IMPORT_SIZE, problem: long ? "Audio is 60.0 min long; the maximum is 15.0 min." : null })
           }
-          if (path === "/api/songs/import" && method === "POST") {
-            const b = await readBody(req)
+          const addImport = (b: Record<string, unknown>, model: unknown): MockSong | string => {
             const link = String(b.url ?? "").trim()
-            if (!/^https?:\/\/[^/\s]+\.[^/\s]+/.test(link)) return err(res, 400, "invalid_url", "not a valid link")
+            if (!/^https?:\/\/[^/\s]+\.[^/\s]+/.test(link)) return "not a valid link"
             const title = String(b.title ?? "").trim() || link.slice(0, 200)
-            const s: MockSong = { id: randomUUID(), title, status: "pending", duration_s: null, size_bytes: 0, model: mockModel(b.model), progress: 0, stage: null, error: null, source_url: link, download: null, created_at: iso(Date.now()), importFail: link.includes("fail") ? "The link is private, removed or unavailable." : undefined }
+            const s: MockSong = { id: randomUUID(), title, status: "pending", duration_s: null, size_bytes: 0, model: mockModel(model), progress: 0, stage: null, error: null, source_url: link, download: null, created_at: iso(Date.now()), importFail: link.includes("fail") ? "The link is private, removed or unavailable." : undefined }
             songs.push(s)
             enqueue(s)
-            return json(res, 200, publicSong(s))
+            return s
+          }
+          if (path === "/api/songs/import" && method === "POST") {
+            const b = await readBody(req)
+            const s = addImport(b, b.model)
+            return typeof s === "string" ? err(res, 400, "invalid_url", s) : json(res, 200, publicSong(s))
+          }
+          if (path === "/api/songs/import/batch" && method === "POST") {
+            const b = await readBody(req)
+            const items: Record<string, unknown>[] = Array.isArray(b.items) ? b.items : []
+            if (items.length === 0 || items.length > 200) return err(res, 400, "invalid_batch", "send 1 to 200 links")
+            const added: MockSong[] = []
+            const failed: { url: string; error: string; code: string }[] = []
+            for (const it of items) {
+              const s = addImport(it, b.model)
+              if (typeof s === "string") failed.push({ url: String(it.url), error: s, code: "invalid_url" })
+              else added.push(s)
+            }
+            return json(res, 200, { songs: added.map(publicSong), failed })
+          }
+          // Spotify tracks get YouTube matches ("nomatch": none), Spotify albums/playlists and YouTube/SoundCloud
+          // playlists list mock songs, "broken" links cannot be read; anything else is one song.
+          if (path === "/api/songs/import/resolve" && method === "POST") {
+            const b = await readBody(req)
+            const link = String(b.url ?? "").trim()
+            if (!/^(https?:\/\/[^/\s]+\.[^/\s]+|spotify:)/.test(link)) return err(res, 400, "invalid_url", "not a valid link")
+            await new Promise((r) => setTimeout(r, 900))
+            if (link.includes("broken")) return err(res, 422, "link_unavailable", "The link is private, removed or unavailable.")
+            const spotify = /spotify/.test(link)
+            if (spotify && /track/.test(link)) {
+              const matches = link.includes("nomatch") ? [] : [
+                { url: "https://www.youtube.com/watch?v=mock1", title: "Mock Song", channel: "Mock Artist - Topic", duration_s: 214, music: true, score: 1 },
+                { url: "https://www.youtube.com/watch?v=mock2", title: "Mock Artist - Mock Song (Official Video)", channel: "Mock Artist", duration_s: 262, music: false, score: 0.86 },
+                { url: "https://www.youtube.com/watch?v=mock3", title: "Mock Song (Lyrics)", channel: "Lyric Uploads", duration_s: 215, music: false, score: 0.8 },
+                { url: "https://www.youtube.com/watch?v=mock4", title: "Mock Artist - Mock Song (Live at the Mock Arena)", channel: "Mock Fan", duration_s: 301, music: false, score: 0.41 },
+              ]
+              return json(res, 200, { kind: "song", title: "Mock Song", subtitle: "Mock Artist", site: "Spotify", matches,
+                entries: [{ url: "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT", title: "Mock Song", artists: ["Mock Artist"], duration_s: 213.6, problem: null }] })
+            }
+            if (spotify || /playlist|\/sets\/|\/album\/|\/browse\//.test(link)) {
+              const entries = Array.from({ length: 14 }, (_, i) => ({
+                url: spotify ? `https://open.spotify.com/track/mock${String(i).padStart(18, "0")}` : `https://www.youtube.com/watch?v=mock${i}`,
+                title: i === 6 ? "A Very Long Live Jam That Goes On And On (Extended Festival Version)" : `Mock Track ${i + 1}`,
+                artists: spotify ? ["Mock Artist", ...(i % 3 === 0 ? ["Guest"] : [])] : ["Mock Channel"],
+                duration_s: i === 6 ? 2400 : 150 + i * 13,
+                problem: i === 6 ? "Audio is 40.0 min long; the maximum is 15.0 min." : null,
+              }))
+              return json(res, 200, { kind: "collection", title: spotify ? "Mock Road Trip" : "Mock Playlist", subtitle: spotify ? "Mock Listener" : null, site: spotify ? "Spotify" : "YouTube", entries, matches: null })
+            }
+            return json(res, 200, { kind: "song", title: "Imported Song (mock)", subtitle: "Mock Artist", site: "YouTube", matches: null,
+              entries: [{ url: link, title: "Imported Song (mock)", artists: ["Mock Artist"], duration_s: 214, problem: link.includes("long") ? "Audio is 60.0 min long; the maximum is 15.0 min." : null }] })
           }
           const m = /^\/api\/songs\/([\w-]+)(?:\/(.+))?$/.exec(path)
           if (m) {

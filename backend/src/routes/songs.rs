@@ -23,6 +23,8 @@ pub fn router() -> Router<AppState> {
         .route("/songs", get(list).post(create))
         .route("/songs/import", post(import_link))
         .route("/songs/import/preview", post(preview_link))
+        .route("/songs/import/resolve", post(resolve_link))
+        .route("/songs/import/batch", post(import_batch))
         .route("/songs/{id}", get(detail).patch(rename).delete(remove))
         .route("/songs/{id}/upload/parts", post(part_urls))
         .route("/songs/{id}/complete", post(complete))
@@ -361,17 +363,30 @@ async fn import_link(
 ) -> AppResult<Json<SongView>> {
     check_rate(&st, u.id)?;
     upload::validate_model(&r.model)?;
-    let url = import::validate_url(&r.url)?;
-    if db::used_bytes(&st.pool, u.id).await? >= st.config.quota_bytes() {
+    let song_id = insert_import(&st, u.id, &r.url, &r.title, &r.model).await?;
+    jobs::pump(&st, u.id).await?;
+    Ok(Json(live_view(&st, song_id).await?))
+}
+
+/// Check and add one link import to the user's queue (as `pending`; the caller pumps).
+async fn insert_import(
+    st: &AppState,
+    user: Uuid,
+    url: &str,
+    title: &str,
+    model: &str,
+) -> AppResult<Uuid> {
+    let url = import::validate_url(url)?;
+    if db::used_bytes(&st.pool, user).await? >= st.config.quota_bytes() {
         return Err(AppError::forbidden(
             "quota_exceeded",
             "storage quota exceeded",
         ));
     }
-    check_queue_room(&st, u.id).await?;
+    check_queue_room(st, user).await?;
     // Until the download reports a title, the link is the placeholder title.
     let title: String = {
-        let t = r.title.trim();
+        let t = title.trim();
         if t.is_empty() { url.as_str() } else { t }
     }
     .chars()
@@ -383,14 +398,88 @@ async fn import_link(
          VALUES ($1, $2, $3, '', 'application/octet-stream', 0, 'pending', $4, '', $5, now())",
     )
     .bind(song_id)
-    .bind(u.id)
+    .bind(user)
     .bind(&title)
-    .bind(&r.model)
+    .bind(model)
     .bind(&url)
     .execute(&st.pool)
     .await?;
-    jobs::pump(&st, u.id).await?;
-    Ok(Json(live_view(&st, song_id).await?))
+    Ok(song_id)
+}
+
+/// Most links one batch import takes.
+const MAX_BATCH: usize = 200;
+
+#[derive(Deserialize)]
+struct BatchItem {
+    url: String,
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct BatchReq {
+    items: Vec<BatchItem>,
+    model: String,
+}
+
+/// Queue several link imports at once, in order (the songs chosen from a playlist). Counts as
+/// one request against the rate limit; links that are refused are reported, not fatal.
+async fn import_batch(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Json(r): Json<BatchReq>,
+) -> AppResult<Json<Value>> {
+    if r.items.is_empty() || r.items.len() > MAX_BATCH {
+        return Err(AppError::bad_request(
+            "invalid_batch",
+            format!("send 1 to {MAX_BATCH} links"),
+        ));
+    }
+    check_rate(&st, u.id)?;
+    upload::validate_model(&r.model)?;
+    let (mut ids, mut failed) = (Vec::new(), Vec::new());
+    for item in &r.items {
+        let mut res = insert_import(&st, u.id, &item.url, &item.title, &r.model).await;
+        // Songs added so far only wait as `pending`: start what free slots allow, then retry.
+        if matches!(&res, Err(e) if e.code == "queue_full") && !ids.is_empty() {
+            jobs::pump_logged(&st, u.id).await;
+            res = insert_import(&st, u.id, &item.url, &item.title, &r.model).await;
+        }
+        match res {
+            Ok(id) => ids.push(id),
+            Err(e) => failed.push(json!({"url": item.url, "error": e.message, "code": e.code})),
+        }
+    }
+    // The songs are stored: a failure to start them now is retried by the reaper, not reported.
+    if !ids.is_empty() {
+        jobs::pump_logged(&st, u.id).await;
+    }
+    let mut songs = Vec::with_capacity(ids.len());
+    for id in ids {
+        songs.push(live_view(&st, id).await?);
+    }
+    Ok(Json(json!({"songs": songs, "failed": failed})))
+}
+
+/// Look up what a link holds (a song, a Spotify track with its YouTube matches, or a
+/// playlist's songs) without importing it.
+async fn resolve_link(
+    State(st): State<AppState>,
+    AuthUser(u): AuthUser,
+    Json(r): Json<PreviewReq>,
+) -> AppResult<Json<import::Resolved>> {
+    if !st.preview_limiter.check(&u.id) {
+        return Err(AppError::too_many(
+            "rate_limited",
+            "too many link lookups, please slow down",
+        ));
+    }
+    let url = import::validate_url(&r.url)?;
+    import::resolve(&st, &url)
+        .await
+        .map(Json)
+        .map_err(|e| AppError::new(StatusCode::UNPROCESSABLE_ENTITY, "link_unavailable", e.0))
 }
 
 #[derive(Deserialize)]

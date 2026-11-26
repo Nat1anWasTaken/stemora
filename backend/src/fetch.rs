@@ -8,6 +8,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
+use crate::catalog::{self, Candidate, SpotifyEntity, SpotifyLink};
+
 /// Audio only when the site offers it; otherwise the smallest-effort format that has audio.
 const FORMAT: &str = "bestaudio/best[acodec!=none]";
 
@@ -30,6 +32,31 @@ pub struct MediaInfo {
     /// The site, as yt-dlp names it (e.g. "YouTube", "SoundCloud").
     pub site: Option<String>,
 }
+
+/// What a link holds: one song, or the songs of a playlist, album or channel.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Listing {
+    Single(MediaInfo),
+    Collection(Collection),
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Collection {
+    pub title: Option<String>,
+    pub site: Option<String>,
+    pub entries: Vec<CollectionEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CollectionEntry {
+    pub url: String,
+    pub title: Option<String>,
+    pub uploader: Option<String>,
+    pub duration_s: Option<f64>,
+}
+
+/// Most entries read from a playlist (more than a user's queue can hold anyway).
+pub const MAX_COLLECTION_ENTRIES: usize = 200;
 
 /// Where a download stands, as last reported by yt-dlp.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -65,15 +92,77 @@ pub trait Fetcher: Send + Sync {
         max_bytes: u64,
         progress: ProgressFn<'_>,
     ) -> Result<PathBuf, FetchError>;
+    /// What the link holds, without downloading anything (a playlist's entries are not probed).
+    async fn list(&self, url: &str) -> Result<Listing, FetchError>;
+    /// Search YouTube Music's songs and YouTube for `query`, unranked.
+    async fn search(&self, query: &str) -> Result<Vec<Candidate>, FetchError>;
+    /// Read a Spotify track, album or playlist from its public embed page.
+    async fn spotify(&self, link: &SpotifyLink) -> Result<SpotifyEntity, FetchError>;
+    /// Follow a Spotify short link (`spotify.link/...`) to the open.spotify.com link it opens.
+    async fn expand_short_link(&self, url: &str) -> Result<String, FetchError>;
 }
 
 pub struct YtDlp {
     bin: String,
+    http: reqwest::Client,
+}
+
+/// Hosts a Spotify short link may redirect through (https only).
+const SPOTIFY_REDIRECT_HOSTS: &[&str] = &[
+    "spotify.link",
+    "spotify.app.link",
+    "open.spotify.com",
+    "www.spotify.com",
+];
+
+pub fn is_spotify_redirect(u: &url::Url) -> bool {
+    u.scheme() == "https"
+        && u.host_str()
+            .is_some_and(|h| SPOTIFY_REDIRECT_HOSTS.contains(&h))
+}
+
+/// Results asked of each search.
+const SEARCH_RESULTS: usize = 6;
+
+fn spotify_unreachable() -> FetchError {
+    FetchError("Could not read the link from Spotify. Check it and try again.".into())
 }
 
 impl YtDlp {
     pub fn new(bin: String) -> Self {
-        Self { bin }
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .user_agent("Mozilla/5.0 (compatible; Stemora)")
+            // Only Spotify's own hosts: short links redirect to open.spotify.com.
+            .redirect(reqwest::redirect::Policy::custom(|a| {
+                if is_spotify_redirect(a.url()) && a.previous().len() < 5 {
+                    a.follow()
+                } else {
+                    a.stop()
+                }
+            }))
+            .build()
+            .expect("http client");
+        Self { bin, http }
+    }
+
+    /// Flat search results of a yt-dlp search URL; `music` marks YouTube Music song results.
+    async fn search_one(&self, target: &str, music: bool) -> Result<Vec<Candidate>, FetchError> {
+        let end = SEARCH_RESULTS.to_string();
+        let stdout = self
+            .run(
+                &[
+                    "--flat-playlist",
+                    "--playlist-end",
+                    &end,
+                    "--dump-single-json",
+                    "--",
+                    target,
+                ],
+                &|_| {},
+            )
+            .await?;
+        Ok(parse_search(&stdout, music))
     }
 
     /// Run yt-dlp, passing each stdout line to `on_line` as it arrives. Returns stdout.
@@ -203,6 +292,219 @@ impl Fetcher for YtDlp {
             .await
             .ok_or_else(|| FetchError("The download finished but produced no file.".into()))
     }
+
+    async fn list(&self, url: &str) -> Result<Listing, FetchError> {
+        guard_host(url).await?;
+        let end = MAX_COLLECTION_ENTRIES.to_string();
+        let stdout = self
+            .run(
+                &[
+                    "--flat-playlist",
+                    "--playlist-end",
+                    &end,
+                    "--dump-single-json",
+                    "-f",
+                    FORMAT,
+                    "--",
+                    url,
+                ],
+                &|_| {},
+            )
+            .await?;
+        parse_listing(&stdout)
+    }
+
+    async fn search(&self, query: &str) -> Result<Vec<Candidate>, FetchError> {
+        let q: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        // YouTube Music's song catalog has the studio recordings, but answers nothing from many
+        // datacenter addresses; plain YouTube search always has something.
+        let music = format!("https://music.youtube.com/search?q={q}#songs");
+        let youtube = format!("ytsearch{SEARCH_RESULTS}:{query}");
+        let (music, youtube) = tokio::join!(
+            self.search_one(&music, true),
+            self.search_one(&youtube, false)
+        );
+        match (music, youtube) {
+            (Ok(mut a), Ok(b)) => {
+                a.extend(b);
+                Ok(a)
+            }
+            (Ok(a), Err(_)) => Ok(a),
+            (Err(_), b) => b,
+        }
+    }
+
+    async fn spotify(&self, link: &SpotifyLink) -> Result<SpotifyEntity, FetchError> {
+        let resp = self.http.get(link.embed_url()).send().await.map_err(|e| {
+            tracing::warn!(error = %e, "could not reach Spotify");
+            spotify_unreachable()
+        })?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(FetchError(
+                "Spotify does not know this link, or it is private.".into(),
+            ));
+        }
+        if !resp.status().is_success() {
+            tracing::warn!(status = %resp.status(), "Spotify refused the embed page");
+            return Err(spotify_unreachable());
+        }
+        let html = resp.text().await.map_err(|_| spotify_unreachable())?;
+        catalog::parse_spotify_embed(&html, link).ok_or_else(|| {
+            tracing::warn!(url = %link.embed_url(), "could not parse the Spotify embed page");
+            spotify_unreachable()
+        })
+    }
+
+    async fn expand_short_link(&self, url: &str) -> Result<String, FetchError> {
+        if !url::Url::parse(url).is_ok_and(|u| is_spotify_redirect(&u)) {
+            return Err(FetchError("This is not a Spotify link.".into()));
+        }
+        let resp = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| spotify_unreachable())?;
+        let found = resp.url().to_string();
+        if catalog::parse_spotify(&found).is_some() {
+            return Ok(found);
+        }
+        // Some short links answer with a page that names the link instead of redirecting.
+        let html = resp.text().await.unwrap_or_default();
+        html.split(['"', '\'', '<', '>', ' '])
+            .find(|s| {
+                s.starts_with("https://open.spotify.com/") && catalog::parse_spotify(s).is_some()
+            })
+            .map(str::to_string)
+            .ok_or_else(|| {
+                FetchError("This Spotify link does not open a track, album or playlist.".into())
+            })
+    }
+}
+
+#[derive(Deserialize)]
+struct RawEntry {
+    url: Option<String>,
+    webpage_url: Option<String>,
+    id: Option<String>,
+    ie_key: Option<String>,
+    title: Option<String>,
+    duration: Option<f64>,
+    uploader: Option<String>,
+    channel: Option<String>,
+}
+
+impl RawEntry {
+    fn link(&self) -> Option<String> {
+        let u = self.webpage_url.as_ref().or(self.url.as_ref());
+        match u {
+            Some(u) if u.starts_with("https://") || u.starts_with("http://") => Some(u.clone()),
+            // Flat YouTube entries sometimes carry only the video id.
+            _ if self.ie_key.as_deref() == Some("Youtube") => self
+                .id
+                .as_ref()
+                .map(|id| format!("https://www.youtube.com/watch?v={id}")),
+            _ => None,
+        }
+    }
+
+    fn uploader(&self) -> Option<String> {
+        [&self.channel, &self.uploader]
+            .into_iter()
+            .flatten()
+            .map(|u| u.trim().to_string())
+            .find(|u| !u.is_empty())
+    }
+}
+
+#[derive(Deserialize)]
+struct RawListing {
+    title: Option<String>,
+    extractor_key: Option<String>,
+    #[serde(default)]
+    entries: Vec<Option<RawEntry>>,
+}
+
+/// A friendlier name for yt-dlp's extractor (`YoutubeTab` -> `YouTube`).
+pub fn site_name(extractor_key: &str) -> String {
+    let k = extractor_key.to_ascii_lowercase();
+    if k.starts_with("youtube") {
+        "YouTube".into()
+    } else if k.starts_with("soundcloud") {
+        "SoundCloud".into()
+    } else if k.starts_with("bandcamp") {
+        "Bandcamp".into()
+    } else {
+        extractor_key.into()
+    }
+}
+
+pub fn parse_listing(json: &str) -> Result<Listing, FetchError> {
+    let info = parse_info(json)?;
+    if !info.is_playlist {
+        return Ok(Listing::Single(info));
+    }
+    let raw: RawListing = serde_json::from_str(json)
+        .map_err(|_| FetchError("Could not read the link's details.".into()))?;
+    let entries = raw
+        .entries
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            Some(CollectionEntry {
+                url: e.link()?,
+                title: e
+                    .title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string),
+                uploader: e.uploader(),
+                duration_s: e.duration.filter(|d| *d > 0.0),
+            })
+        })
+        .take(MAX_COLLECTION_ENTRIES)
+        .collect();
+    Ok(Listing::Collection(Collection {
+        title: raw
+            .title
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty()),
+        site: raw
+            .extractor_key
+            .filter(|k| !k.is_empty() && !k.eq_ignore_ascii_case("generic"))
+            .map(|k| site_name(&k)),
+        entries,
+    }))
+}
+
+/// The videos of a flat yt-dlp search result (artist and playlist results left out).
+pub fn parse_search(json: &str, music: bool) -> Vec<Candidate> {
+    let Ok(raw) = serde_json::from_str::<RawListing>(json) else {
+        return Vec::new();
+    };
+    raw.entries
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let url = e.link()?;
+            if !url.contains("watch?v=") {
+                return None;
+            }
+            Some(Candidate {
+                title: e
+                    .title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())?
+                    .into(),
+                channel: e.uploader(),
+                duration_s: e.duration.filter(|d| *d > 0.0),
+                music,
+                url,
+            })
+        })
+        .collect()
 }
 
 pub fn too_large(max_bytes: u64) -> FetchError {
@@ -371,6 +673,12 @@ pub struct FakeFetcher {
     /// When set, `download` reports half its progress and then waits for a permit (tests use
     /// it to observe and cancel an import mid-download).
     pub gate: std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
+    /// What `list` returns; `None` lists a single song with `info`.
+    pub listing: std::sync::Mutex<Option<Result<Listing, FetchError>>>,
+    pub results: std::sync::Mutex<Result<Vec<Candidate>, FetchError>>,
+    pub spotify: std::sync::Mutex<Result<SpotifyEntity, FetchError>>,
+    /// Durations `probe` reports for particular links, overriding `info`'s.
+    pub durations: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 }
 
 impl Default for FakeFetcher {
@@ -384,6 +692,10 @@ impl Default for FakeFetcher {
             file: std::sync::Mutex::new(Ok(("webm".into(), 4 * 1024 * 1024))),
             calls: Default::default(),
             gate: Default::default(),
+            listing: Default::default(),
+            results: std::sync::Mutex::new(Ok(Vec::new())),
+            spotify: std::sync::Mutex::new(Err(FetchError("no spotify".into()))),
+            durations: Default::default(),
         }
     }
 }
@@ -392,7 +704,37 @@ impl Default for FakeFetcher {
 impl Fetcher for FakeFetcher {
     async fn probe(&self, url: &str) -> Result<MediaInfo, FetchError> {
         self.calls.lock().unwrap().push(format!("probe {url}"));
-        self.info.lock().unwrap().clone()
+        let mut info = self.info.lock().unwrap().clone()?;
+        if let Some(d) = self.durations.lock().unwrap().get(url) {
+            info.duration_s = Some(*d);
+        }
+        Ok(info)
+    }
+
+    async fn list(&self, url: &str) -> Result<Listing, FetchError> {
+        self.calls.lock().unwrap().push(format!("list {url}"));
+        match self.listing.lock().unwrap().clone() {
+            Some(l) => l,
+            None => self.info.lock().unwrap().clone().map(Listing::Single),
+        }
+    }
+
+    async fn search(&self, query: &str) -> Result<Vec<Candidate>, FetchError> {
+        self.calls.lock().unwrap().push(format!("search {query}"));
+        self.results.lock().unwrap().clone()
+    }
+
+    async fn spotify(&self, link: &SpotifyLink) -> Result<SpotifyEntity, FetchError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("spotify {}", link.url()));
+        self.spotify.lock().unwrap().clone()
+    }
+
+    async fn expand_short_link(&self, url: &str) -> Result<String, FetchError> {
+        self.calls.lock().unwrap().push(format!("expand {url}"));
+        Ok("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT".into())
     }
 
     async fn download(
@@ -492,6 +834,60 @@ mod tests {
     }
 
     #[test]
+    fn spotify_redirects_stay_on_spotify() {
+        let ok = |s: &str| is_spotify_redirect(&url::Url::parse(s).unwrap());
+        assert!(ok("https://spotify.link/abc"));
+        assert!(ok("https://open.spotify.com/track/x"));
+        for bad in [
+            "https://evilspotify.link/x",
+            "https://spotify.link.evil.com/x",
+            "https://open.spotify.com.evil.com/x",
+            "http://open.spotify.com/track/x",
+            "https://127.0.0.1/",
+        ] {
+            assert!(!ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn parses_listings_and_search() {
+        let l = parse_listing(
+            r#"{"_type":"playlist","title":"Mix ","extractor_key":"YoutubeTab","entries":[
+                {"ie_key":"Youtube","id":"abc","url":"https://www.youtube.com/watch?v=abc","title":"One","duration":200,"channel":"Band"},
+                {"ie_key":"Youtube","id":"def","title":"[Private video]"},
+                null,
+                {"url":"not a link","title":"x"}
+            ]}"#,
+        )
+        .unwrap();
+        let Listing::Collection(c) = l else {
+            panic!("{l:?}")
+        };
+        assert_eq!(c.title.as_deref(), Some("Mix"));
+        assert_eq!(c.site.as_deref(), Some("YouTube"));
+        assert_eq!(c.entries.len(), 2);
+        assert_eq!(c.entries[0].uploader.as_deref(), Some("Band"));
+        assert_eq!(c.entries[1].url, "https://www.youtube.com/watch?v=def");
+        assert!(matches!(
+            parse_listing(r#"{"_type":"video","title":"x"}"#).unwrap(),
+            Listing::Single(_)
+        ));
+
+        let r = parse_search(
+            r#"{"_type":"playlist","entries":[
+                {"ie_key":"YoutubeTab","url":"https://music.youtube.com/browse/UC1","title":"Artist"},
+                {"ie_key":"Youtube","url":"https://music.youtube.com/watch?v=a1","title":"Song"},
+                {"ie_key":"Youtube","url":"https://www.youtube.com/watch?v=b2","title":"Song (Lyrics)","duration":181,"uploader":"Fan"}
+            ]}"#,
+            true,
+        );
+        assert_eq!(r.len(), 2);
+        assert!(r[0].music && r[0].duration_s.is_none());
+        assert_eq!(r[1].channel.as_deref(), Some("Fan"));
+        assert!(parse_search("oops", false).is_empty());
+    }
+
+    #[test]
     fn parses_progress() {
         assert_eq!(
             parse_progress("STEMORA-PROGRESS 15360 8945229 NA 166817.3 53"),
@@ -559,5 +955,46 @@ mod tests {
         let last = last.lock().unwrap().clone().expect("no progress reported");
         assert_eq!(last.downloaded_bytes, size);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Reads Spotify and searches YouTube for real:
+    /// `cargo test -- --ignored real_spotify_match` (uses `YTDLP_PATH`, default `yt-dlp`).
+    #[tokio::test]
+    #[ignore]
+    async fn real_spotify_match() {
+        let y = YtDlp::new(std::env::var("YTDLP_PATH").unwrap_or_else(|_| "yt-dlp".into()));
+        let link = catalog::parse_spotify("spotify:track:4cOdK2wGLETKBW3PvgPWqT").unwrap();
+        let e = y.spotify(&link).await.unwrap();
+        let (_, meta) = &e.tracks[0];
+        assert_eq!(meta.title, "Never Gonna Give You Up");
+        let ranked = catalog::rank(meta, y.search(&catalog::search_query(meta)).await.unwrap());
+        for (c, s) in &ranked {
+            eprintln!("{s:.2} {:?} {:?} {}", c.duration_s, c.channel, c.title);
+        }
+        let (top, _) = ranked.first().expect("the search found nothing");
+        assert!(catalog::names_title(meta, top), "{top:?}");
+        assert!(
+            top.duration_s
+                .is_some_and(|d| (d - 213.6).abs() < catalog::AUTO_MATCH_MAX_DURATION_DIFF_S),
+            "{top:?}"
+        );
+        let pl = catalog::parse_spotify("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M").unwrap();
+        let tracks = y.spotify(&pl).await.unwrap().tracks;
+        assert!(tracks.len() > 10);
+        if std::env::var("STEMORA_MATCH_VERBOSE").is_ok() {
+            for (_, t) in tracks.iter().take(6) {
+                let r = catalog::rank(t, y.search(&catalog::search_query(t)).await.unwrap());
+                eprintln!(
+                    "\n{} / {:?} {:?} q={}",
+                    t.title,
+                    t.artists,
+                    t.duration_s,
+                    catalog::search_query(t)
+                );
+                for (c, s) in r.iter().take(3) {
+                    eprintln!("  {s:.2} {:?} {:?} {}", c.duration_s, c.channel, c.title);
+                }
+            }
+        }
     }
 }
