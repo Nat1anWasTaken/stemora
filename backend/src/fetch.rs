@@ -107,6 +107,20 @@ pub struct YtDlp {
     http: reqwest::Client,
 }
 
+/// Hosts a Spotify short link may redirect through (https only).
+const SPOTIFY_REDIRECT_HOSTS: &[&str] = &[
+    "spotify.link",
+    "spotify.app.link",
+    "open.spotify.com",
+    "www.spotify.com",
+];
+
+pub fn is_spotify_redirect(u: &url::Url) -> bool {
+    u.scheme() == "https"
+        && u.host_str()
+            .is_some_and(|h| SPOTIFY_REDIRECT_HOSTS.contains(&h))
+}
+
 /// Results asked of each search.
 const SEARCH_RESULTS: usize = 6;
 
@@ -121,10 +135,7 @@ impl YtDlp {
             .user_agent("Mozilla/5.0 (compatible; Stemora)")
             // Only Spotify's own hosts: short links redirect to open.spotify.com.
             .redirect(reqwest::redirect::Policy::custom(|a| {
-                let spotify = a.url().host_str().is_some_and(|h| {
-                    h == "spotify.com" || h.ends_with(".spotify.com") || h.ends_with("spotify.link")
-                });
-                if spotify && a.previous().len() < 5 {
+                if is_spotify_redirect(a.url()) && a.previous().len() < 5 {
                     a.follow()
                 } else {
                     a.stop()
@@ -345,6 +356,9 @@ impl Fetcher for YtDlp {
     }
 
     async fn expand_short_link(&self, url: &str) -> Result<String, FetchError> {
+        if !url::Url::parse(url).is_ok_and(|u| is_spotify_redirect(&u)) {
+            return Err(FetchError("This is not a Spotify link.".into()));
+        }
         let resp = self
             .http
             .get(url)
@@ -820,6 +834,22 @@ mod tests {
     }
 
     #[test]
+    fn spotify_redirects_stay_on_spotify() {
+        let ok = |s: &str| is_spotify_redirect(&url::Url::parse(s).unwrap());
+        assert!(ok("https://spotify.link/abc"));
+        assert!(ok("https://open.spotify.com/track/x"));
+        for bad in [
+            "https://evilspotify.link/x",
+            "https://spotify.link.evil.com/x",
+            "https://open.spotify.com.evil.com/x",
+            "http://open.spotify.com/track/x",
+            "https://127.0.0.1/",
+        ] {
+            assert!(!ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn parses_listings_and_search() {
         let l = parse_listing(
             r#"{"_type":"playlist","title":"Mix ","extractor_key":"YoutubeTab","entries":[
@@ -941,7 +971,13 @@ mod tests {
         for (c, s) in &ranked {
             eprintln!("{s:.2} {:?} {:?} {}", c.duration_s, c.channel, c.title);
         }
-        assert!(ranked[0].1 >= catalog::AUTO_MATCH_MIN_SCORE);
+        let (top, _) = ranked.first().expect("the search found nothing");
+        assert!(catalog::names_title(meta, top), "{top:?}");
+        assert!(
+            top.duration_s
+                .is_some_and(|d| (d - 213.6).abs() < catalog::AUTO_MATCH_MAX_DURATION_DIFF_S),
+            "{top:?}"
+        );
         let pl = catalog::parse_spotify("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M").unwrap();
         let tracks = y.spotify(&pl).await.unwrap().tracks;
         assert!(tracks.len() > 10);

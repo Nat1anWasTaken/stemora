@@ -306,15 +306,13 @@ fn raw_score(t: &TrackMeta, c: &Candidate) -> f64 {
         (Some(a), Some(b)) => (1.0 - ((a - b).abs() - 2.0).max(0.0) / 28.0).max(0.0),
         _ => 0.5,
     };
-    let full_title: HashSet<String> = tokens(&t.title).into_iter().collect();
+    // A version named on one side only (a live upload for the studio track, or the studio
+    // upload for a "(Live)" track) is another recording.
+    let song_text = tokens(&t.title).join(" ");
     let cand_text = cand_title.join(" ");
     let other_version = OTHER_VERSION
         .iter()
-        .filter(|w| {
-            let ws = tokens(w);
-            let in_cand = format!(" {cand_text} ").contains(&format!(" {} ", ws.join(" ")));
-            in_cand && !ws.iter().all(|x| full_title.contains(x))
-        })
+        .filter(|w| has_phrase(&cand_text, w) != has_phrase(&song_text, w))
         .count() as f64;
     let mut bonus = 0.0;
     if c.music {
@@ -334,6 +332,20 @@ fn raw_score(t: &TrackMeta, c: &Candidate) -> f64 {
         bonus += 0.05;
     }
     0.4 * title + 0.25 * artist + 0.35 * duration + bonus - (0.3 * other_version).min(0.6)
+}
+
+fn has_phrase(text: &str, phrase: &str) -> bool {
+    format!(" {text} ").contains(&format!(" {} ", tokens(phrase).join(" ")))
+}
+
+/// Whether `c`'s title (or channel) carries most of the song's title. Matching without asking
+/// requires it: an upload by the right artist at the right length can still be another song.
+pub fn names_title(t: &TrackMeta, c: &Candidate) -> bool {
+    let mut have: HashSet<String> = tokens(&c.title).into_iter().collect();
+    if let Some(ch) = &c.channel {
+        have.extend(tokens(ch));
+    }
+    fraction_found(&tokens(&core_title(&t.title)), &have) >= 0.75
 }
 
 /// The YouTube video id of a watch link, used to merge results that are the same upload.
@@ -531,6 +543,32 @@ mod tests {
                     &cand("Taylor Swift - Anti-Hero (Live)", "Taylor Swift", 200.0)
                 )
         );
+    }
+
+    #[test]
+    fn versions_named_on_one_side_only_are_penalised() {
+        let live = TrackMeta {
+            title: "Song (Live)".into(),
+            artists: vec!["Band".into()],
+            duration_s: Some(200.0),
+        };
+        let studio = raw_score(&live, &cand("Song", "Band - Topic", 200.0));
+        let live_upload = raw_score(&live, &cand("Band - Song (Live)", "Band", 200.0));
+        assert!(live_upload > studio, "{live_upload} {studio}");
+    }
+
+    #[test]
+    fn auto_matching_needs_the_title() {
+        let t = TrackMeta {
+            title: "First Song (feat. X)".into(),
+            artists: vec!["Band".into()],
+            duration_s: Some(180.0),
+        };
+        assert!(names_title(&t, &cand("Band - First Song", "Band", 180.0)));
+        let other = cand("Second Track", "Band - Topic", 180.0);
+        assert!(!names_title(&t, &other));
+        // It would otherwise pass the score threshold on artist and length alone.
+        assert!(score(&t, &other) >= AUTO_MATCH_MIN_SCORE);
     }
 
     #[test]

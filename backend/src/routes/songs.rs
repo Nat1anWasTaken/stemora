@@ -440,13 +440,20 @@ async fn import_batch(
     upload::validate_model(&r.model)?;
     let (mut ids, mut failed) = (Vec::new(), Vec::new());
     for item in &r.items {
-        match insert_import(&st, u.id, &item.url, &item.title, &r.model).await {
+        let mut res = insert_import(&st, u.id, &item.url, &item.title, &r.model).await;
+        // Songs added so far only wait as `pending`: start what free slots allow, then retry.
+        if matches!(&res, Err(e) if e.code == "queue_full") && !ids.is_empty() {
+            jobs::pump_logged(&st, u.id).await;
+            res = insert_import(&st, u.id, &item.url, &item.title, &r.model).await;
+        }
+        match res {
             Ok(id) => ids.push(id),
             Err(e) => failed.push(json!({"url": item.url, "error": e.message, "code": e.code})),
         }
     }
+    // The songs are stored: a failure to start them now is retried by the reaper, not reported.
     if !ids.is_empty() {
-        jobs::pump(&st, u.id).await?;
+        jobs::pump_logged(&st, u.id).await;
     }
     let mut songs = Vec::with_capacity(ids.len());
     for id in ids {

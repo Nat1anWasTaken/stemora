@@ -32,9 +32,11 @@ pub fn validate_url(raw: &str) -> AppResult<String> {
     if raw.is_empty() || raw.len() > MAX_URL_LEN {
         return Err(invalid("enter a link of at most 2048 characters"));
     }
-    // Spotify links are stored in one form (no tracking parameters), URIs included.
-    if let Some(link) = catalog::parse_spotify(raw) {
-        return Ok(link.url());
+    // Spotify URIs are links too, stored like the web links below.
+    if raw.starts_with("spotify:") {
+        return catalog::parse_spotify(raw)
+            .map(|l| l.url())
+            .ok_or_else(|| invalid("only Spotify track, album and playlist links are supported"));
     }
     let u = url::Url::parse(raw).map_err(|_| invalid("not a valid link"))?;
     if !matches!(u.scheme(), "http" | "https") {
@@ -54,6 +56,10 @@ pub fn validate_url(raw: &str) -> AppResult<String> {
     };
     if private {
         return Err(invalid("links to private addresses are not allowed"));
+    }
+    // Spotify links are stored in one form (no tracking parameters or locale).
+    if let Some(link) = catalog::parse_spotify(u.as_str()) {
+        return Ok(link.url());
     }
     Ok(u.to_string())
 }
@@ -348,6 +354,7 @@ async fn resolve_inner(state: &AppState, url: &str) -> Result<Resolved, FetchErr
             entries: entity
                 .tracks
                 .iter()
+                .take(crate::fetch::MAX_COLLECTION_ENTRIES)
                 .map(|(l, t)| catalog_entry(l, t, cfg))
                 .collect(),
             matches: None,
@@ -398,8 +405,9 @@ async fn resolve_inner(state: &AppState, url: &str) -> Result<Resolved, FetchErr
     }
 }
 
-/// Find a Spotify track on YouTube without asking: the best-scoring result whose length is
-/// close to the track's. Returns the link to download, its details and the track.
+/// Find a Spotify track on YouTube without asking: the best-scoring result that names the
+/// song's title, has a length close to the track's and can be imported. Returns the link to
+/// download, its details and the track.
 async fn auto_match(
     state: &AppState,
     link: &SpotifyLink,
@@ -414,18 +422,20 @@ async fn auto_match(
     let ranked = catalog::rank(&meta, results);
     for (c, _) in ranked
         .iter()
-        .filter(|(_, s)| *s >= catalog::AUTO_MATCH_MIN_SCORE)
+        .filter(|(c, s)| *s >= catalog::AUTO_MATCH_MIN_SCORE && catalog::names_title(&meta, c))
         .take(3)
     {
         let Ok(info) = state.fetcher.probe(&c.url).await else {
             continue;
         };
-        if let (Some(a), Some(b)) = (meta.duration_s, info.duration_s)
-            && (a - b).abs() > catalog::AUTO_MATCH_MAX_DURATION_DIFF_S
-        {
-            continue;
+        // Both lengths must be known to tell the recording from another version.
+        let close = match (meta.duration_s, info.duration_s) {
+            (Some(a), Some(b)) => (a - b).abs() <= catalog::AUTO_MATCH_MAX_DURATION_DIFF_S,
+            _ => false,
+        };
+        if close && check_info(&info, &state.config).is_ok() {
+            return Ok((c.url.clone(), info, meta));
         }
-        return Ok((c.url.clone(), info, meta));
     }
     Err(FetchError(format!(
         "Could not find \"{}\" on YouTube Music or YouTube. Paste a YouTube link to it instead.",
@@ -542,7 +552,8 @@ async fn run(state: &AppState, song_id: Uuid) -> Result<(), FetchError> {
             .map_err(db_err)?;
     // Deleted (or otherwise moved on) while waiting for a slot.
     let Some(song) = song else { return Ok(()) };
-    let source = song.source_url.clone().unwrap_or_default();
+    // A Spotify short link added without a lookup is followed to the link it opens.
+    let source = expand(state, song.source_url.as_deref().unwrap_or_default()).await?;
     let cfg = &state.config;
     let max_bytes = cfg.max_upload_bytes() as u64;
 
@@ -693,6 +704,8 @@ mod tests {
             "http://169.254.169.254/latest/meta-data",
             "http://intranet/",
             "https://user:pw@example.com/",
+            "https://user@open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
+            "spotify:artist:0gxyHStUsqpMadRV0Di1Qt",
         ] {
             let e = validate_url(bad).unwrap_err();
             assert_eq!(e.code, "invalid_url", "{bad}");

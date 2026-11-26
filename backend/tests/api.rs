@@ -2315,10 +2315,22 @@ async fn spotify_tracks_are_matched_when_imported() {
     assert_eq!(song["status"], "queued", "{song:?}");
     assert_eq!(song["title"], "Song");
     assert_eq!(song["source_url"], SPOTIFY_TRACK);
-    let calls = app.fetcher.calls.lock().unwrap().clone();
-    assert!(
-        calls.contains(&"download https://www.youtube.com/watch?v=mv".to_string()),
-        "{calls:?}"
+    let calls: Vec<String> = app
+        .fetcher
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.starts_with("probe") || c.starts_with("download"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            "probe https://www.youtube.com/watch?v=audio",
+            "probe https://www.youtube.com/watch?v=mv",
+            "download https://www.youtube.com/watch?v=mv",
+        ]
     );
 
     // Nothing close enough: the song fails with a way forward.
@@ -2370,6 +2382,24 @@ async fn batch_import_queues_in_order() {
         )
         .await;
     assert_eq!(r.body["code"], "invalid_batch");
+
+    // A batch larger than the pending limit still fills the free job slots first.
+    let Some(app) = setup_with(|c| c.max_queued_per_user = 3).await else {
+        return;
+    };
+    let admin = app.admin().await;
+    let items: Vec<Value> = (0..6)
+        .map(|i| json!({"url": format!("https://www.youtube.com/watch?v={i}")}))
+        .collect();
+    let r = app
+        .post(
+            "/api/songs/import/batch",
+            &admin,
+            json!({"model":"htdemucs","items":items}),
+        )
+        .await;
+    assert_eq!(r.body["songs"].as_array().unwrap().len(), 5, "{:?}", r.body);
+    assert_eq!(r.body["failed"][0]["code"], "queue_full");
 }
 
 #[tokio::test]
