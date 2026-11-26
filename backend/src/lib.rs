@@ -90,6 +90,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::admin::router())
         .merge(routes::usage::router())
         .merge(routes::me::router())
+        .merge(routes::setlists::router())
         .route("/healthz", axum::routing::get(healthz));
     Router::new()
         .nest("/api", api)

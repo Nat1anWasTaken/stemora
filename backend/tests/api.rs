@@ -2514,3 +2514,154 @@ async fn playback_settings() {
     let a = app.get("/api/me/listening-settings", &admin).await;
     assert_eq!(a.body["settings"], Value::Null);
 }
+
+#[tokio::test]
+async fn setlists() {
+    let Some(app) = setup().await else { return };
+    let admin = app.admin().await;
+    let bob = app.user(&admin, "bob@example.com").await;
+    let a = app.song(&bob, MIB).await;
+    let b = app.song(&bob, MIB).await;
+    let theirs = app.song(&admin, MIB).await;
+    let put = |path: String, cookie: String, body: Value| {
+        let app = &app;
+        async move {
+            app.req(Method::PUT, &path, Some(&cookie), None, Some(body))
+                .await
+        }
+    };
+
+    // a's settings are copied into the entry when it is added; other users' songs are skipped
+    let r = put(
+        format!("/api/songs/{a}/settings"),
+        bob.clone(),
+        json!({"settings": {"semitones": -2}}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = app
+        .post(
+            "/api/setlists",
+            &bob,
+            json!({"name": "  Friday gig ", "song_ids": [a, theirs]}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    let id = r.body["setlist"]["id"].as_str().unwrap().to_string();
+    assert_eq!(r.body["setlist"]["name"], json!("Friday gig"));
+    assert_eq!(r.body["setlist"]["settings_source"], json!("setlist"));
+    assert_eq!(r.body["setlist"]["transition"], json!("stop"));
+    assert_eq!(r.body["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(r.body["entries"][0]["song"]["id"], json!(a));
+    assert_eq!(r.body["entries"][0]["settings"]["semitones"], json!(-2));
+
+    // append; a song without settings gets none
+    let r = app
+        .post(
+            &format!("/api/setlists/{id}/entries"),
+            &bob,
+            json!({"song_ids": [b]}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let e0 = r.body["entries"][0]["id"].as_str().unwrap().to_string();
+    let e1 = r.body["entries"][1]["id"].as_str().unwrap().to_string();
+    assert_eq!(r.body["entries"][1]["settings"], Value::Null);
+    assert_eq!(r.body["setlist"]["entry_count"], json!(2));
+
+    // reorder, edit, and the copy is independent of the song afterwards
+    let r = put(
+        format!("/api/setlists/{id}/entries"),
+        bob.clone(),
+        json!({"entries": [{"id": e1, "transition": "continue", "notes": " capo 2 "}, {"id": e0, "transition": null}]}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["entries"][0]["song"]["id"], json!(b));
+    assert_eq!(r.body["entries"][0]["transition"], json!("continue"));
+    assert_eq!(r.body["entries"][0]["notes"], json!("capo 2"));
+    put(
+        format!("/api/songs/{a}/settings"),
+        bob.clone(),
+        json!({"settings": {"semitones": 3}}),
+    )
+    .await;
+    let r = put(
+        format!("/api/setlists/{id}/entries/{e0}/settings"),
+        bob.clone(),
+        json!({"settings": {"speed": 0.9}}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let d = app.get(&format!("/api/setlists/{id}"), &bob).await;
+    assert_eq!(d.body["entries"][1]["settings"]["speed"], json!(0.9));
+    assert_eq!(d.body["entries"][1]["settings"]["semitones"], json!(0));
+
+    // bad input
+    let r = put(
+        format!("/api/setlists/{id}/entries"),
+        bob.clone(),
+        json!({"entries": [{"id": e0}, {"id": e0}]}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = app
+        .post("/api/setlists", &bob, json!({"name": "   "}))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = app
+        .req(
+            Method::PATCH,
+            &format!("/api/setlists/{id}"),
+            Some(&bob),
+            None,
+            Some(json!({"settings_source": "nope"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // rename / list / owner only / removal with the song / delete
+    let r = app
+        .req(
+            Method::PATCH,
+            &format!("/api/setlists/{id}"),
+            Some(&bob),
+            None,
+            Some(json!({"name": "Sat", "transition": "continue"})),
+        )
+        .await;
+    assert_eq!(r.body["setlist"]["name"], json!("Sat"));
+    assert_eq!(r.body["setlist"]["transition"], json!("continue"));
+    let l = app.get("/api/setlists", &bob).await;
+    assert_eq!(l.body["setlists"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        app.get(&format!("/api/setlists/{id}"), &admin).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let r = app
+        .req(
+            Method::DELETE,
+            &format!("/api/songs/{b}"),
+            Some(&bob),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let d = app.get(&format!("/api/setlists/{id}"), &bob).await;
+    assert_eq!(d.body["entries"].as_array().unwrap().len(), 1);
+    let r = app
+        .req(
+            Method::DELETE,
+            &format!("/api/setlists/{id}"),
+            Some(&bob),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        app.get(&format!("/api/setlists/{id}"), &bob).await.status,
+        StatusCode::NOT_FOUND
+    );
+}

@@ -78,6 +78,12 @@ type TempoMarker = { time: number /* seconds */; kind: "auto" }
                      num: number /* 1..32 */; den: 2 | 4 | 8 | 16;
                      clicks?: ("accent"|"normal"|"soft"|"muted")[][] /* metronome pattern: per beat of the bar (1..32), its 1..8 evenly spaced clicks, the beat first; absent = beat 1 accented, one click a beat */ }
 type Usage = { used_bytes: number; quota_bytes: number }
+type Setlist = { id: string; name: string; settings_source: "song" | "setlist" | "listening" /* where the player takes settings from when it is played */;
+                 transition: "continue" | "stop" /* after a song: play the next one, or load it and wait */;
+                 entry_count: number; duration_s: number | null /* sum of the songs' lengths */; created_at: string; updated_at: string }
+type SetlistEntry = { id: string; song: Song; settings: PlaybackSettings | null /* copy of the song's when added, then edited here; null when the song had none */;
+                      transition: "continue" | "stop" | null /* null = the setlist's */; notes: string }
+type SetlistDetail = { setlist: Setlist; entries: SetlistEntry[] /* in order */ }
 ```
 Auth:
 - `GET /api/auth/status` -> `{needs_bootstrap: boolean}` (public)
@@ -115,6 +121,14 @@ Songs (auth required, scoped to the session user; other users' ids return 404):
 - `GET /api/songs/{id}/stems/{name}/download?format=m4a|flac` -> 302 to presigned GET with `Content-Disposition: attachment; filename="{title} - {name}.{ext}"`
 - `GET /api/me/usage` -> Usage
 - `GET /api/me/listening-settings` -> `{settings: PlaybackSettings | null}` (null until first saved); `PUT /api/me/listening-settings` `{settings:PlaybackSettings}` -> `{settings}`, normalised like song settings. One set per user, used for every song while the player's settings source is Listening.
+Setlists (auth required, the user's own; other users' ids return 404; see `playback.md`):
+- `GET /api/setlists` -> `{setlists: Setlist[]}`, most recently changed first.
+- `POST /api/setlists` `{name, settings_source?, transition?, song_ids?: string[]}` -> SetlistDetail. `name` is trimmed, 1..200 characters (400 `invalid_name`); `settings_source` defaults to `setlist`, `transition` to `stop` (400 `invalid_settings_source` / `invalid_transition`). Songs that are not the user's are skipped.
+- `GET /api/setlists/{id}` -> SetlistDetail; `PATCH /api/setlists/{id}` `{name?, settings_source?, transition?}` -> SetlistDetail; `DELETE /api/setlists/{id}` -> 204.
+- `POST /api/setlists/{id}/entries` `{song_ids: string[]}` -> SetlistDetail. Appends the user's songs among them (a song may appear more than once), each with a copy of its current settings. At most 500 entries (400 `too_many_entries`).
+- `PUT /api/setlists/{id}/entries` `{entries: {id, transition: "continue"|"stop"|null, notes?: string}[]}` -> SetlistDetail. The list is the new order with each entry's transition and notes (trimmed, at most 1000 characters, 400 `invalid_notes`); entries left out are removed. Unknown or repeated ids: 400 `invalid_entry`.
+- `PUT /api/setlists/{id}/entries/{entry_id}/settings` `{settings: PlaybackSettings}` -> `{settings}`, normalised like song settings.
+- Deleting a song removes its entries from every setlist.
 Webhook: `POST /api/webhooks/jobs/{job_id}` (token auth as above, not cookie). Idempotent; ignores updates for jobs already in a terminal state or for a stale attempt (and tells the worker to stop, see Cancellation above). Deleting a song makes its running worker stop at its next update (heartbeat every ~15s) and remove what it already uploaded.
 
 Job/song state machine: song `uploading` -> (complete) `pending` -> (slot free) `queued`; a link import starts `pending` -> (slot free) `importing` -> (download stored) `queued` | `failed`; `pending` -> (cancel) `failed`; songs still `importing` when the backend starts were interrupted and go back to `pending` (keeping their place) to download again; `queued` -> (first `running` webhook) `processing` -> `ready` | `failed`. `ready`/`failed` -> (reprocess) `pending`. Retryable failure with attempts < 3 re-spawns after backoff (30s, 120s) and stays `processing`/`queued`; reaper fails jobs without a heartbeat for 5 minutes, or 30 minutes while the worker has not reported yet (no `stage`: the call is still waiting for a GPU), retrying if attempts left and cancelling the abandoned Modal call via `cancel` and deletes `uploading` songs older than 24h (abort multipart, remove objects).
