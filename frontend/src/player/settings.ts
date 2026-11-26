@@ -56,10 +56,13 @@ export function sameSettings(a: PlaybackSettings, b: PlaybackSettings): boolean 
   )
 }
 
-/** Where a set is stored: one song's settings, or the user's listening settings. */
-export type SettingsScope = { kind: "song"; id: string } | { kind: "listening" }
+/** Where a set is stored: one song's settings, the user's listening settings, or a setlist entry's. */
+export type SettingsScope = { kind: "song"; id: string } | { kind: "listening" } | { kind: "entry"; setlistId: string; entryId: string }
 
-const pendingKey = (s: SettingsScope) => (s.kind === "song" ? `stemora:settings-pending:song:${s.id}` : "stemora:settings-pending:listening")
+/** A stable name for a scope (React keys, storage keys). */
+export const scopeKey = (s: SettingsScope) => (s.kind === "song" ? `song:${s.id}` : s.kind === "entry" ? `entry:${s.setlistId}:${s.entryId}` : "listening")
+
+const pendingKey = (s: SettingsScope) => `stemora:settings-pending:${scopeKey(s)}`
 const legacyMixerKey = (songId: string) => `stemora:mixer:${songId}`
 
 function read(key: string): unknown {

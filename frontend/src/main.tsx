@@ -1,7 +1,7 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
 import "./index.css"
 import { PwaManager } from "@/components/app/pwa"
 import { CommandPalette } from "@/components/app/command-palette"
@@ -9,7 +9,7 @@ import { AppErrorBoundary } from "@/components/app/error-boundary"
 import { NavDirection } from "@/components/app/page-transition"
 import { AppShell, RequireAuth } from "@/components/app/shell"
 import { Toaster } from "@/components/ui/sonner"
-import { ApiError } from "@/lib/api"
+import { queryClient } from "@/lib/query-client"
 import { AccountPage } from "@/pages/account"
 import { BootstrapPage, InvitePage, LoginPage } from "@/pages/auth"
 import { InvitesPage } from "@/pages/invites"
@@ -18,14 +18,6 @@ import { ProcessingPage } from "@/pages/processing"
 import { SongPage } from "@/pages/song"
 import { UploadPage } from "@/pages/upload"
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: (n, e) => !(e instanceof ApiError && e.status < 500) && n < 2,
-      refetchOnWindowFocus: false,
-    },
-  },
-})
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

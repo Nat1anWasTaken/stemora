@@ -116,6 +116,23 @@ export type PlaybackSettings = {
 /** A tempo marker as stored: `auto` hands the beats to the detected ones; `manual` lays a grid (BPM of `den` notes). */
 export type TempoMarkerJson = { time: number; kind: "auto" } | { time: number; kind: "manual"; bpm: number; num: number; den: number; clicks?: ("accent" | "normal" | "soft" | "muted")[][] }
 export type Usage = { used_bytes: number; quota_bytes: number }
+/** Where the player takes its settings from (docs/playback.md). */
+export type SettingsSource = "song" | "setlist" | "listening"
+/** After a song: play the next one, or load it and wait. */
+export type Transition = "continue" | "stop"
+export type Setlist = {
+  id: string
+  name: string
+  settings_source: SettingsSource
+  transition: Transition
+  entry_count: number
+  duration_s: number | null
+  created_at: string
+  updated_at: string
+}
+export type SetlistEntry = { id: string; song: Song; settings: PlaybackSettings | null; transition: Transition | null; notes: string }
+export type SetlistDetail = { setlist: Setlist; entries: SetlistEntry[] }
+export type EntryEdit = { id: string; transition: Transition | null; notes: string }
 export type Upload =
   | { mode: "single"; url: string; headers: Record<string, string> }
   | { mode: "multipart"; upload_id: string; part_size: number; part_count: number }
@@ -221,6 +238,17 @@ export const api = {
   listeningSettings: () => request<{ settings: PlaybackSettings | null }>("/me/listening-settings"),
   setListeningSettings: (settings: PlaybackSettings) =>
     request<{ settings: PlaybackSettings }>("/me/listening-settings", { method: "PUT", body: { settings } }),
+  setlists: () => request<{ setlists: Setlist[] }>("/setlists"),
+  setlist: (id: string) => request<SetlistDetail>(`/setlists/${id}`),
+  createSetlist: (body: { name: string; settings_source?: SettingsSource; transition?: Transition; song_ids?: string[] }) =>
+    request<SetlistDetail>("/setlists", { method: "POST", body }),
+  updateSetlist: (id: string, body: { name?: string; settings_source?: SettingsSource; transition?: Transition }) =>
+    request<SetlistDetail>(`/setlists/${id}`, { method: "PATCH", body }),
+  removeSetlist: (id: string) => request<void>(`/setlists/${id}`, { method: "DELETE" }),
+  addToSetlist: (id: string, songIds: string[]) => request<SetlistDetail>(`/setlists/${id}/entries`, { method: "POST", body: { song_ids: songIds } }),
+  replaceEntries: (id: string, entries: EntryEdit[]) => request<SetlistDetail>(`/setlists/${id}/entries`, { method: "PUT", body: { entries } }),
+  setEntrySettings: (id: string, entryId: string, settings: PlaybackSettings) =>
+    request<{ settings: PlaybackSettings }>(`/setlists/${id}/entries/${entryId}/settings`, { method: "PUT", body: { settings } }),
   reprocess: (id: string, model: Model) => request<Song>(`/songs/${id}/reprocess`, { method: "POST", body: { model } }),
   usage: () => request<Usage>("/me/usage"),
 }

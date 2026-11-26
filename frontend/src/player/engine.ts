@@ -39,6 +39,22 @@ type StemNode = { name: StemName; buffer: AudioBuffer; gain: GainNode; source: A
 
 type AudioContextCtor = typeof AudioContext
 
+/**
+ * One AudioContext for every engine. A new song gets a new engine, and on iOS a context only starts inside a tap, so
+ * a context per song could not start the next song by itself (Up Next). An engine disconnects its nodes when disposed.
+ */
+let sharedContext: AudioContext | null = null
+function audioContext(): AudioContext {
+  if (!sharedContext || sharedContext.state === "closed") {
+    const Ctor: AudioContextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext: AudioContextCtor }).webkitAudioContext
+    sharedContext = new Ctor({ latencyHint: "playback" })
+  }
+  return sharedContext
+}
+
+/** A click of a count-in: seconds before the song starts, and how loud. */
+export type CountInClick = { before: number; level: ClickVolume }
+
 export class StemEngine {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
@@ -68,6 +84,7 @@ export class StemEngine {
   /** Context time up to which clicks are scheduled, and the clicks still to sound (so a seek can silence them). */
   private metroUntil = 0
   private scheduled: { osc: AudioScheduledSourceNode; when: number }[] = []
+  private countIn: AudioScheduledSourceNode[] = []
   private sound: ClickSound = clickSound(DEFAULT_CLICK_SOUND)
   private soundReady: Promise<void> | null = null
   private soundDone: () => boolean = () => false
@@ -100,8 +117,7 @@ export class StemEngine {
 
   private ensureContext(): AudioContext {
     if (!this.ctx) {
-      const Ctor: AudioContextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext: AudioContextCtor }).webkitAudioContext
-      this.ctx = new Ctor({ latencyHint: "playback" })
+      this.ctx = audioContext()
       this.master = this.ctx.createGain()
       this.master.connect(this.ctx.destination)
       this.metroGain = this.ctx.createGain()
@@ -210,18 +226,38 @@ export class StemEngine {
     }
   }
 
-  /** Must be called from a user gesture the first time (iOS). */
-  async play() {
+  /**
+   * Must be called from a user gesture the first time (iOS). `countIn` clicks are played first (the metronome's sound,
+   * whether or not the metronome is on), and the song starts after the earliest of them.
+   */
+  async play(countIn: CountInClick[] = []) {
     const ctx = this.ensureContext()
     if (this.playing || this.stems.length === 0) return
     if (ctx.state !== "running") await ctx.resume()
     let pos = this.offset >= this.duration - 0.05 ? 0 : this.offset
     if (this.loop?.enabled && pos >= this.loop.b) pos = this.loop.a
     this.playing = true
-    this.startSources(pos, ctx.currentTime + 0.08)
+    const lead = Math.max(0, ...countIn.map((c) => c.before))
+    const start = ctx.currentTime + 0.08 + lead
+    if (countIn.length > 0 && this.soundLoaded()) {
+      for (const c of countIn) this.countIn.push(this.sound.play(ctx, start - c.before, c.level, this.metroGain!))
+    }
+    this.startSources(pos, start)
+  }
+
+  private silenceCountIn() {
+    for (const osc of this.countIn) {
+      try {
+        osc.stop()
+      } catch {
+        /* not started */
+      }
+    }
+    this.countIn = []
   }
 
   pause() {
+    this.silenceCountIn()
     if (!this.playing) return
     this.offset = this.position
     this.playing = false
@@ -234,6 +270,7 @@ export class StemEngine {
   }
 
   seek(t: number) {
+    this.silenceCountIn()
     const pos = Math.min(Math.max(0, t), Math.max(0, this.duration - 0.01))
     if (!this.playing) {
       this.offset = pos
@@ -514,11 +551,16 @@ export class StemEngine {
     document.removeEventListener("visibilitychange", this.onVisibility)
     this.stopSources()
     this.stopMetronome()
+    this.silenceCountIn()
     this.playing = false
     this.onEnded = null
     this.onShiftUnavailable = null
+    // The context is shared with the next song's engine: disconnect this one's nodes instead of closing it.
+    for (const n of this.stretches) n.disconnect()
     this.stretches = []
-    void this.ctx?.close()
+    for (const st of this.stems) st.gain.disconnect()
+    this.metroGain?.disconnect()
+    this.master?.disconnect()
     this.ctx = null
     this.stems = []
   }

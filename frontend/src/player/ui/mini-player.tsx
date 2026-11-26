@@ -1,4 +1,4 @@
-import { Loader2, Pause, Play, X } from "lucide-react"
+import { Loader2, Pause, Play, SkipForward, X } from "lucide-react"
 import { useNavigate } from "react-router"
 import { SongArtwork } from "@/components/app/song-bits"
 import { Button } from "@/components/ui/button"
@@ -7,6 +7,8 @@ import { formatClock } from "@/lib/format"
 import { useSong } from "@/lib/queries"
 import { usePlayer } from "@/player/store"
 import { usePosition } from "@/player/ui/use-position"
+import { SOURCE_LABEL, useEffectiveSource } from "@/player/ui/settings-source"
+import { upNext, useUpNext } from "@/player/up-next"
 
 function Clock() {
   const duration = usePlayer((s) => s.duration)
@@ -28,6 +30,8 @@ export function MiniPlayer() {
   const cached = useSong(id).data
   const title = cached?.song.title ?? detail?.song.title ?? ""
   const ready = status === "ready"
+  const hasNext = useUpNext((s) => s.index + 1 < s.items.length)
+  const { source } = useEffectiveSource()
   const open = () => nav(`/songs/${id}`)
   const stop = () => usePlayer.getState().unload()
 
@@ -46,12 +50,14 @@ export function MiniPlayer() {
           <span className="truncate text-sm font-semibold">{title}</span>
           <span className="truncate text-xs text-muted-foreground tabular-nums">
             {status === "error" ? "Could not load the stems" : ready ? <Clock /> : `Loading ${Math.round(loadProgress * 100)}%`}
+            {source !== "song" && <span className="text-primary"> · {SOURCE_LABEL[source]}</span>}
           </span>
         </span>
       </button>
       <Button variant="play" size="icon-lg" aria-label={playing ? "Pause" : "Play"} disabled={!ready} onClick={() => usePlayer.getState().toggle()}>
         {status === "loading" ? <Loader2 className="animate-spin" /> : playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
       </Button>
+      {hasNext && <Button variant="ghost" size="icon-lg" aria-label="Next song" onClick={upNext.next}><SkipForward /></Button>}
       <Button variant="ghost" size="icon-lg" aria-label="Stop and close the player" onClick={stop}><X /></Button>
     </div>
   )
