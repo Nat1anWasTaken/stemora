@@ -26,6 +26,8 @@ const HISTORY = 200
 
 type PlayerState = {
   songId: string | null
+  /** The loaded song as it was when loaded (its presigned URLs, tempo map and settings then); null when nothing is. */
+  detail: SongDetail | null
   status: "idle" | "loading" | "ready" | "error"
   loadProgress: number
   error: string | null
@@ -133,6 +135,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
 
   return {
     songId: null,
+    detail: null,
     status: "idle",
     loadProgress: 0,
     error: null,
@@ -167,7 +170,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       past = []
       future = []
       // The song record's length lets the charts and tempo map show before the stems are decoded.
-      set({ songId: detail.song.id, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: s.speed, semitones: s.semitones, keyEnabled: s.key_enabled, transposed: s.transposed, metronome: s.metronome, clickSound: s.click_sound, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
+      set({ songId: detail.song.id, detail, status: "loading", loadProgress: 0, error: null, mixer, duration: detail.song.duration_s ?? 0, loop: null, pendingA: null, playing: false, peaks: null, analysis: null, speed: s.speed, semitones: s.semitones, keyEnabled: s.key_enabled, transposed: s.transposed, metronome: s.metronome, clickSound: s.click_sound, canShift: null, markers: normalizeMarkers(detail.tempo_markers ?? defaultMarkers()), canUndo: false, canRedo: false })
       e.setSpeed(s.speed)
       e.setMetronome(get().metronome)
       e.setClickSound(get().clickSound)
@@ -210,7 +213,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       stopKeepAlive()
       past = []
       future = []
-      set({ songId: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
+      set({ songId: null, detail: null, status: "idle", playing: false, duration: 0, loop: null, pendingA: null, peaks: null, analysis: null, speed: 1, semitones: 0, keyEnabled: true, markers: defaultMarkers(), grid: { beats: [], bars: [] }, canUndo: false, canRedo: false })
     },
     play() {
       if (!engine || get().status !== "ready") return

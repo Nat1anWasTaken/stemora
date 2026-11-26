@@ -57,13 +57,13 @@ Same kind of thing, same component; one home per control; settings are edited in
 | Play next, Add to Up Next, Add to setlist… | song `ActionMenu` in the Library; Add to setlist… also in the player's More menu *(planned)* | song actions |
 | Add to Up Next gesture | swipe a Library song right (left is Delete) *(planned)* | `use-swipe-action` |
 | Next / previous song | mini player, Up Next panel, lock screen, command palette *(planned)* | Media Session, `useCommands` |
-| Mini player | above the bottom nav on phones, bottom of the main area on desktop *(planned)* | `glass`, like the nav |
+| Mini player | above the bottom nav on phones, bottom of the main area on desktop | `glass`, like the nav |
 | "Next: …" after a song that stops | the player's floating status slot *(planned)* | loading/error slot |
 
 The transport row keeps its five practice buttons; previous/next song do not go there (seven 44 px buttons do not fit a
 phone, and "next song" next to "+10 s" invites mis-taps on stage). The source chip is muted for Song settings and
-accented otherwise; the mini player shows the source only when it is not Song settings. Closing the player sheet will
-shrink it to the mini player and return to the page it was opened from, instead of stopping playback.
+accented otherwise; the mini player shows the source only when it is not Song settings. Closing the player sheet
+shrinks it to the mini player and returns to the page it was opened from, instead of stopping playback.
 
 Stage view *(planned)*: a full-screen view entered with Perform on a setlist: large type, next song, a touch lock,
 screen wake lock, page-turner pedals (they send `PageDown`/`ArrowRight`, registered as commands), count-in, and
@@ -72,7 +72,7 @@ screen wake lock, page-turner pedals (they send `PageDown`/`ArrowRight`, registe
 ## Steps
 1. Rename Queue to Processing. *(done)*
 2. Song and listening settings in the database, synced behind the UI. *(done)*
-3. Player outlives the song route; mini player.
+3. Player outlives the song route; mini player. *(done)*
 4. Up Next, with the Song / Listening switch; Media Session next/previous.
 5. Setlists with per-entry settings; Setlist option on the switch; copy actions.
 6. Stage view and offline setlists.

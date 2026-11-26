@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router"
+import { useLocation, useNavigate } from "react-router"
 import { AudioWaveform, ChevronDown, Download, FileMusic, LayoutGrid, Loader2, MoreHorizontal, Pencil, SlidersVertical, Sparkles, Trash2 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
@@ -14,7 +14,6 @@ import { formatClock } from "@/lib/format"
 import { useSongActions } from "@/lib/queries"
 import { tempoMidi } from "@/player/midi"
 import { STEM_NAMES } from "@/player/mixer"
-import { bindMediaHandlers, clearMediaSession, setMediaMetadata, setPlaybackState } from "@/player/mediaSession"
 import { getPosition, usePlayer } from "@/player/store"
 import { ChartToolbar, loadChart, saveChart, type Chart, type DrumControls } from "@/player/ui/chart-header"
 import { ChordGrid } from "@/player/ui/chord-grid"
@@ -30,8 +29,6 @@ import { useSheetDrag } from "@/player/ui/use-sheet-drag"
 import { usePlayerCommands } from "@/player/ui/use-player-commands"
 import { TempoEditor } from "@/player/ui/tempo-editor/tempo-editor"
 import { Swap, WorkspaceToolbar } from "@/player/ui/workspace"
-import { useSettingsSync } from "@/player/use-settings-sync"
-import { useTempoMarkers } from "@/player/use-tempo-markers"
 import type { StemName } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -49,29 +46,10 @@ function usePlayerEnvironment() {
   }, [])
 }
 
-function useMediaSession(title: string) {
-  const status = usePlayer((s) => s.status)
-  const playing = usePlayer((s) => s.playing)
-  const duration = usePlayer((s) => s.duration)
-  useEffect(() => {
-    if (status !== "ready") return
-    const { play, pause, seek, skip } = usePlayer.getState()
-    setMediaMetadata(title, "/icons/icon-512.png")
-    bindMediaHandlers({ play, pause, seekTo: seek, seekBy: skip })
-    return clearMediaSession
-  }, [status, title])
-  useEffect(() => {
-    if (status !== "ready") return
-    setPlaybackState(playing, getPosition(), duration)
-    if (!playing) return
-    const id = setInterval(() => setPlaybackState(true, getPosition(), duration), 1000)
-    return () => clearInterval(id)
-  }, [status, playing, duration])
-}
-
 export function Player({ detail }: { detail: SongDetail }) {
   const { song } = detail
   const nav = useNavigate()
+  const location = useLocation()
   const { remove, rename, reprocess } = useSongActions()
   const status = usePlayer((s) => s.status)
   const loadProgress = usePlayer((s) => s.loadProgress)
@@ -116,8 +94,6 @@ export function Player({ detail }: { detail: SongDetail }) {
   }), [])
   const drumChart = useDrumChart(precision)
   const { breaks, toggle: toggleBreak, editable: breaksEditable } = useDrumBreaks(song.id, detail)
-  useTempoMarkers(song.id, detail.tempo_markers)
-  useSettingsSync(song.id, detail.settings)
   const toggleBreakAtPlayhead = useCallback(() => {
     if (!drumChart) return
     const bar = barIndexAt(drumChart.bars, getPosition())
@@ -139,20 +115,24 @@ export function Player({ detail }: { detail: SongDetail }) {
 
   usePlayerEnvironment()
   useThemeColor("--sheet-top")
-  useMediaSession(song.title)
   useSheetDrag(sheet, dragZone, close, !desktop)
 
-  // Navigate even if the exit animation never reports its end (e.g. the tab is hidden).
+  // Closing only hides the sheet: the song keeps playing in the mini player, back on the page it was opened from.
+  const leave = useCallback(() => {
+    if (location.key !== "default") nav(-1)
+    else nav("/", { replace: true })
+  }, [location.key, nav])
+  // Leave even if the exit animation never reports its end (e.g. the tab is hidden).
   useEffect(() => {
     if (!closing) return
-    const id = setTimeout(() => nav("/"), 500)
+    const id = setTimeout(leave, 500)
     return () => clearTimeout(id)
-  }, [closing, nav])
+  }, [closing, leave])
 
-  // (Re)load only when the song changes; presigned URLs in later refetches are ignored.
+  // Load the song unless it is the one already playing (reopened from the mini player). Presigned URLs in later
+  // refetches are ignored; the player keeps the song loaded after this sheet closes (see PlaybackHost).
   useEffect(() => {
-    void usePlayer.getState().load(detail)
-    return () => usePlayer.getState().unload()
+    if (usePlayer.getState().songId !== song.id) void usePlayer.getState().load(detail)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [song.id])
 
@@ -206,7 +186,7 @@ export function Player({ detail }: { detail: SongDetail }) {
       ref={sheet}
       className={cn("player-sheet sheet-drag fixed inset-0 z-40 flex h-app flex-col overflow-hidden pt-safe pr-safe pl-safe", closing ? "animate-sheet-out" : "animate-sheet-in")}
       onAnimationEnd={(e) => {
-        if (closing && e.target === e.currentTarget) nav("/")
+        if (closing && e.target === e.currentTarget) leave()
       }}
     >
       <div ref={dragZone} className="no-gestures shrink-0">

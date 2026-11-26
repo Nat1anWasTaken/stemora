@@ -6,6 +6,7 @@ import { downloadSummary, importStageLabel, queuePlace, stageLabel } from "@/lib
 const ARTWORK = {
   default: { box: "size-14 gap-1 rounded-2xl p-3", bar: "w-1.5", heights: ["h-4", "h-5", "h-6", "h-7", "h-8"] },
   sm: { box: "size-11 gap-0.5 rounded-xl p-2.5", bar: "w-1", heights: ["h-2", "h-3", "h-4", "h-5", "h-6"] },
+  xs: { box: "size-10 gap-0.5 rounded-full p-2.5", bar: "w-1", heights: ["h-1.5", "h-2", "h-2.5", "h-3", "h-4"] },
 } as const
 
 /** Small four-bar glyph; bar heights are derived from the id so each song has its own mark. */

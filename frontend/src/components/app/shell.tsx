@@ -16,6 +16,9 @@ import { keys, useMe, useUsage } from "@/lib/queries"
 import { useQueue } from "@/lib/queue"
 import { uploads } from "@/lib/uploads"
 import { cn } from "@/lib/utils"
+import { MiniPlayer } from "@/player/ui/mini-player"
+import { PlaybackHost } from "@/player/ui/playback-host"
+import { usePlayer } from "@/player/store"
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn("flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors", isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
@@ -66,7 +69,12 @@ export function RequireAuth() {
       </div>
     )
   if (!me.data) return <Navigate to="/login" replace />
-  return <Outlet />
+  return (
+    <>
+      <PlaybackHost />
+      <Outlet />
+    </>
+  )
 }
 
 export function AppShell() {
@@ -75,6 +83,8 @@ export function AppShell() {
   const nav = useNavigate()
   const admin = me.data?.role === "admin"
   const { count } = useQueue()
+  /** A song is loaded: the mini player shows, so the page needs room below it. */
+  const playing = usePlayer((s) => s.songId !== null)
   const logout = async () => {
     await api.logout().catch(() => {})
     uploads.reset()
@@ -118,12 +128,13 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 pb-nav md:pb-0">
+      <main className={cn("min-w-0 flex-1", playing ? "pb-nav-mini md:pb-28" : "pb-nav md:pb-0")}>
         <PageTransition>
           <Outlet />
         </PageTransition>
       </main>
 
+      <MiniPlayer />
       <nav className="glass vt-nav fixed inset-x-4 bottom-nav z-30 animate-in duration-500 ease-spring fade-in slide-in-from-bottom-4 mx-auto flex max-w-sm items-center justify-around rounded-full border border-border p-1.5 md:hidden" aria-label="Main">
         <NavLink to="/" end className={mobileLinkClass}>
           <Library className="size-5" />Library

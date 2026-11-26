@@ -1,5 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
+import { usePlayer } from "@/player/store"
 import { api, isActive, isLinkImport, retryModel, type Model, type Song, type SongPage, type SongSort, type SongStatus } from "@/lib/api"
 
 export const keys = {
@@ -73,6 +74,11 @@ export const useSong = (id: string) =>
 
 const message = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong")
 
+/** A song that is deleted or reprocessed (its stems are about to go) cannot keep playing. */
+function stopIfPlaying(id: string) {
+  if (usePlayer.getState().songId === id) usePlayer.getState().unload()
+}
+
 export function useSongActions() {
   const qc = useQueryClient()
   const refresh = (id?: string) => {
@@ -82,7 +88,7 @@ export function useSongActions() {
   }
   const remove = useMutation({
     mutationFn: (s: Song) => api.remove(s.id),
-    onSuccess: (_d, s) => { toast.success(`Deleted "${s.title}"`); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
+    onSuccess: (_d, s) => { stopIfPlaying(s.id); toast.success(`Deleted "${s.title}"`); qc.removeQueries({ queryKey: keys.song(s.id) }); refresh() },
     onError: (e) => toast.error(message(e)),
   })
   const rename = useMutation({
@@ -92,7 +98,7 @@ export function useSongActions() {
   })
   const reprocess = useMutation({
     mutationFn: (v: { id: string; model: Model }) => api.reprocess(v.id, v.model),
-    onSuccess: (song, v) => { toast.success(song.status === "pending" ? "Waiting in Processing" : "Processing started"); refresh(v.id) },
+    onSuccess: (song, v) => { stopIfPlaying(v.id); toast.success(song.status === "pending" ? "Waiting in Processing" : "Processing started"); refresh(v.id) },
     onError: (e) => toast.error(message(e)),
   })
   // Import the same link again, then drop the failed song.
