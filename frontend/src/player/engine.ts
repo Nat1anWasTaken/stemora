@@ -15,6 +15,11 @@
  * and their copies are only built the first time the speed or key leaves the original. Where they cannot run, playbackRate
  * changes the speed and the pitch moves with it. The metronome never goes through it: it clicks on the song's beat
  * grid (`setClicks`), mapped onto the audio clock through the same offset, speed and loop as the stems.
+ *
+ * Output latency (see output-latency.ts): everything is scheduled on the audio clock, and the output (Bluetooth most of
+ * all) delays all of it alike, so stems and clicks stay together. Only what the engine reports as heard (`position`)
+ * takes the delay off the clock, so the playhead and charts match the sound; restarts keep using the clock position
+ * so they continue the sound without a jump.
  */
 import type { StretchNode } from "signalsmith-stretch"
 import type { StemName } from "@/lib/api"
@@ -22,6 +27,7 @@ import { stemSemitones } from "@/player/transpose"
 import { clickSound, DEFAULT_CLICK_SOUND, type ClickSound } from "@/player/click-sounds"
 import { clicksBetween, type Click, type ClickVolume } from "@/player/clicks"
 import { defaultMixer, effectiveGain, loopedPosition, clampLoop, type LoopRegion, type MixerState } from "@/player/mixer"
+import { heardDelay, reportedLatency } from "@/player/output-latency"
 
 export type StemSource = { name: StemName; url: string }
 
@@ -44,7 +50,7 @@ type AudioContextCtor = typeof AudioContext
  * a context per song could not start the next song by itself (Up Next). An engine disconnects its nodes when disposed.
  */
 let sharedContext: AudioContext | null = null
-function audioContext(): AudioContext {
+export function audioContext(): AudioContext {
   if (!sharedContext || sharedContext.state === "closed") {
     const Ctor: AudioContextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext: AudioContextCtor }).webkitAudioContext
     sharedContext = new Ctor({ latencyHint: "playback" })
@@ -76,6 +82,11 @@ export class StemEngine {
   private playing = false
   private startedAt = 0 // ctx time at which `offset` was (or will be) heard
   private offset = 0 // song position at startedAt (the song then advances `speed` seconds per second)
+  /**
+   * The timings a speed change replaced in place, oldest first, kept while their sound may still be on its way out, so
+   * `position` follows what is heard across the change instead of standing still for the output latency.
+   */
+  private retimed: { offset: number; startedAt: number; speed: number }[] = []
   private endClock: ConstantSourceNode | null = null
   private metroOn = false
   private clicks: Click[] = []
@@ -86,6 +97,8 @@ export class StemEngine {
   private scheduled: { osc: AudioScheduledSourceNode; when: number }[] = []
   private countIn: AudioScheduledSourceNode[] = []
   private sound: ClickSound = clickSound(DEFAULT_CLICK_SOUND)
+  /** The user's correction to the browser's output latency, in milliseconds. */
+  private outputOffset = 0
   private soundReady: Promise<void> | null = null
   private soundDone: () => boolean = () => false
   private metroGain: GainNode | null = null
@@ -259,6 +272,7 @@ export class StemEngine {
   pause() {
     this.silenceCountIn()
     if (!this.playing) return
+    // Pausing stops at what is heard, so play resumes there (replaying what was still on its way to the speakers).
     this.offset = this.position
     this.playing = false
     this.stopSources()
@@ -280,10 +294,33 @@ export class StemEngine {
     this.startSources(pos, ctx.currentTime + 0.03)
   }
 
-  /** Current song position in seconds as heard (derived from the audio clock). */
+  /** Current song position in seconds as heard: the audio clock less the output latency. */
   get position(): number {
     if (!this.playing || !this.ctx) return this.offset
+    const t = this.ctx.currentTime - this.outputDelay
+    if (t < this.startedAt) {
+      const r = this.retimed.findLast((r) => r.startedAt <= t)
+      if (r) return Math.min(this.duration, loopedPosition(r.offset + (t - r.startedAt) * r.speed, this.activeLoop))
+    }
+    return this.positionAt(t)
+  }
+  /** Song position the audio clock is at, ahead of what is heard by the output latency; for continuing the sound. */
+  private get clockPosition(): number {
+    if (!this.playing || !this.ctx) return this.offset
     return this.positionAt(this.ctx.currentTime)
+  }
+
+  /** Seconds between the audio clock and the sound being heard (the browser's figure plus `setOutputOffset`). */
+  get outputDelay(): number {
+    return this.ctx ? heardDelay(this.ctx, this.outputOffset) : 0
+  }
+  /** The browser's own figure for the output latency, in seconds. */
+  get reportedLatency(): number {
+    return this.ctx ? reportedLatency(this.ctx) : 0
+  }
+  /** The user's correction to the browser's output latency, in milliseconds (see output-latency.ts). */
+  setOutputOffset(ms: number) {
+    this.outputOffset = ms
   }
 
   private positionAt(t: number, speed = this.speed): number {
@@ -300,7 +337,7 @@ export class StemEngine {
       if (this.loop?.enabled && (this.offset < this.loop.a || this.offset >= this.loop.b)) this.offset = this.loop.a
       return
     }
-    let pos = this.position
+    let pos = this.clockPosition
     if (this.loop?.enabled && pos >= this.loop.b) pos = this.loop.a
     this.startSources(pos, this.ctx!.currentTime + 0.03)
   }
@@ -339,6 +376,9 @@ export class StemEngine {
       this.startSources(pos, ctx.currentTime + 0.03)
       return
     }
+    // Timings older than any output could still be playing are dropped.
+    this.retimed = this.retimed.filter((r) => r.startedAt > ctx.currentTime - 2)
+    this.retimed.push({ offset: this.offset, startedAt: this.startedAt, speed: previousSpeed })
     this.offset = pos
     this.startedAt = when
     if (this.stretching) this.scheduleStretch()
@@ -414,6 +454,8 @@ export class StemEngine {
     this.activeLoop = looping ? { a: this.loop!.a, b: this.loop!.b } : null
     this.startedAt = when
     this.offset = offset
+    // A restart (seek, loop, path change) shows its new position at once rather than the old sound still playing out.
+    this.retimed = []
     if (this.stretching) this.scheduleStretch()
     else {
       for (const s of this.stems) {
