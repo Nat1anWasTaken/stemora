@@ -56,18 +56,18 @@ export type DelayMeasurement = { delay: number; taps: number; spread: number }
 export const MIN_TAPS = 6
 const OUTLIER = 0.08
 /** How far ahead of a click a tap may come: people tapping along to a steady beat tend to anticipate it a little. */
-const EARLY = 0.1
+export const EARLY_TAP = 0.1
 
 /**
  * The delay between clicks (when they left the clock) and the user's taps on hearing them, both in context seconds;
- * the clicks are `interval` apart. A tap belongs to the click it lags by between -EARLY and `interval` - EARLY, so the
+ * the clicks are `interval` apart. A tap belongs to the click it lags by between -EARLY_TAP and `interval` - EARLY_TAP, so the
  * delay this can measure stays under that. Taps more than OUTLIER from the median (a missed or doubled tap) are
  * dropped. Null when too few taps agree.
  */
 export function measureDelay(clicks: readonly number[], taps: readonly number[], interval: number): DelayMeasurement | null {
   const lags: number[] = []
   for (const t of taps) {
-    const click = clicks.find((c) => t - c >= -EARLY && t - c < interval - EARLY)
+    const click = clicks.find((c) => t - c >= -EARLY_TAP && t - c < interval - EARLY_TAP)
     if (click !== undefined) lags.push(t - click)
   }
   if (lags.length < MIN_TAPS) return null

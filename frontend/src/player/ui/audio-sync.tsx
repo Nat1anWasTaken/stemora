@@ -5,19 +5,24 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Slider } from "@/components/ui/slider"
 import { clickSound, DEFAULT_CLICK_SOUND } from "@/player/click-sounds"
 import { audioContext, runningAudioContext } from "@/player/engine"
-import { clampOffset, MAX_OFFSET_MS, measureDelay, MIN_OFFSET_MS, MIN_TAPS, reportedLatency, type DelayMeasurement } from "@/player/output-latency"
+import { clampOffset, EARLY_TAP, MAX_OFFSET_MS, measureDelay, MIN_OFFSET_MS, MIN_TAPS, reportedLatency, type DelayMeasurement } from "@/player/output-latency"
 import { usePlayer } from "@/player/store"
 
-/** The test: CLICKS clicks INTERVAL s apart; the first WARMUP are for finding the beat and are not measured. */
+/**
+ * The test: CLICKS clicks at least MIN_INTERVAL s apart; the first WARMUP are for finding the beat and are not
+ * measured. A tap is matched to a click it lags by less than the interval (less an allowance for early taps), so the
+ * interval is widened when the delay the correction can cover would not fit.
+ */
 const CLICKS = 20
 const WARMUP = 4
-const INTERVAL = 0.75
+const MIN_INTERVAL = 0.75
 const LEAD = 0.6
+const clickInterval = (reported: number) => Math.max(MIN_INTERVAL, reported + MAX_OFFSET_MS / 1000 + EARLY_TAP + 0.05)
 
 const ms = (s: number) => Math.round(s * 1000)
 const signedMs = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v)} ms`
 
-type Run = { ctx: AudioContext; out: GainNode; nodes: AudioScheduledSourceNode[]; clicks: number[]; taps: number[]; timer: ReturnType<typeof setTimeout> }
+type Run = { ctx: AudioContext; out: GainNode; nodes: AudioScheduledSourceNode[]; clicks: number[]; interval: number; taps: number[]; timer: ReturnType<typeof setTimeout> }
 type Phase = { kind: "idle" } | { kind: "running"; taps: number } | { kind: "done"; result: DelayMeasurement | null; reported: number }
 
 function stopRun(run: Run | null) {
@@ -42,11 +47,20 @@ function stopRun(run: Run | null) {
 function CalibrationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" })
   const run = useRef<Run | null>(null)
+  /** Bumped on close and unmount, so a start still waiting for the context to resume gives up. */
+  const attempt = useRef(0)
   const setOutputOffset = usePlayer((s) => s.setOutputOffset)
 
-  useEffect(() => () => stopRun(run.current), [])
+  useEffect(
+    () => () => {
+      attempt.current++
+      stopRun(run.current)
+    },
+    [],
+  )
   const changeOpen = (o: boolean) => {
     if (!o) {
+      attempt.current++
       stopRun(run.current)
       run.current = null
       setPhase({ kind: "idle" })
@@ -58,24 +72,27 @@ function CalibrationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     stopRun(run.current)
     usePlayer.getState().pause()
     const ctx = audioContext()
+    const current = ++attempt.current
     if (ctx.state !== "running") await ctx.resume()
+    if (current !== attempt.current) return
+    const interval = clickInterval(reportedLatency(ctx))
     const out = ctx.createGain()
     out.gain.value = 0.6
     out.connect(ctx.destination)
     const sound = clickSound(DEFAULT_CLICK_SOUND)
     const first = ctx.currentTime + LEAD
-    const clicks = Array.from({ length: CLICKS }, (_, i) => first + i * INTERVAL)
+    const clicks = Array.from({ length: CLICKS }, (_, i) => first + i * interval)
     const nodes = clicks.map((when, i) => sound.play(ctx, when, i % 4 === 0 ? "accent" : "normal", out))
-    const end = clicks[CLICKS - 1] + INTERVAL - ctx.currentTime
+    const end = clicks[CLICKS - 1] + interval - ctx.currentTime
     const timer = setTimeout(() => finish(), end * 1000)
-    run.current = { ctx, out, nodes, clicks, taps: [], timer }
+    run.current = { ctx, out, nodes, clicks, interval, taps: [], timer }
     setPhase({ kind: "running", taps: 0 })
   }
 
   const finish = () => {
     const r = run.current
     if (!r) return
-    const result = measureDelay(r.clicks.slice(WARMUP), r.taps, INTERVAL)
+    const result = measureDelay(r.clicks.slice(WARMUP), r.taps, r.interval)
     const reported = reportedLatency(r.ctx)
     stopRun(r)
     run.current = null

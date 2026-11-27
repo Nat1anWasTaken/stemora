@@ -323,6 +323,7 @@ export class StemEngine {
   /** The user's correction to the browser's output latency, in milliseconds (see output-latency.ts). */
   setOutputOffset(ms: number) {
     this.outputOffset = ms
+    this.armEnd()
   }
 
   private positionAt(t: number, speed = this.speed): number {
@@ -378,9 +379,9 @@ export class StemEngine {
       this.startSources(pos, ctx.currentTime + 0.03)
       return
     }
-    // Timings older than any output could still be playing are dropped.
-    this.retimed = this.retimed.filter((r) => r.startedAt > ctx.currentTime - 2)
     this.retimed.push({ offset: this.offset, startedAt: this.startedAt, speed: previousSpeed })
+    // A timing applies until the next one starts: drop it only once that is longer ago than any output could lag.
+    while (this.retimed.length > 1 && this.retimed[1].startedAt <= ctx.currentTime - 2) this.retimed.shift()
     this.offset = pos
     this.startedAt = when
     if (this.stretching) this.scheduleStretch()
@@ -516,7 +517,8 @@ export class StemEngine {
       this.onEnded?.()
     }
     clock.start()
-    clock.stop(this.startedAt + Math.max(0, this.duration - this.offset) / this.speed)
+    // Ends once the last of the song has been heard, not when it leaves the clock, so the playhead reaches the end.
+    clock.stop(this.startedAt + Math.max(0, this.duration - this.offset) / this.speed + this.outputDelay)
     this.endClock = clock
   }
   private disarmEnd() {
