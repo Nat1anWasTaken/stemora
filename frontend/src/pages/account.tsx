@@ -11,6 +11,7 @@ import { promptInstall, useInstallState } from "@/lib/install"
 import { applyUpdate, checkForUpdate, updatesSupported } from "@/lib/pwa-update"
 import { keys, useMe } from "@/lib/queries"
 import { rememberMe } from "@/player/offline"
+import { AudioSyncSettings } from "@/player/ui/audio-sync"
 
 function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return (
@@ -171,6 +172,9 @@ export function AccountPage() {
       </header>
       <EmailForm current={me.data.email} />
       <PasswordForm />
+      <Section title="Audio sync" description="Bluetooth headphones play sound a little later than the screen shows it. Stemora allows for the delay your browser reports, so the playhead, charts and tempo markers line up with what you hear.">
+        <AudioSyncSettings />
+      </Section>
       <InstallSection />
       <UpdateSection />
     </div>

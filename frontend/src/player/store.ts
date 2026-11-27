@@ -10,6 +10,7 @@ import { fetchAnalysis, type Analysis } from "@/player/analysis"
 import { computePeaks, fetchPeaks, type Peaks } from "@/player/peaks"
 import { MAX_SEMITONES, MAX_SPEED, MIN_SPEED } from "@/player/tempo"
 import { loadClickSound, saveClickSound } from "@/player/click-sounds"
+import { clampOffset, loadOutputOffset, saveOutputOffset } from "@/player/output-latency"
 import { heardSemitones, loadTransposed, saveTransposed, toggleTransposed as toggleStem } from "@/player/transpose"
 import { buildGrid, defaultMarkers, markerClicks, normalizeMarkers, type BeatGrid, type TempoMarker } from "@/player/tempo-map"
 
@@ -53,6 +54,8 @@ type PlayerState = {
   metronome: boolean
   /** Metronome sound (an id from CLICK_SOUNDS); this browser's last choice is the default for songs never set up. */
   clickSound: string
+  /** This browser's correction to the reported output latency, in ms (see output-latency.ts); not a song setting. */
+  outputOffset: number
   /** Playback speed, 1 = original tempo. */
   speed: number
   /** Key change in semitones, as set on the dial (kept while the key switch is off). */
@@ -90,6 +93,7 @@ type PlayerState = {
   clearLoop: () => void
   setMetronome: (enabled: boolean) => void
   setClickSound: (id: string) => void
+  setOutputOffset: (ms: number) => void
   setSpeed: (speed: number) => void
   /** Sets the dial; also turns the key switch on, so a turn of the dial is always heard. */
   setSemitones: (n: number) => void
@@ -163,6 +167,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
     pendingA: null,
     metronome: false,
     clickSound: loadClickSound(),
+    outputOffset: loadOutputOffset(),
     speed: 1,
     semitones: 0,
     keyEnabled: true,
@@ -194,6 +199,7 @@ export const usePlayer = create<PlayerState>((set, get) => {
       e.setSpeed(s.speed)
       e.setMetronome(get().metronome)
       e.setClickSound(get().clickSound)
+      e.setOutputOffset(get().outputOffset)
       applyKey()
       applyGrid()
       void e.loadShifter().then((ok) => engine === e && set({ canShift: ok }))
@@ -300,6 +306,12 @@ export const usePlayer = create<PlayerState>((set, get) => {
       set({ clickSound: id })
       saveClickSound(id)
       engine?.setClickSound(id)
+    },
+    setOutputOffset(ms) {
+      const outputOffset = clampOffset(ms)
+      set({ outputOffset })
+      saveOutputOffset(outputOffset)
+      engine?.setOutputOffset(outputOffset)
     },
     setSpeed(speed) {
       const s = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed))
