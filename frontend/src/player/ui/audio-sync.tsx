@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
 import { clickSound, DEFAULT_CLICK_SOUND } from "@/player/click-sounds"
-import { audioContext } from "@/player/engine"
+import { audioContext, runningAudioContext } from "@/player/engine"
 import { clampOffset, MAX_OFFSET_MS, measureDelay, MIN_OFFSET_MS, MIN_TAPS, reportedLatency, type DelayMeasurement } from "@/player/output-latency"
 import { usePlayer } from "@/player/store"
 
@@ -161,6 +161,23 @@ function CalibrationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
 }
 
 /**
+ * The browser's reported output latency in ms, followed while the page is open (it changes when the output does);
+ * null until audio has played, as a context that is not running has nothing to report.
+ */
+function useDetectedLatency(): number | null {
+  const read = () => {
+    const ctx = runningAudioContext()
+    return ctx ? ms(reportedLatency(ctx)) : null
+  }
+  const [value, setValue] = useState(read)
+  useEffect(() => {
+    const id = setInterval(() => setValue(read()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return value
+}
+
+/**
  * The output latency correction (output-latency.ts): a slider to set it by eye against the playhead, and the tap test
  * to measure it. It belongs to this browser and output, so it sits with the other device settings.
  */
@@ -168,15 +185,25 @@ export function AudioSyncSettings() {
   const offset = usePlayer((s) => s.outputOffset)
   const setOutputOffset = usePlayer((s) => s.setOutputOffset)
   const [calibrating, setCalibrating] = useState(false)
+  const detected = useDetectedLatency()
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">Detected latency</span>
+          <span className="text-muted-foreground tabular-nums" aria-live="polite">{detected === null ? "Play a song to detect" : `${detected} ms`}</span>
+        </div>
+        <p className="text-xs text-muted-foreground">Reported by your browser for the current output and applied automatically.</p>
+      </div>
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between text-sm">
-          <span id="audio-sync-label" className="font-medium">Correction</span>
+          <span id="audio-sync-label" className="font-medium">Extra correction</span>
           <span className="text-muted-foreground tabular-nums">{offset === 0 ? "None" : signedMs(offset)}</span>
         </div>
         <Slider aria-labelledby="audio-sync-label" min={MIN_OFFSET_MS} max={MAX_OFFSET_MS} step={5} value={offset} onValueChange={(v) => setOutputOffset(Array.isArray(v) ? v[0] : v)} />
-        <p className="text-xs text-muted-foreground">Raise it if the playhead runs ahead of what you hear, lower it if it lags behind.</p>
+        <p className="text-xs text-muted-foreground">
+          Most devices need none. Some Bluetooth headphones play later than the browser reports: if the playhead still runs ahead of what you hear, calibrate or raise this; if it lags behind, lower it.
+        </p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" size="lg" onClick={() => setCalibrating(true)}><Timer />Calibrate</Button>

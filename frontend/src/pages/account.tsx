@@ -172,7 +172,7 @@ export function AccountPage() {
       </header>
       <EmailForm current={me.data.email} />
       <PasswordForm />
-      <Section title="Audio sync" description="Bluetooth headphones play sound later than the screen shows it. Calibrate on this device so the playhead, charts and tempo markers line up with what you hear.">
+      <Section title="Audio sync" description="Bluetooth headphones play sound a little later than the screen shows it. Stemora allows for the delay your browser reports, so the playhead, charts and tempo markers line up with what you hear.">
         <AudioSyncSettings />
       </Section>
       <InstallSection />

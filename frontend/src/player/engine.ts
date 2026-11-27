@@ -57,6 +57,8 @@ export function audioContext(): AudioContext {
   }
   return sharedContext
 }
+/** The shared context if one is running, without creating one (outside a tap it would only start suspended). */
+export const runningAudioContext = () => (sharedContext?.state === "running" ? sharedContext : null)
 
 /** A click of a count-in: seconds before the song starts, and how loud. */
 export type CountInClick = { before: number; level: ClickVolume }
